@@ -1,0 +1,6 @@
+node_modules/
+test.html
+shots/
+test/e2e-report.json
+test/*.log
+.main-check.js

@@ -1,0 +1,116 @@
+<title>Kit Rush 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&display=swap">
+<style>
+/* One dark stage. The 3D view (#gl) and the 2D HUD (#hud) are stacked in #game, which keeps a 4:3 to 2.4:1 game area
+   that fills a landscape phone. Touch controls and tool buttons float over the viewport corners, clear of the safe areas. */
+:root{
+  --void:#070a1d;
+  --ink:#f3f5ff;
+  --muted:#9aa2d6;
+  --gold:#ffd23f;
+  --navy:#121845;
+  --pad:rgba(255,255,255,.12);
+  --pad-edge:rgba(255,255,255,.36);
+  --pad-on:rgba(255,210,63,.5);
+  --sl:env(safe-area-inset-left,0px);
+  --sr:env(safe-area-inset-right,0px);
+  --st:env(safe-area-inset-top,0px);
+  --sb:env(safe-area-inset-bottom,0px);
+  --font-display:'Lilita One','Arial Rounded MT Bold','Trebuchet MS',system-ui,sans-serif;
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{height:100%;background:var(--void)}
+body{
+  margin:0;color:var(--ink);font-family:var(--font-display);
+  overflow:hidden;overscroll-behavior:none;touch-action:none;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;
+  padding-left:max(16px,var(--sl));padding-right:max(16px,var(--sr));
+  box-sizing:border-box;
+}
+#stage{position:relative;height:100%;display:flex;align-items:center;justify-content:center}
+#game{
+  position:relative;flex:none;width:640px;height:360px;overflow:hidden;border-radius:6px;
+  background:radial-gradient(120% 90% at 50% 20%,#2d6fd0 0%,#13306f 55%,#0b1338 100%);
+  box-shadow:0 20px 70px rgba(0,0,0,.65),0 0 0 1px rgba(255,255,255,.05);
+}
+#gl,#hud{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+#hud{outline:none;cursor:grab;touch-action:none}
+#hud.dragging{cursor:grabbing}
+
+.tools{position:fixed;top:calc(var(--st) + 10px);right:max(12px,var(--sr));display:flex;gap:8px;z-index:6}
+.tools button{
+  width:38px;height:38px;border-radius:10px;border:1px solid var(--pad-edge);background:rgba(7,10,29,.55);color:var(--ink);
+  display:grid;place-items:center;cursor:pointer;padding:0;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  touch-action:manipulation;
+}
+.tools button:hover{border-color:var(--gold)}
+.tools button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.tools svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+#touch{position:fixed;inset:0;pointer-events:none;z-index:5}
+#stick{
+  position:absolute;left:max(18px,calc(var(--sl) + 8px));bottom:calc(var(--sb) + 18px);
+  width:136px;height:136px;border-radius:50%;pointer-events:auto;touch-action:none;
+  background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.04) 0 38%,rgba(255,255,255,.14) 39% 100%);
+  border:2px solid var(--pad-edge);box-shadow:inset 0 0 0 10px rgba(255,255,255,.04);
+}
+#stick::before{content:"";position:absolute;inset:26%;border-radius:50%;border:1px dashed rgba(255,255,255,.22)}
+#stick .knob{
+  position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;
+  background:radial-gradient(circle at 38% 32%,rgba(255,255,255,.62),rgba(255,255,255,.26) 60%,rgba(255,255,255,.18));
+  border:2px solid rgba(255,255,255,.6);box-shadow:0 4px 14px rgba(0,0,0,.35);
+  transition:transform .12s ease-out;will-change:transform;
+}
+#stick.on{border-color:var(--gold)}
+#stick.on .knob{transition:none;border-color:var(--gold)}
+.tbtn{
+  position:absolute;border-radius:50%;padding:0;display:grid;place-items:center;pointer-events:auto;touch-action:none;
+  background:var(--pad);border:2px solid var(--pad-edge);color:var(--ink);font-family:var(--font-display);letter-spacing:.06em;
+  box-shadow:0 4px 18px rgba(0,0,0,.3);
+}
+.tbtn.on{background:var(--pad-on);border-color:var(--gold);transform:scale(.95)}
+#btnJump{right:max(22px,calc(var(--sr) + 12px));bottom:calc(var(--sb) + 34px);width:96px;height:96px;font-size:19px}
+#btnRoll{right:calc(max(22px,calc(var(--sr) + 12px)) + 108px);bottom:calc(var(--sb) + 16px);width:70px;height:70px;font-size:12px}
+@media (max-height:430px){
+  #stick{width:120px;height:120px;bottom:calc(var(--sb) + 14px)}
+  #stick .knob{width:50px;height:50px;margin:-25px 0 0 -25px}
+  #btnJump{width:86px;height:86px;font-size:17px;bottom:calc(var(--sb) + 26px)}
+  #btnRoll{width:62px;height:62px;font-size:11px;right:calc(max(22px,calc(var(--sr) + 12px)) + 96px);bottom:calc(var(--sb) + 12px)}
+}
+#rotate{
+  position:fixed;left:0;right:0;top:calc(var(--st) + 60px);margin:0 auto;width:max-content;max-width:calc(100% - 32px);
+  padding:10px 14px;border-radius:10px;background:rgba(7,10,29,.85);border:1px solid var(--pad-edge);color:var(--muted);
+  font-size:14px;letter-spacing:.03em;text-align:center;z-index:6;box-sizing:border-box;
+}
+#rotate svg{width:20px;height:20px;vertical-align:-5px;margin-right:6px;fill:none;stroke:var(--gold);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+</style>
+
+<div id="stage">
+  <div id="game">
+    <canvas id="gl" aria-hidden="true"></canvas>
+    <canvas id="hud" tabindex="0" aria-label="Kit Rush 3D, jeu de plateforme en 3D. Flèches pour courir, Espace pour sauter et attaquer en l'air, Maj pour rouler, souris pour tourner la caméra."></canvas>
+  </div>
+</div>
+<div class="tools">
+  <button id="btnSound" type="button" aria-label="Couper le son"><svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="snd-wave" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/><path id="snd-off" d="M16 9l6 6M22 9l-6 6" style="display:none"/></svg></button>
+  <button id="btnPause" type="button" aria-label="Pause"><svg viewBox="0 0 24 24"><path id="ico-pause" d="M8 5v14M16 5v14"/><path id="ico-play" d="M7 4.5v15l12-7.5z" style="display:none"/></svg></button>
+  <button id="btnFull" type="button" aria-label="Plein écran"><svg viewBox="0 0 24 24"><path id="ico-full" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path id="ico-exit" d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" style="display:none"/></svg></button>
+</div>
+<div id="touch" hidden>
+  <div id="stick" role="presentation"><span class="knob"></span></div>
+  <button id="btnRoll" class="tbtn" type="button" aria-label="Rouler">ROULER</button>
+  <button id="btnJump" class="tbtn" type="button" aria-label="Sauter">SAUT</button>
+</div>
+<div id="rotate" hidden><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M20.5 14a8.5 8.5 0 0 1-6.5 7M3.5 10A8.5 8.5 0 0 1 10 3"/></svg>Tourne ton téléphone à l'horizontale pour jouer en grand</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script>
+'use strict';
+const K = {};
