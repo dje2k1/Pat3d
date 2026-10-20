@@ -1,11 +1,14 @@
 {
   "name": "kit-rush-3d",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Jeu de plateforme 3D dans le navigateur (three.js r128) : Kit le renard, Collines Émeraude et San Francisco en skate.",
+  "description": "Jeu de plateforme 3D dans le navigateur (three.js r186, WebGPU / WebGL 2) : Kit le renard, Collines Émeraude et San Francisco en skate.",
   "scripts": {
     "build": "./build.sh",
-    "test": "node test/e2e.js"
+    "test": "node test/e2e.js",
+    "test:webgpu": "node test/e2e.js --webgpu",
+    "serve": "node test/serve.js 8080",
+    "textures": "tools/tex/make.sh"
   },
   "devDependencies": {
     "playwright": "1.56.1"

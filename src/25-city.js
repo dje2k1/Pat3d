@@ -16,7 +16,8 @@ const fin = v => typeof v === 'number' && v === v && v !== Infinity && v !== -In
 const finV = v => !!v && fin(v.x) && fin(v.y) && fin(v.z);
 const smooth = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 const hash = n => { const s = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return s - Math.floor(s); };
-const lin = hex => new THREE.Color(hex).convertSRGBToLinear();
+const lin = hex => new THREE.Color(hex); // r186 colour management: sRGB hex -> linear working space
+const LIGHT_PI = Math.PI; // r128 multiplied punctual / hemisphere light by PI in its shaders; r155+ light units do not
 const yawOf = (x, z) => Math.atan2(-x, -z);
 function rng(seed) { let s = (seed >>> 0) || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
 function isTouch() { const V = K.view; return V ? (typeof V.isTouch === 'function' ? !!V.isTouch() : !!V.isTouch) : false; }
@@ -409,125 +410,145 @@ function toBox(o, x, z) { const ex = x - o.x, ez = z - o.z; OL.x = ex * o.c - ez
 function boxTop(o, lz) { return o.ramp ? lerp(o.y0, o.y1, clamp((lz + o.hz) / (2 * o.hz), 0, 1)) : o.y + o.hy; }
 
 // ===================== materials =====================
-const U = { time: { value: 0 }, hdr: (K.post && K.post.uHDR) || { value: 0 } };
+const { Fn, If, uniform, attribute, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp, abs: tabs, max: tmax, min: tmin,
+  fract: tfract, floor: tfloor, sin: tsin, cos: tcos, pow: tpow, exp: texp, dot: tdot, normalize: tnormalize, reflect: treflect,
+  length: tlength, step: tstep, select, positionWorld, positionLocal, positionGeometry, normalGeometry, cameraPosition,
+  cameraViewMatrix, cameraProjectionMatrix, modelViewMatrix, modelWorldMatrix, varyingProperty, texture: ttexture, uv: tuv } = TSL;
+const TL = K.tsl;
+const U = { time: uniform(0), hdr: K.post && K.post.uHDR && K.post.uHDR.isNode ? K.post.uHDR : uniform(1) };
 // city surfaces: vertex colour + a surface kind (procedural detail), uv in metres (or 0..1 for openings), emission
 const KIND = {
   plain: 0, siding: 1, window: 2, shingle: 3, asphalt: 4, paint: 5, slab: 6, brick: 7, plank: 8, metal: 9, glow: 10,
   leaf: 11, rail: 12, dentil: 13, scales: 14, facade: 15, ground: 16, seawall: 17, stone: 18, awning: 19, glass: 20, tar: 21
 };
-const CITY_GLSL = `
-varying float vKind; varying vec2 vCUv; varying float vEmit; varying vec3 vLP;
-uniform float uHDR; uniform float uTime;
-float cH(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-float cN(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(cH(i), cH(i + vec2(1.0, 0.0)), f.x), mix(cH(i + vec2(0.0, 1.0)), cH(i + vec2(1.0, 1.0)), f.x), f.y); }
-`;
-function cityMaterial() {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0 });
-  m.onBeforeCompile = sh => {
-    sh.uniforms.uHDR = U.hdr; sh.uniforms.uTime = U.time;
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aKind; attribute vec2 aUv; attribute float aEmit;\nvarying float vKind; varying vec2 vCUv; varying float vEmit; varying vec3 vLP;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvKind = aKind; vCUv = aUv; vEmit = aEmit; vLP = position;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\n' + CITY_GLSL)
-      .replace('#include <color_fragment>', `#include <color_fragment>
-  float cRough = 0.82, cMetal = 0.0, cBump = 0.0; vec3 cEmit = vec3(0.0);
-  int kk = int(vKind + 0.5);
-  if (kk == 1) { // clapboard siding
-    float b = fract(vLP.y * 4.6 + 0.2);
-    diffuseColor.rgb *= 0.84 + 0.16 * smoothstep(0.0, 0.16, b);
-    cBump = (b - 0.5) * 0.55; cRough = 0.74;
-  } else if (kk == 2 || kk == 20) { // sash window (uv 0..1 over the opening): white frame, dark reflective glass, lit rooms
-    vec2 u = vCUv;
-    float fr = step(u.x, 0.08) + step(0.92, u.x) + step(u.y, 0.06) + step(0.94, u.y) + step(abs(u.y - 0.52), 0.03);
-    fr += step(abs(u.x - 0.5), 0.022) * step(0.52, u.y) * (kk == 2 ? 1.0 : 0.0);
-    if (fr > 0.0) { cRough = 0.55; }
-    else {
-      float sky = smoothstep(0.1, 1.0, u.y);
-      diffuseColor.rgb = mix(vec3(0.02, 0.025, 0.035), vec3(0.05, 0.06, 0.08), sky);
-      cRough = 0.05; cMetal = 0.15;
-      if (vEmit > 0.0) {
-        float cur = smoothstep(0.0, 0.25, abs(u.x - 0.5) - 0.16) * 0.55; // curtains drawn at the sides
-        float lamp = 0.75 + 0.25 * cN(vLP.xz * 0.7 + vLP.y);
-        vec3 warm = mix(vec3(1.0, 0.56, 0.22), vec3(1.0, 0.78, 0.45), cH(floor(vLP.xz * 0.3) + floor(vLP.y)));
-        cEmit = warm * vEmit * lamp * (1.0 - cur) * mix(1.15, 3.2, uHDR);
-        diffuseColor.rgb = warm * 0.12;
-        cRough = 0.4;
-      }
-    }
-  } else if (kk == 3) { // shingles (uv: along the eave, up the slope, metres)
-    vec2 q = vCUv * vec2(2.4, 3.6); float r = floor(q.y); q.x += r * 0.5;
-    float e = fract(q.y), t = cH(floor(q));
-    diffuseColor.rgb *= (0.7 + 0.3 * smoothstep(0.0, 0.3, e)) * (0.88 + 0.24 * t);
-    cBump = (e - 0.5) * 0.4; cRough = 0.86;
-  } else if (kk == 4) { // asphalt (uv = d, s)
-    float n = cN(vLP.xz * 0.45) * 0.55 + cN(vLP.xz * 2.7) * 0.3 + cH(floor(vLP.xz * 9.0)) * 0.15;
-    float pch = smoothstep(0.62, 0.66, cN(vLP.xz * 0.09 + 3.7));
-    diffuseColor.rgb *= (0.78 + 0.34 * n) * (1.0 - pch * 0.18);
-    float wheel = exp(-pow((abs(vCUv.x) - 3.1 - 0.85), 2.0) * 3.0) + exp(-pow((abs(vCUv.x) - 3.1 + 0.85), 2.0) * 3.0);
-    diffuseColor.rgb *= 1.0 - 0.1 * wheel;
-    cRough = 0.9 - 0.25 * wheel - 0.1 * n;
-  } else if (kk == 5) { // road paint
-    float n = cN(vLP.xz * 1.9);
-    diffuseColor.rgb *= 0.78 + 0.28 * n; cRough = 0.62;
-  } else if (kk == 6) { // sidewalk slabs (uv metres)
-    vec2 g = fract(vCUv / vec2(1.55, 1.55)); float j = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
-    float n = cN(vLP.xz * 1.3);
-    diffuseColor.rgb *= (0.86 + 0.14 * smoothstep(0.0, 0.035, j)) * (0.9 + 0.16 * n); cRough = 0.88;
-  } else if (kk == 7) { // brick
-    vec2 q = vCUv * vec2(4.2, 12.5); q.x += floor(q.y) * 0.5;
-    vec2 f = fract(q); float m = step(0.08, f.x) * step(0.12, f.y);
-    float t = cH(floor(q));
-    diffuseColor.rgb *= mix(vec3(0.78, 0.76, 0.72), vec3(0.85 + 0.3 * t, 0.9 + 0.15 * t, 0.9), m);
-    cBump = (1.0 - m) * -0.3; cRough = 0.9;
-  } else if (kk == 8) { // weathered planks (uv: along, across)
-    float p = vCUv.y * 3.6; float f = fract(p); float t = cH(vec2(floor(p), floor(vCUv.x * 0.35 + floor(p) * 7.0)));
-    float g = cN(vec2(vCUv.x * 0.6, p * 3.0));
-    diffuseColor.rgb *= (0.78 + 0.18 * t + 0.12 * g) * (0.62 + 0.38 * smoothstep(0.0, 0.08, f) * smoothstep(1.0, 0.92, f));
-    cRough = 0.8;
-  } else if (kk == 9) { cRough = 0.32; cMetal = 0.75; }
-  else if (kk == 10) { cEmit = diffuseColor.rgb * vEmit * mix(1.0, 2.6, uHDR); cRough = 0.3; }
-  else if (kk == 11) { float n = cN(vLP.xz * 1.7 + vLP.y * 2.0); diffuseColor.rgb *= 0.7 + 0.5 * n; cRough = 0.9; }
-  else if (kk == 12) { cRough = 0.18; cMetal = 0.9; diffuseColor.rgb *= 0.9 + 0.2 * cN(vLP.xz * 3.0); }
-  else if (kk == 13) { // dentils / brackets under a cornice
-    float f = fract(vCUv.x * 2.6); float s = step(0.42, f);
-    diffuseColor.rgb *= 0.72 + 0.28 * s; cBump = (s - 0.5) * 0.3;
-  } else if (kk == 14) { // fish-scale shingles in the gables
-    vec2 q = vCUv * vec2(5.0, 6.0); q.x += floor(q.y) * 0.5; vec2 f = fract(q) - vec2(0.5, 0.0);
-    float c = length(f * vec2(1.0, 1.25)); diffuseColor.rgb *= 0.78 + 0.22 * smoothstep(0.62, 0.45, c);
-    cRough = 0.7;
-  } else if (kk == 15) { // simple facade of the background houses: window grid, some lit
-    vec2 q = vCUv / vec2(2.7, 3.3); vec2 f = fract(q); vec2 id = floor(q);
-    float w = step(0.3, f.x) * step(f.x, 0.7) * step(0.25, f.y) * step(f.y, 0.85) * step(0.5, q.y);
-    float lit = step(0.62, cH(id + floor(vLP.xz * 0.05)));
-    diffuseColor.rgb = mix(diffuseColor.rgb * (0.9 + 0.1 * fract(vLP.y * 4.6)), vec3(0.05, 0.06, 0.08), w);
-    cEmit = w * lit * vec3(1.0, 0.62, 0.3) * mix(0.9, 2.2, uHDR) * vEmit;
-    cRough = mix(0.75, 0.1, w);
-  } else if (kk == 16) { // terrain: dry golden grass, dark scrub
-    float n = cN(vLP.xz * 0.05) * 0.6 + cN(vLP.xz * 0.21) * 0.4;
-    diffuseColor.rgb *= 0.7 + 0.5 * n; cRough = 0.95;
-  } else if (kk == 17) { // sea wall: stained concrete blocks
-    vec2 q = vCUv * vec2(0.45, 1.2); vec2 f = fract(q); float j = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
-    float stain = smoothstep(0.0, 1.2, 1.4 - vLP.y);
-    diffuseColor.rgb *= (0.82 + 0.18 * smoothstep(0.0, 0.05, j)) * (1.0 - 0.35 * stain) * (0.9 + 0.2 * cN(vLP.xz * 0.8 + vLP.y));
-    cRough = 0.9;
-  } else if (kk == 18) { // rusticated stone base
-    vec2 q = vCUv * vec2(1.4, 2.6); q.x += floor(q.y) * 0.5; vec2 f = fract(q);
-    float j = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
-    diffuseColor.rgb *= (0.7 + 0.3 * smoothstep(0.0, 0.08, j)) * (0.9 + 0.2 * cH(floor(q)));
-    cBump = smoothstep(0.0, 0.08, j) - 0.5; cRough = 0.85;
-  } else if (kk == 19) { // striped awning (uv.x metres along)
-    float s = step(0.5, fract(vCUv.x * 1.1));
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.9, 0.85), s); cRough = 0.7;
-  } else if (kk == 21) { float n = cN(vLP.xz * 0.9); diffuseColor.rgb *= 0.8 + 0.3 * n; cRough = 0.95; }
-`)
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = cRough;')
-      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = cMetal;')
-      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nif (cBump != 0.0) { vec3 upV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz); normal = normalize(normal + upV * cBump * 0.45); }')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += cEmit;');
-  };
-  m.customProgramCacheKey = () => 'kit-city-1';
+// The v2 city shader (per-kind procedural surfaces) ported to TSL: colour, roughness, metalness and emission per kind.
+// opts.position(p) -> displaced local position node (flags, gulls); opts.vehicle: kinds 30 (paint: takes the instance
+// colour, glossy) and 31 (blinkers).
+// PORT(city): v2 also bent the normal per kind (siding / shingle / brick / dentil / stone bumps, cBump) and the
+// vehicles' paint only took the instance colour (here: vertex colour / instance colour on non-paint kinds); v3 replaces
+// this with K.tex PBR sets (wood siding, shingles, asphalt with cracks and puddles, concrete), interior-mapped windows.
+function cityMaterial(opts) {
+  opts = opts || {};
+  const m = new THREE.MeshStandardNodeMaterial({ vertexColors: false, roughness: 0.8, metalness: 0 });
+  const aK = attribute('aKind', 'float'), u = attribute('aUv', 'vec2'), aE = attribute('aEmit', 'float');
+  const kk = tfloor(aK.add(0.5));
+  const lp = positionGeometry;
+  const H = TL.hash21, N = TL.vnoise;
+  let vc = attribute('color', 'vec3');
+  const hdr = U.hdr, uTime = U.time;
+  if (opts.vehicle) {
+    // three multiplies the diffuse by the instance colour on every vertex; v2 only tinted the paint (kind 30)
+    const ic = varyingProperty('vec3', 'vInstanceColor');
+    vc = select(aK.greaterThan(29.5), vc, vc.div(tmax(ic, vec3(1e-3))));
+  }
+  const isWin = kk.equal(2).or(kk.equal(20));
+  const fr = tstep(u.x, 0.08).add(tstep(0.92, u.x)).add(tstep(u.y, 0.06)).add(tstep(0.94, u.y)).add(tstep(tabs(u.y.sub(0.52)), 0.03))
+    .add(tstep(tabs(u.x.sub(0.5)), 0.022).mul(tstep(0.52, u.y)).mul(select(kk.equal(2), float(1), float(0))));
+  const glass = isWin.and(fr.lessThanEqual(0));
+  const lit = glass.and(aE.greaterThan(0));
+  const warm = mix(vec3(1.0, 0.56, 0.22), vec3(1.0, 0.78, 0.45), H(tfloor(lp.xz.mul(0.3)).add(tfloor(lp.y))));
+  // background facades (kind 15): window grid, some lit
+  const fq = u.div(vec2(2.7, 3.3)), ff = tfract(fq), fid = tfloor(fq);
+  const fw = tstep(0.3, ff.x).mul(tstep(ff.x, 0.7)).mul(tstep(0.25, ff.y)).mul(tstep(ff.y, 0.85)).mul(tstep(0.5, fq.y));
+  const flit = tstep(0.62, H(fid.add(tfloor(lp.xz.mul(0.05)))));
+  const asN = N(lp.xz.mul(0.45)).mul(0.55).add(N(lp.xz.mul(2.7)).mul(0.3)).add(H(tfloor(lp.xz.mul(9))).mul(0.15));
+  const wheel = texp(tpow(tabs(u.x).sub(3.1 + 0.85), 2).mul(-3)).add(texp(tpow(tabs(u.x).sub(3.1 - 0.85), 2).mul(-3)));
+  // (shared values are vars set before the If chains: see the TSL notes in docs/SPEC3.md)
+  m.colorNode = Fn(() => {
+    const c = vec3(vc).toVar();
+    const asNv = asN.toVar(), wheelv = wheel.toVar(), warmv = warm.toVar(), fwv = fw.toVar();
+    If(kk.equal(1), () => { const b = tfract(lp.y.mul(4.6).add(0.2)); c.mulAssign(smoothstep(0.0, 0.16, b).mul(0.16).add(0.84)); })
+      .ElseIf(glass, () => {
+        c.assign(mix(vec3(0.02, 0.025, 0.035), vec3(0.05, 0.06, 0.08), smoothstep(0.1, 1.0, u.y)));
+        If(lit, () => { c.assign(warmv.mul(0.12)); });
+      })
+      .ElseIf(kk.equal(3), () => {
+        const q0 = u.mul(vec2(2.4, 3.6)), q = vec2(q0.x.add(tfloor(q0.y).mul(0.5)), q0.y);
+        const e = tfract(q.y), t = H(tfloor(q));
+        c.mulAssign(smoothstep(0.0, 0.3, e).mul(0.3).add(0.7).mul(t.mul(0.24).add(0.88)));
+      })
+      .ElseIf(kk.equal(4), () => {
+        const pch = smoothstep(0.62, 0.66, N(lp.xz.mul(0.09).add(3.7)));
+        c.mulAssign(asNv.mul(0.34).add(0.78).mul(float(1).sub(pch.mul(0.18))).mul(float(1).sub(wheelv.mul(0.1))));
+      })
+      .ElseIf(kk.equal(5), () => { c.mulAssign(N(lp.xz.mul(1.9)).mul(0.28).add(0.78)); })
+      .ElseIf(kk.equal(6), () => {
+        const g = tfract(u.div(1.55)), j = tmin(tmin(g.x, float(1).sub(g.x)), tmin(g.y, float(1).sub(g.y)));
+        c.mulAssign(smoothstep(0.0, 0.035, j).mul(0.14).add(0.86).mul(N(lp.xz.mul(1.3)).mul(0.16).add(0.9)));
+      })
+      .ElseIf(kk.equal(7), () => {
+        const q0 = u.mul(vec2(4.2, 12.5)), q = vec2(q0.x.add(tfloor(q0.y).mul(0.5)), q0.y);
+        const f = tfract(q), mm = tstep(0.08, f.x).mul(tstep(0.12, f.y)), t = H(tfloor(q));
+        c.mulAssign(mix(vec3(0.78, 0.76, 0.72), vec3(t.mul(0.3).add(0.85), t.mul(0.15).add(0.9), 0.9), mm));
+      })
+      .ElseIf(kk.equal(8), () => {
+        const p = u.y.mul(3.6), f = tfract(p), t = H(vec2(tfloor(p), tfloor(u.x.mul(0.35).add(tfloor(p).mul(7)))));
+        const g = N(vec2(u.x.mul(0.6), p.mul(3)));
+        c.mulAssign(t.mul(0.18).add(0.78).add(g.mul(0.12)).mul(smoothstep(0.0, 0.08, f).mul(smoothstep(1.0, 0.92, f)).mul(0.38).add(0.62)));
+      })
+      .ElseIf(kk.equal(11), () => { c.mulAssign(N(lp.xz.mul(1.7).add(lp.y.mul(2))).mul(0.5).add(0.7)); })
+      .ElseIf(kk.equal(12), () => { c.mulAssign(N(lp.xz.mul(3)).mul(0.2).add(0.9)); })
+      .ElseIf(kk.equal(13), () => { const s = tstep(0.42, tfract(u.x.mul(2.6))); c.mulAssign(s.mul(0.28).add(0.72)); })
+      .ElseIf(kk.equal(14), () => {
+        const q0 = u.mul(vec2(5, 6)), q = vec2(q0.x.add(tfloor(q0.y).mul(0.5)), q0.y);
+        const f = tfract(q).sub(vec2(0.5, 0)), cc = tlength(f.mul(vec2(1, 1.25)));
+        c.mulAssign(smoothstep(0.62, 0.45, cc).mul(0.22).add(0.78));
+      })
+      .ElseIf(kk.equal(15), () => { c.assign(mix(c.mul(tfract(lp.y.mul(4.6)).mul(0.1).add(0.9)), vec3(0.05, 0.06, 0.08), fwv)); })
+      .ElseIf(kk.equal(16), () => { c.mulAssign(N(lp.xz.mul(0.05)).mul(0.6).add(N(lp.xz.mul(0.21)).mul(0.4)).mul(0.5).add(0.7)); })
+      .ElseIf(kk.equal(17), () => {
+        const f = tfract(u.mul(vec2(0.45, 1.2))), j = tmin(tmin(f.x, float(1).sub(f.x)), tmin(f.y, float(1).sub(f.y)));
+        const stain = smoothstep(0.0, 1.2, float(1.4).sub(lp.y));
+        c.mulAssign(smoothstep(0.0, 0.05, j).mul(0.18).add(0.82).mul(float(1).sub(stain.mul(0.35))).mul(N(lp.xz.mul(0.8).add(lp.y)).mul(0.2).add(0.9)));
+      })
+      .ElseIf(kk.equal(18), () => {
+        const q0 = u.mul(vec2(1.4, 2.6)), q = vec2(q0.x.add(tfloor(q0.y).mul(0.5)), q0.y);
+        const f = tfract(q), j = tmin(tmin(f.x, float(1).sub(f.x)), tmin(f.y, float(1).sub(f.y)));
+        c.mulAssign(smoothstep(0.0, 0.08, j).mul(0.3).add(0.7).mul(H(tfloor(q)).mul(0.2).add(0.9)));
+      })
+      .ElseIf(kk.equal(19), () => { c.assign(mix(c, vec3(0.92, 0.9, 0.85), tstep(0.5, tfract(u.x.mul(1.1))))); })
+      .ElseIf(kk.equal(21), () => { c.mulAssign(N(lp.xz.mul(0.9)).mul(0.3).add(0.8)); });
+    return c;
+  })();
+  m.roughnessNode = Fn(() => {
+    const r = float(0.82).toVar();
+    const asNv = asN.toVar(), wheelv = wheel.toVar(), fwv = fw.toVar();
+    If(kk.equal(1), () => { r.assign(0.74); })
+      .ElseIf(isWin, () => { r.assign(select(glass, select(lit, float(0.4), float(0.05)), float(0.55))); })
+      .ElseIf(kk.equal(3), () => { r.assign(0.86); })
+      .ElseIf(kk.equal(4), () => { r.assign(float(0.9).sub(wheelv.mul(0.25)).sub(asNv.mul(0.1))); })
+      .ElseIf(kk.equal(5), () => { r.assign(0.62); })
+      .ElseIf(kk.equal(6), () => { r.assign(0.88); })
+      .ElseIf(kk.equal(7), () => { r.assign(0.9); })
+      .ElseIf(kk.equal(8), () => { r.assign(0.8); })
+      .ElseIf(kk.equal(9), () => { r.assign(0.32); })
+      .ElseIf(kk.equal(10), () => { r.assign(0.3); })
+      .ElseIf(kk.equal(11), () => { r.assign(0.9); })
+      .ElseIf(kk.equal(12), () => { r.assign(0.18); })
+      .ElseIf(kk.equal(14), () => { r.assign(0.7); })
+      .ElseIf(kk.equal(15), () => { r.assign(mix(float(0.75), float(0.1), fwv)); })
+      .ElseIf(kk.equal(16).or(kk.equal(21)), () => { r.assign(0.95); })
+      .ElseIf(kk.equal(17), () => { r.assign(0.9); })
+      .ElseIf(kk.equal(18), () => { r.assign(0.85); })
+      .ElseIf(kk.equal(19), () => { r.assign(0.7); })
+      .ElseIf(kk.equal(30), () => { r.assign(0.28); })
+      .ElseIf(kk.equal(31), () => { r.assign(0.3); });
+    return r;
+  })();
+  m.metalnessNode = select(glass, float(0.15), select(kk.equal(9), float(0.75), select(kk.equal(12), float(0.9), select(kk.equal(30), float(0.35), float(0)))));
+  m.emissiveNode = Fn(() => {
+    const e = vec3(0).toVar();
+    const warmv = warm.toVar(), fwv = fw.toVar(), flitv = flit.toVar();
+    If(lit, () => {
+      const cur = smoothstep(0.0, 0.25, tabs(u.x.sub(0.5)).sub(0.16)).mul(0.55);
+      const lamp = N(lp.xz.mul(0.7).add(lp.y)).mul(0.25).add(0.75);
+      e.assign(warmv.mul(aE).mul(lamp).mul(float(1).sub(cur)).mul(mix(float(1.15), float(3.2), hdr)));
+    }).ElseIf(kk.equal(10), () => { e.assign(vc.mul(aE).mul(mix(float(1), float(2.6), hdr))); })
+      .ElseIf(kk.equal(15), () => { e.assign(vec3(1.0, 0.62, 0.3).mul(fwv.mul(flitv)).mul(mix(float(0.9), float(2.2), hdr)).mul(aE)); })
+      .ElseIf(kk.equal(31), () => { const bl = tstep(0.45, tfract(uTime.mul(1.4))); e.assign(vc.mul(aE).mul(mix(float(0.04), float(1), bl)).mul(mix(float(1), float(2.6), hdr))); });
+    return e;
+  })();
+  if (opts.position) m.positionNode = opts.position(positionLocal);
   return m;
 }
 
@@ -2002,107 +2023,78 @@ const SUN_DIR = new V3(-0.92, 0.2, -0.33).normalize();
 const SUN_HEX = '#ffb47a';
 const FOG_HEX = '#d9a184';
 const SKY_UNI = {
-  uSun: { value: SUN_DIR.clone() }, uTime: U.time, uHDR: U.hdr,
-  uZen: { value: lin('#27306a') }, uMid: { value: lin('#b87e8e') }, uHor: { value: lin('#ffb27a') },
-  uHaze: { value: lin(FOG_HEX) }, uSunCol: { value: lin('#ffd2a0') }
+  uSun: uniform(SUN_DIR.clone()), uTime: U.time, uHDR: U.hdr,
+  uZen: uniform(lin('#27306a')), uMid: uniform(lin('#b87e8e')), uHor: uniform(lin('#ffb27a')),
+  uHaze: uniform(lin(FOG_HEX)), uSunCol: uniform(lin('#ffd2a0'))
 };
-const SKY_GLSL = `
-uniform vec3 uSun; uniform vec3 uZen; uniform vec3 uMid; uniform vec3 uHor; uniform vec3 uHaze; uniform vec3 uSunCol;
-float sH(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-float sN(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(sH(i), sH(i + vec2(1.0, 0.0)), f.x), mix(sH(i + vec2(0.0, 1.0)), sH(i + vec2(1.0, 1.0)), f.x), f.y); }
-vec3 skyCol(vec3 d, float hdr, float t, float clouds){
-  float h = d.y;
-  float sd = max(dot(d, uSun), 0.0);
-  float az = pow(max(dot(normalize(vec3(d.x, 0.0, d.z) + 1e-5), normalize(vec3(uSun.x, 0.0, uSun.z))), 0.0), 2.0);
-  vec3 hor = mix(mix(uHaze, vec3(0.62, 0.45, 0.55), 0.35), uHor, az);
-  vec3 col = mix(hor, uMid, smoothstep(0.0, 0.22, h));
-  col = mix(col, uZen, smoothstep(0.12, 0.75, h));
-  col += vec3(1.0, 0.5, 0.18) * pow(sd, 6.0) * 0.55 * (1.0 - smoothstep(-0.05, 0.4, h));
-  if (h < 0.0) col = mix(col, uHaze * 0.9, smoothstep(0.0, -0.08, h));
-  if (clouds > 0.0) {
-    // long streaks of altocumulus lit from below by the low sun
-    vec2 cp = d.xz / max(h + 0.12, 0.05);
-    float n = sN(cp * 1.3 + vec2(t * 0.01, 0.0)) * 0.55 + sN(cp * 3.1 - vec2(t * 0.02, 0.0)) * 0.3 + sN(cp * vec2(7.0, 15.0)) * 0.15;
-    float band = smoothstep(0.03, 0.12, h) * (1.0 - smoothstep(0.35, 0.6, h));
-    float c = smoothstep(0.52, 0.78, n) * band;
-    vec3 lit = mix(vec3(1.0, 0.55, 0.42), vec3(1.0, 0.78, 0.5), az) * (0.9 + 1.2 * hdr * az);
-    vec3 shade = vec3(0.42, 0.33, 0.48);
-    col = mix(col, mix(shade, lit, smoothstep(0.55, 0.85, n)), c * 0.85 * clouds);
+// golden-hour sky toward direction d (unit vec3 node); clouds: 0..1 (JS number)
+// PORT(city): v2 GLSL skyCol ported 1:1 (gradient, warm sun azimuth, haze below the horizon, altocumulus streaks);
+// v3: physical sky (SkyMesh / TSL) with the PMREM fed from it.
+function skyCol(d, hdr, t, clouds) {
+  const S = SKY_UNI, h = d.y;
+  const sd = tmax(tdot(d, S.uSun), 0);
+  const az = tpow(tmax(tdot(tnormalize(vec3(d.x, 0, d.z).add(1e-5)), tnormalize(vec3(S.uSun.x, 0, S.uSun.z))), 0), 2);
+  const hor = mix(mix(S.uHaze, vec3(0.62, 0.45, 0.55), 0.35), S.uHor, az);
+  let col = mix(mix(hor, S.uMid, smoothstep(0.0, 0.22, h)), S.uZen, smoothstep(0.12, 0.75, h));
+  col = col.add(vec3(1.0, 0.5, 0.18).mul(tpow(sd, 6)).mul(0.55).mul(float(1).sub(smoothstep(-0.05, 0.4, h))));
+  col = select(h.lessThan(0), mix(col, S.uHaze.mul(0.9), smoothstep(0.0, -0.08, h)), col);
+  if (clouds > 0) {
+    const cp = d.xz.div(tmax(h.add(0.12), 0.05));
+    const n = TL.vnoise(cp.mul(1.3).add(vec2(t.mul(0.01), 0))).mul(0.55).add(TL.vnoise(cp.mul(3.1).sub(vec2(t.mul(0.02), 0))).mul(0.3)).add(TL.vnoise(cp.mul(vec2(7, 15))).mul(0.15));
+    const band = smoothstep(0.03, 0.12, h).mul(float(1).sub(smoothstep(0.35, 0.6, h)));
+    const c = smoothstep(0.52, 0.78, n).mul(band);
+    const lit = mix(vec3(1.0, 0.55, 0.42), vec3(1.0, 0.78, 0.5), az).mul(hdr.mul(1.2).mul(az).add(0.9));
+    col = mix(col, mix(vec3(0.42, 0.33, 0.48), lit, smoothstep(0.55, 0.85, n)), c.mul(0.85 * clouds));
   }
   return col;
-}`;
+}
 function skyMaterial() {
-  return new THREE.ShaderMaterial({
-    uniforms: SKY_UNI,
-    vertexShader: `varying vec3 vDir;
-void main(){ vDir = position; vec4 p = projectionMatrix * viewMatrix * vec4(position + cameraPosition, 1.0); p.z = p.w * 0.99999; gl_Position = p; }`,
-    fragmentShader: `uniform float uTime; uniform float uHDR;
-varying vec3 vDir;
-${SKY_GLSL}
-void main(){
-  vec3 d = normalize(vDir);
-  vec3 col = skyCol(d, uHDR, uTime, 1.0);
-  float sd = max(dot(d, uSun), 0.0);
-  col += uSunCol * (pow(sd, 900.0) * 1.6 + pow(sd, 90.0) * 0.45 + pow(sd, 12.0) * 0.12);
-  col += uHDR * uSunCol * (smoothstep(0.99955, 0.9998, sd) * 22.0 + pow(sd, 400.0) * 2.0);
-  col = mix(min(col, vec3(1.0)), col, uHDR);
-  gl_FragColor = vec4(col, 1.0);
-  #include <tonemapping_fragment>
-  #include <encodings_fragment>
-}`,
-    side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false, toneMapped: false
-  });
+  const m = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false });
+  const S = SKY_UNI, hdr = S.uHDR;
+  const d = tnormalize(positionGeometry);
+  let col = skyCol(d, hdr, S.uTime, 1);
+  const sd = tmax(tdot(d, S.uSun), 0);
+  col = col.add(S.uSunCol.mul(tpow(sd, 900).mul(1.6).add(tpow(sd, 90).mul(0.45)).add(tpow(sd, 12).mul(0.12))));
+  col = col.add(S.uSunCol.mul(hdr).mul(smoothstep(0.99955, 0.9998, sd).mul(22).add(tpow(sd, 400).mul(2))));
+  m.colorNode = mix(tmin(col, vec3(1)), col, hdr);
+  const clip = cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(positionLocal.add(cameraPosition), 1));
+  m.vertexNode = vec4(clip.xy, clip.w.mul(0.99999), clip.w);
+  return m;
 }
+// PORT(city): v2 GLSL bay water ported 1:1 (wave normals, Fresnel sky reflection, sun glitter path); v3: SSR,
+// depth colour, foam along the piers and the sea wall.
 function waterMaterial() {
-  const uni = THREE.UniformsUtils.merge([THREE.UniformsLib.fog]);
-  for (const k in SKY_UNI) uni[k] = SKY_UNI[k];
-  uni.uDeep = { value: lin('#123447') }; uni.uShallow = { value: lin('#2e5f6e') };
-  return new THREE.ShaderMaterial({
-    uniforms: uni, fog: true,
-    vertexShader: `varying vec3 vW; varying vec3 vL;
-#include <fog_pars_vertex>
-void main(){ vL = position; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vec4 mvPosition = viewMatrix * w; gl_Position = projectionMatrix * mvPosition;
-#include <fog_vertex>
-}`,
-    fragmentShader: `uniform float uTime; uniform float uHDR; uniform vec3 uDeep; uniform vec3 uShallow;
-varying vec3 vW; varying vec3 vL;
-${SKY_GLSL}
-#include <fog_pars_fragment>
-vec2 wv(vec2 p, float t){
-  vec2 g = vec2(0.0);
-  g += vec2(0.8, 0.3) * cos(dot(p, vec2(0.11, 0.05)) + t * 1.1) * 0.12;
-  g += vec2(-0.3, 0.9) * cos(dot(p, vec2(-0.04, 0.17)) + t * 1.4) * 0.09;
-  g += vec2(0.6, -0.7) * cos(dot(p, vec2(0.31, -0.27)) + t * 2.2) * 0.05;
-  g += (vec2(sN(p * 0.9 + t * 0.6), sN(p * 0.9 - t * 0.5 + 7.0)) - 0.5) * 0.16;
-  g += (vec2(sN(p * 3.3 - t * 0.9), sN(p * 3.3 + t * 1.1 + 3.0)) - 0.5) * 0.08;
-  return g;
+  const m = new THREE.MeshBasicNodeMaterial({ fog: true });
+  const S = SKY_UNI, hdr = S.uHDR, t = S.uTime;
+  const uDeep = uniform(lin('#123447')), uShallow = uniform(lin('#2e5f6e'));
+  const wp = positionWorld, p = positionGeometry.xz;
+  const Vd = tnormalize(cameraPosition.sub(wp));
+  const dist = tlength(cameraPosition.sub(wp));
+  let g = vec2(0.8, 0.3).mul(tcos(tdot(p, vec2(0.11, 0.05)).add(t.mul(1.1))).mul(0.12))
+    .add(vec2(-0.3, 0.9).mul(tcos(tdot(p, vec2(-0.04, 0.17)).add(t.mul(1.4))).mul(0.09)))
+    .add(vec2(0.6, -0.7).mul(tcos(tdot(p, vec2(0.31, -0.27)).add(t.mul(2.2))).mul(0.05)))
+    .add(vec2(TL.vnoise(p.mul(0.9).add(t.mul(0.6))), TL.vnoise(p.mul(0.9).sub(t.mul(0.5)).add(7))).sub(0.5).mul(0.16))
+    .add(vec2(TL.vnoise(p.mul(3.3).sub(t.mul(0.9))), TL.vnoise(p.mul(3.3).add(t.mul(1.1)).add(3))).sub(0.5).mul(0.08));
+  g = g.mul(mix(float(1), float(0.35), smoothstep(80.0, 900.0, dist)));
+  const N = tnormalize(vec3(g.x.negate(), 1, g.y.negate()));
+  const fr = tpow(float(1).sub(tmax(tdot(N, Vd), 0)), 5).mul(0.98).add(0.02);
+  const Rr = treflect(Vd.negate(), N);
+  const refl = skyCol(vec3(Rr.x, tabs(Rr.y), Rr.z), hdr, t, 0.6);
+  const base = mix(uShallow, uDeep, smoothstep(0.0, 0.6, Vd.y));
+  let col = mix(base.mul(0.55), refl, tclamp(fr.mul(1.15), 0, 1));
+  const Hh = tnormalize(S.uSun.add(Vd));
+  const nh = tmax(tdot(N, Hh), 0);
+  const sp = tpow(nh, 260).mul(hdr.mul(5).add(1.4)).add(tpow(nh, 40).mul(0.18));
+  const sparkle = tstep(0.86, TL.hash21(tfloor(p.mul(2)).add(tfloor(t.mul(6))))).mul(tpow(nh, 30)).mul(hdr.mul(6).add(0.8));
+  col = col.add(S.uSunCol.mul(sp.add(sparkle)).mul(vec3(1.0, 0.82, 0.6)));
+  m.colorNode = mix(tmin(col, vec3(1)), col, hdr);
+  return m;
 }
-void main(){
-  vec3 V = normalize(cameraPosition - vW);
-  float dist = length(cameraPosition - vW);
-  vec2 g = wv(vL.xz, uTime) * mix(1.0, 0.35, smoothstep(80.0, 900.0, dist));
-  vec3 N = normalize(vec3(-g.x, 1.0, -g.y));
-  float fr = 0.02 + 0.98 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
-  vec3 R = reflect(-V, N); R.y = abs(R.y);
-  vec3 refl = skyCol(R, uHDR, uTime, 0.6);
-  vec3 base = mix(uShallow, uDeep, smoothstep(0.0, 0.6, V.y));
-  vec3 col = mix(base * 0.55, refl, clamp(fr * 1.15, 0.0, 1.0));
-  // the sun's glitter path
-  vec3 H = normalize(uSun + V);
-  float nh = max(dot(N, H), 0.0);
-  float sp = pow(nh, 260.0) * (1.4 + 5.0 * uHDR) + pow(nh, 40.0) * 0.18;
-  float sparkle = step(0.86, sH(floor(vL.xz * 2.0) + floor(uTime * 6.0))) * pow(nh, 30.0) * (0.8 + 6.0 * uHDR);
-  col += uSunCol * (sp + sparkle) * vec3(1.0, 0.82, 0.6);
-  col = mix(min(col, vec3(1.0)), col, uHDR);
-  gl_FragColor = vec4(col, 1.0);
-  #include <tonemapping_fragment>
-  #include <encodings_fragment>
-  #include <fog_fragment>
-}`
-  });
-}
+// camera-facing billboard: clip position of an instance centre c (local vec3 node) with the quad corner scaled by size
+const billboard = (c, size) => cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(c, 1)).add(vec4(positionGeometry.xy.mul(size), 0, 0)));
+const viewDepth = c => modelViewMatrix.mul(vec4(c, 1)).z.negate();
 // soft glow billboards (lamps, aviation lights, the lighthouse): one instanced quad, camera-facing, additive
+// PORT(city): v2 GLSL billboards ported 1:1 to TSL (vertexNode); v3: real emissive lamp heads + bloom, light cones.
 function glowMesh(points) {
   const n = Math.max(1, points.length);
   const g = new THREE.InstancedBufferGeometry();
@@ -2112,28 +2104,16 @@ function glowMesh(points) {
   points.forEach((p, i) => { off[i * 4] = p[0]; off[i * 4 + 1] = p[1]; off[i * 4 + 2] = p[2]; off[i * 4 + 3] = p[3] || 0; });
   g.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4));
   g.instanceCount = points.length;
-  const m = new THREE.ShaderMaterial({
-    uniforms: { uHDR: U.hdr, uTime: U.time },
-    vertexShader: `attribute vec4 aOff; varying vec2 vQ; varying vec3 vC; varying float vF; uniform float uTime;
-void main(){
-  vQ = position.xy;
-  float kind = aOff.w;
-  vec3 c = kind < 0.5 ? vec3(1.0, 0.72, 0.38) : kind < 1.5 ? vec3(1.0, 0.12, 0.08) : vec3(1.0, 0.92, 0.7);
-  float size = kind < 0.5 ? 1.1 : kind < 1.5 ? 6.0 : 9.0;
-  float blink = kind > 0.5 && kind < 1.5 ? 0.35 + 0.65 * step(0.5, fract(uTime * 0.7 + aOff.x * 0.01)) : 1.0;
-  vec4 mv = viewMatrix * modelMatrix * vec4(aOff.xyz, 1.0);
-  float d = -mv.z;
-  vF = smoothstep(2.0, 12.0, d) * blink;
-  size *= kind < 0.5 ? 1.0 + d * 0.004 : 1.0 + d * 0.0015;
-  mv.xy += position.xy * size;
-  vC = c;
-  gl_Position = projectionMatrix * mv;
-}`,
-    fragmentShader: `uniform float uHDR; varying vec2 vQ; varying vec3 vC; varying float vF;
-void main(){ float r = length(vQ); float a = exp(-r * r * 5.0) * 0.8 + exp(-r * r * 40.0) * 0.6; a *= 1.0 - smoothstep(0.85, 1.0, r);
-  gl_FragColor = vec4(vC * a * vF * mix(0.55, 1.6, uHDR), 1.0); }`,
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, toneMapped: false
-  });
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+  const aOff = attribute('aOff', 'vec4'), kind = aOff.w;
+  const c = select(kind.lessThan(0.5), vec3(1.0, 0.72, 0.38), select(kind.lessThan(1.5), vec3(1.0, 0.12, 0.08), vec3(1.0, 0.92, 0.7)));
+  const blink = select(kind.greaterThan(0.5).and(kind.lessThan(1.5)), tstep(0.5, tfract(U.time.mul(0.7).add(aOff.x.mul(0.01)))).mul(0.65).add(0.35), float(1));
+  const d = viewDepth(aOff.xyz);
+  const size = select(kind.lessThan(0.5), float(1.1).mul(d.mul(0.004).add(1)), select(kind.lessThan(1.5), float(6), float(9)).mul(d.mul(0.0015).add(1)));
+  m.vertexNode = billboard(aOff.xyz, size);
+  const q = positionGeometry.xy, r = tlength(q);
+  const a = texp(r.mul(r).mul(-5)).mul(0.8).add(texp(r.mul(r).mul(-40)).mul(0.6)).mul(float(1).sub(smoothstep(0.85, 1.0, r)));
+  m.colorNode = c.mul(a).mul(smoothstep(2.0, 12.0, d).mul(blink)).mul(mix(float(0.55), float(1.6), U.hdr));
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false; mesh.renderOrder = 5;
   return mesh;
@@ -2148,25 +2128,16 @@ function steamMesh(vents) {
   vents.forEach((v, i) => { for (let k = 0; k < per; k++) { const j = (i * per + k) * 4; off[j] = v[0]; off[j + 1] = v[1]; off[j + 2] = v[2]; off[j + 3] = k / per + v[3] * 0.13; } });
   g.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4));
   g.instanceCount = vents.length * per;
-  const m = new THREE.ShaderMaterial({
-    uniforms: { uTime: U.time, uHDR: U.hdr, uSun: SKY_UNI.uSun, uSunCol: SKY_UNI.uSunCol, uLit: { value: lin('#ffc9a0') }, uShade: { value: lin('#9a8ea8') } },
-    vertexShader: `attribute vec4 aOff; uniform float uTime; varying vec2 vQ; varying float vA; varying float vSeed;
-void main(){
-  float ph = fract(uTime * 0.16 + aOff.w);
-  vec3 p = aOff.xyz + vec3(sin(ph * 6.0 + aOff.w * 30.0) * 0.6 + ph * 2.5, 0.2 + ph * 7.0, cos(ph * 5.0 + aOff.w * 20.0) * 0.6);
-  float size = 0.6 + ph * 3.2;
-  vec4 mv = viewMatrix * modelMatrix * vec4(p, 1.0);
-  mv.xy += position.xy * size;
-  vQ = position.xy; vA = smoothstep(0.0, 0.12, ph) * (1.0 - smoothstep(0.45, 1.0, ph)); vSeed = aOff.w;
-  gl_Position = projectionMatrix * mv;
-}`,
-    fragmentShader: `uniform float uHDR; uniform vec3 uLit; uniform vec3 uShade; varying vec2 vQ; varying float vA; varying float vSeed;
-void main(){ float r = length(vQ); float a = smoothstep(1.0, 0.1, r) * vA * 0.32;
-  vec3 c = mix(uShade, uLit * mix(1.0, 1.6, uHDR), smoothstep(-0.6, 0.8, vQ.x * 0.7 + vQ.y * 0.5));
-  gl_FragColor = vec4(c, a); }`,
-    transparent: true, depthWrite: false, fog: true
-  });
-  m.fog = false;
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, fog: false });
+  const aOff = attribute('aOff', 'vec4');
+  const ph = tfract(U.time.mul(0.16).add(aOff.w));
+  const c0 = aOff.xyz.add(vec3(tsin(ph.mul(6).add(aOff.w.mul(30))).mul(0.6).add(ph.mul(2.5)), ph.mul(7).add(0.2), tcos(ph.mul(5).add(aOff.w.mul(20))).mul(0.6)));
+  m.vertexNode = billboard(c0, ph.mul(3.2).add(0.6));
+  const q = positionGeometry.xy, r = tlength(q);
+  const vA = smoothstep(0.0, 0.12, ph).mul(float(1).sub(smoothstep(0.45, 1.0, ph)));
+  const uLit = uniform(lin('#ffc9a0')), uShade = uniform(lin('#9a8ea8'));
+  m.colorNode = mix(uShade, uLit.mul(mix(float(1), float(1.6), U.hdr)), smoothstep(-0.6, 0.8, q.x.mul(0.7).add(q.y.mul(0.5))));
+  m.opacityNode = smoothstep(1.0, 0.1, r).mul(vA).mul(0.32);
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false; mesh.renderOrder = 6;
   return mesh;
@@ -2202,24 +2173,14 @@ function fogMesh() {
   pts.forEach((p, i) => off.set(p, i * 4));
   g.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4));
   g.instanceCount = pts.length;
-  const m = new THREE.ShaderMaterial({
-    uniforms: { map: { value: fogTexture() }, uTime: U.time, uHDR: U.hdr, uSun: SKY_UNI.uSun, uLit: { value: lin('#ffd4b0') }, uShade: { value: lin('#b9a3b3') } },
-    vertexShader: `attribute vec4 aOff; uniform float uTime; varying vec2 vUv; varying float vF; varying float vSide;
-void main(){
-  vUv = uv;
-  vec3 p = aOff.xyz + vec3(sin(uTime * 0.05 + aOff.x) * 8.0, 0.0, 0.0);
-  vec4 mv = viewMatrix * modelMatrix * vec4(p, 1.0);
-  mv.xy += position.xy * aOff.w;
-  float d = -mv.z;
-  vF = smoothstep(30.0, 160.0, d);
-  vSide = position.x;
-  gl_Position = projectionMatrix * mv;
-}`,
-    fragmentShader: `uniform sampler2D map; uniform float uHDR; uniform vec3 uLit; uniform vec3 uShade; varying vec2 vUv; varying float vF; varying float vSide;
-void main(){ vec4 t = texture2D(map, vUv); vec3 c = mix(uShade, uLit * mix(1.0, 1.35, uHDR), smoothstep(0.2, 0.9, vUv.y));
-  gl_FragColor = vec4(c, t.a * 0.85 * vF); }`,
-    transparent: true, depthWrite: false
-  });
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, fog: false });
+  const aOff = attribute('aOff', 'vec4');
+  const c0 = aOff.xyz.add(vec3(tsin(U.time.mul(0.05).add(aOff.x)).mul(8), 0, 0));
+  m.vertexNode = billboard(c0, aOff.w);
+  const tx = ttexture(fogTexture(), tuv());
+  const uLit = uniform(lin('#ffd4b0')), uShade = uniform(lin('#b9a3b3'));
+  m.colorNode = mix(uShade, uLit.mul(mix(float(1), float(1.35), U.hdr)), smoothstep(0.2, 0.9, tuv().y));
+  m.opacityNode = tx.a.mul(0.85).mul(smoothstep(30.0, 160.0, viewDepth(c0)));
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false; mesh.renderOrder = 4;
   return mesh;
@@ -2242,16 +2203,15 @@ function flagMesh(list) {
     }
   }
   const g = mb.build();
-  const m = cityMaterial();
-  const prev = m.onBeforeCompile;
-  m.onBeforeCompile = sh => {
-    prev(sh);
-    sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-  float fu = aUv.x; float wave = sin(uTime * 6.0 - fu * 7.0 + position.x * 0.3) * 0.35 * fu + sin(uTime * 9.3 - fu * 12.0) * 0.08 * fu;
-  transformed.y += wave * 0.25; transformed.xz += normal.xz * wave;`).replace('#include <common>', '#include <common>\nuniform float uTime;');
-  };
+  // cloth waving (vertex animation along the fly, aUv.x = 0 at the hoist) — PORT(city): v2 GLSL ported 1:1 (positionNode)
+  const m = cityMaterial({
+    position: p => {
+      const fu = attribute('aUv', 'vec2').x, t = U.time;
+      const wave = tsin(t.mul(6).sub(fu.mul(7)).add(positionGeometry.x.mul(0.3))).mul(0.35).mul(fu).add(tsin(t.mul(9.3).sub(fu.mul(12))).mul(0.08).mul(fu));
+      return p.add(vec3(normalGeometry.x.mul(wave), wave.mul(0.25), normalGeometry.z.mul(wave)));
+    }
+  });
   m.side = THREE.DoubleSide;
-  m.customProgramCacheKey = () => 'kit-city-flag';
   const mesh = new THREE.Mesh(g, m);
   mesh.castShadow = false;
   return mesh;
@@ -2268,25 +2228,21 @@ function gullMesh(center) {
     mb.quad([-0.12, -0.05, -0.5], [0.12, -0.05, -0.5], [0.12, -0.05, 0.5], [-0.12, -0.05, 0.5], G, KIND.plain, 0, 0, 0, 0, id);
   }
   const g = mb.build();
-  const m = cityMaterial();
-  const prev = m.onBeforeCompile;
-  const C = { value: new V3(center[0], center[1], center[2]) };
-  m.onBeforeCompile = sh => {
-    prev(sh);
-    sh.uniforms.uC = C;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime; uniform vec3 uC;')
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-  float id = aUv.y; float side = aUv.x;
-  float flap = sin(uTime * 7.0 + id * 40.0) * 0.6;
-  if (side != 0.0) transformed.y += abs(transformed.x) * flap;
-  float a = uTime * (0.25 + id * 0.15) + id * 6.283;
-  float rad = 18.0 + id * 26.0;
-  vec3 c = uC + vec3(cos(a) * rad, 10.0 + id * 9.0 + sin(uTime * 0.7 + id * 9.0) * 2.0, sin(a) * rad);
-  float yaw = -a;
-  transformed = vec3(transformed.x * cos(yaw) - transformed.z * sin(yaw), transformed.y, transformed.x * sin(yaw) + transformed.z * cos(yaw)) * 1.3 + c;`);
-  };
+  // each gull flaps and circles (vertex animation: aUv.x = wing side, aUv.y = gull id) — PORT(city): v2 GLSL ported 1:1
+  const C = uniform(new V3(center[0], center[1], center[2]));
+  const m = cityMaterial({
+    position: p => {
+      const t = U.time, au = attribute('aUv', 'vec2'), id = au.y, side = au.x;
+      const flap = tsin(t.mul(7).add(id.mul(40))).mul(0.6);
+      const y = p.y.add(select(side.notEqual(0), tabs(p.x).mul(flap), float(0)));
+      const a = t.mul(id.mul(0.15).add(0.25)).add(id.mul(6.283));
+      const rad = id.mul(26).add(18);
+      const c = C.add(vec3(tcos(a).mul(rad), id.mul(9).add(10).add(tsin(t.mul(0.7).add(id.mul(9))).mul(2)), tsin(a).mul(rad)));
+      const yaw = a.negate(), cy = tcos(yaw), sy = tsin(yaw);
+      return vec3(p.x.mul(cy).sub(p.z.mul(sy)), y, p.x.mul(sy).add(p.z.mul(cy))).mul(1.3).add(c);
+    }
+  });
   m.side = THREE.DoubleSide;
-  m.customProgramCacheKey = () => 'kit-city-gull';
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false;
   return mesh;
@@ -2306,159 +2262,11 @@ function buildSails(mb, r) {
 }
 
 // ===================== vehicles =====================
-// local frame: +z = front, y = 0 on the road, x lateral. paint parts use KIND 30 (tinted per instance).
-const VT = [
-  { name: 'sedan', hx: 0.93, hy: 0.73, hz: 2.3 },
-  { name: 'taxi', hx: 0.93, hy: 0.73, hz: 2.3 },
-  { name: 'van', hx: 1.0, hy: 1.08, hz: 2.6 },
-  { name: 'bus', hx: 1.3, hy: 1.58, hz: 6.0 },
-  { name: 'cable', hx: 1.25, hy: 1.68, hz: 4.3 },
-  { name: 'tram', hx: 1.35, hy: 1.72, hz: 7.0 },
-  { name: 'works', hx: 1.2, hy: 0.6, hz: 1.9 },
-  { name: 'dvan', hx: 1.0, hy: 1.08, hz: 2.6 }
-];
-const BLINK = 31; // amber lamps that flash (works, hazard lights)
-const PAINT = 30;
-const HEAD = lin('#fff3d6'), TAIL = lin('#ff2a1a'), GLASS = lin('#1c2430'), TIRE = lin('#1b1b1d'), CHROME = lin('#c9ced6');
-function vehicleTop(type, lz) {
-  // walkable top height above the road at local z (roof, windshield ramps, hood)
-  if (type <= 1) {
-    if (lz > 1.2 || lz < -1.45) return 0.98;
-    if (lz > 0.6) return lerp(1.45, 0.98, (lz - 0.6) / 0.6);
-    if (lz < -0.95) return lerp(1.45, 1.0, (-0.95 - lz) / 0.5);
-    return 1.45;
-  }
-  if (type === 2 || type === 7) return lz > 1.7 ? lerp(2.15, 1.2, (lz - 1.7) / 0.9) : 2.15;
-  if (type === 6) return 1.02;
-  return VT[type].hy * 2;
-}
-const _vm = new THREE.Matrix4();
-function vehicleGeo(mb, type, M, paint) {
-  if (mb.hd) mb = mb.hd; // a detail: drawn near the camera only
-  const T = templates(), P = paint || C_WHITE;
-  const at = (x, y, z, sx, sy, sz, rx) => { const L = TRS(x, y, z, rx || 0, 0, 0, sx, sy, sz); return _vm.copy(M).multiply(L); };
-  const box = (x, y, z, sx, sy, sz, c, k, e) => mb.geo(T.box, at(x, y, z, sx, sy, sz), c, k, e || 0);
-  const wheel = (x, z, r) => { const L = TRS(x, r, z, 0, 0, Math.PI / 2, r, 0.26, r); mb.geo(paint ? T.cyl8 : T.cyl12, _vm.copy(M).multiply(L), TIRE, KIND.plain, 0); };
-  if (type <= 1) {
-    box(0, 0.62, 0, 1.86, 0.64, 4.6, P, PAINT);
-    // cabin (tapered) with glass all round and a painted roof
-    const q = (a, b, c, d, cc, k) => { const w = [a, b, c, d].map(p => { _gv.set(p[0], p[1], p[2]).applyMatrix4(M); return [_gv.x, _gv.y, _gv.z]; }); mb.quad(w[0], w[1], w[2], w[3], cc, k, 0, 1, 1); };
-    const yb = 0.94, yt = 1.45, wb = 0.85, wt = 0.74;
-    const zf0 = 1.15, zf1 = 0.55, zr0 = -1.4, zr1 = -0.95;
-    q([-wb, yb, zf0], [wb, yb, zf0], [wt, yt, zf1], [-wt, yt, zf1], GLASS, KIND.glass);
-    q([wb, yb, zr0], [-wb, yb, zr0], [-wt, yt, zr1], [wt, yt, zr1], GLASS, KIND.glass);
-    q([wb, yb, zf0], [wb, yb, zr0], [wt, yt, zr1], [wt, yt, zf1], GLASS, KIND.glass);
-    q([-wb, yb, zr0], [-wb, yb, zf0], [-wt, yt, zf1], [-wt, yt, zr1], GLASS, KIND.glass);
-    q([-wt, yt, zf1], [wt, yt, zf1], [wt, yt, zr1], [-wt, yt, zr1], P, PAINT);
-    // pillars
-    for (const sx of [-1, 1]) q([sx * 0.86, yb, -0.2], [sx * 0.86, yb, -0.05], [sx * 0.75, yt, -0.05], [sx * 0.75, yt, -0.2], P, PAINT);
-    box(0, 0.42, 2.32, 1.9, 0.2, 0.12, CHROME, KIND.metal);
-    box(0, 0.42, -2.32, 1.9, 0.2, 0.12, CHROME, KIND.metal);
-    box(0, 0.68, 2.31, 0.9, 0.18, 0.04, IRON, KIND.metal);
-    for (const sx of [-1, 1]) { box(sx * 0.68, 0.74, 2.31, 0.36, 0.16, 0.04, HEAD, KIND.glow, 2.4); box(sx * 0.72, 0.76, -2.31, 0.3, 0.14, 0.04, TAIL, KIND.glow, 1.6); }
-    for (const sx of [-1, 1]) for (const z of [-1.45, 1.45]) wheel(sx * 0.82, z, 0.34);
-    if (type === 1) {
-      box(0, 1.6, -0.2, 0.7, 0.28, 0.32, lin('#fff1b0'), KIND.glow, 1.2);
-      for (const sx of [-1, 1]) box(sx * 0.935, 0.62, 0, 0.02, 0.14, 4.2, lin('#1b1b1b'), KIND.dentil);
-    }
-  } else if (type === 2 || type === 7) {
-    box(0, 1.17, -0.25, 2.0, 1.95, 4.7, P, PAINT);
-    box(0, 0.75, 2.2, 1.96, 0.9, 0.8, P, PAINT);
-    box(0, 1.5, 2.12, 1.86, 0.7, 0.62, GLASS, KIND.glass);
-    for (const sx of [-1, 1]) box(sx * 1.0, 1.55, 1.2, 0.04, 0.6, 1.1, GLASS, KIND.glass);
-    box(0, 0.4, 2.62, 2.02, 0.22, 0.1, CHROME, KIND.metal);
-    for (const sx of [-1, 1]) { box(sx * 0.72, 0.85, 2.6, 0.36, 0.18, 0.04, HEAD, KIND.glow, 2.4); box(sx * 0.85, 1.0, -2.61, 0.22, 0.4, 0.04, TAIL, KIND.glow, 1.6); }
-    for (const sx of [-1, 1]) for (const z of [-1.7, 1.75]) wheel(sx * 0.88, z, 0.38);
-    if (type === 7) {
-      // double-parked: hazard lights at the four corners, a beacon on the roof, the rear doors open
-      const amb = lin('#ffa31a');
-      for (const sx of [-1, 1]) { box(sx * 0.93, 0.85, 2.63, 0.16, 0.14, 0.03, amb, BLINK, 2.6); box(sx * 0.93, 1.35, -2.63, 0.16, 0.14, 0.03, amb, BLINK, 2.6); }
-      mb.geo(T.sph8, at(0, 2.22, 0.9, 0.22, 0.16, 0.22), amb, BLINK, 3.0);
-      box(0, 2.16, 0.9, 0.5, 0.05, 0.5, IRON, KIND.metal);
-      for (const sx of [-1, 1]) box(sx * 1.32, 1.2, -2.48, 0.62, 1.8, 0.05, P, PAINT);
-      box(0, 1.2, -2.57, 1.7, 1.7, 0.04, lin('#2a2622'), KIND.plain);
-      box(0.25, 0.42, -2.25, 0.7, 0.5, 0.55, lin('#b58a55'), KIND.plank);
-    }
-  } else if (type === 3) {
-    const red = lin('#c8352c'), wh = lin('#f1ece2');
-    box(0, 1.65, 0, 2.6, 2.7, 12, wh, KIND.plain);
-    box(0, 0.75, 0, 2.62, 0.7, 12.02, red, KIND.plain);
-    for (const sx of [-1, 1]) box(sx * 1.31, 2.05, 0.2, 0.03, 0.9, 10.6, GLASS, KIND.glass, 0.5);
-    box(0, 2.0, 6.0, 2.4, 1.3, 0.04, GLASS, KIND.glass);
-    box(0, 3.1, 0, 2.2, 0.25, 9, lin('#d8d2c6'), KIND.plain);
-    box(0, 2.85, 6.01, 1.6, 0.3, 0.03, lin('#ffb020'), KIND.glow, 1.4);
-    for (const sx of [-1, 1]) { box(sx * 0.95, 0.75, 6.01, 0.36, 0.2, 0.04, HEAD, KIND.glow, 2.4); box(sx * 1.05, 0.9, -6.01, 0.25, 0.4, 0.04, TAIL, KIND.glow, 1.6); }
-    for (const sx of [-1, 1]) for (const z of [-4.2, 3.9]) wheel(sx * 1.08, z, 0.48);
-  } else if (type === 4) {
-    // the cable car: maroon base, cream panels, open bench ends with brass poles, clerestory roof
-    const mar = lin('#7a1f22'), cream = lin('#efe1bf'), red = lin('#b8322a'), wood = lin('#7b5634'), brass = lin('#d6b25a');
-    box(0, 0.75, 0, 2.4, 0.7, 8.6, mar, KIND.plain);
-    box(0, 0.42, 0, 2.5, 0.1, 8.7, wood, KIND.plank);
-    box(0, 1.85, 0, 2.3, 1.5, 4.2, cream, KIND.plain);
-    for (const sx of [-1, 1]) for (let k = -3; k <= 3; k++) box(sx * 1.16, 2.1, k * 0.58, 0.03, 0.8, 0.44, GLASS, KIND.glass, 0.6);
-    box(0, 1.3, 0, 2.32, 0.18, 4.22, red, KIND.plain);
-    for (const z of [-3.2, 3.2]) {
-      box(0, 1.15, z, 2.3, 0.1, 2.0, wood, KIND.plank);
-      for (const sx of [-1, 1]) for (const dz of [-0.85, 0.85]) mb.geo(T.cyl8, at(sx * 1.1, 2.0, z + dz, 0.035, 1.6, 0.035), brass, KIND.metal, 0);
-    }
-    box(0, 2.9, 0, 2.5, 0.16, 8.8, cream, KIND.plain);
-    box(0, 3.15, 0, 1.4, 0.35, 7.0, red, KIND.plain);
-    for (const sx of [-1, 1]) box(sx * 0.71, 3.15, 0, 0.02, 0.2, 6.6, GLASS, KIND.glass, 0.8);
-    box(0, 3.15, 4.3, 0.9, 0.35, 0.3, lin('#1a1a1a'), KIND.plain);
-    box(0, 3.15, 4.46, 0.7, 0.2, 0.04, lin('#fff3c0'), KIND.glow, 1.0);
-    box(0, 1.3, 4.35, 0.3, 0.3, 0.08, HEAD, KIND.glow, 2.6);
-    box(0, 1.3, -4.35, 0.3, 0.3, 0.08, HEAD, KIND.glow, 2.0);
-    for (const sx of [-1, 1]) for (const z of [-2.6, 2.6]) wheel(sx * 0.75, z, 0.32);
-  } else if (type === 6) {
-    // road works on the crown of the street: sawhorse barriers front and back, striped side boards, flashing lamps,
-    // a blue "keep left / right" sign, a heap of earth, a pick and a toolbox inside
-    const ora = lin('#ff7a1a'), leg = lin('#d9d2c4'), amb = lin('#ffa31a'), blue = lin('#1f5fb8');
-    for (const z of [-1.78, 1.78]) {
-      for (const h of [0.55, 0.92]) box(0, h, z, 2.4, 0.2, 0.06, ora, KIND.awning);
-      for (const sx of [-1.12, 1.12]) box(sx, 0.5, z, 0.1, 1.0, 0.42, leg, KIND.plain);
-      for (const sx of [-0.95, 0.95]) mb.geo(T.sph8, at(sx, 1.12, z, 0.1, 0.1, 0.1), amb, BLINK, 2.8);
-    }
-    for (const sx of [-1.15, 1.15]) { box(sx, 0.48, 0, 0.05, 0.22, 3.4, ora, KIND.awning); box(sx, 0.24, 0, 0.06, 0.48, 0.08, leg, KIND.plain); }
-    mb.geo(T.sph8, at(0, 0.05, 0.2, 0.75, 0.42, 1.0), lin('#6b5236'), KIND.plain, 0);
-    box(0, 0.01, -0.9, 1.6, 0.03, 1.0, lin('#1d1b1a'), KIND.plain);
-    box(-0.55, 0.2, -0.95, 0.45, 0.4, 0.3, lin('#c0392b'), KIND.metal);
-    mb.geo(T.cyl8, at(0.45, 0.6, 0.35, 0.03, 1.1, 0.03, 0.5), WOOD, KIND.plank, 0);
-    for (const z of [-1.97, 1.97]) {
-      mb.geo(T.cyl8, at(0, 1.32, z, 0.035, 0.7, 0.035), STEEL, KIND.metal, 0);
-      mb.geo(T.cyl12, at(0, 1.72, z, 0.3, 0.025, 0.3, Math.PI / 2), blue, KIND.plain, 0);
-      box(0, 1.72, z + Math.sign(z) * 0.02, 0.32, 0.07, 0.01, C_WHITE, KIND.paint);
-      box(-0.12, 1.79, z + Math.sign(z) * 0.02, 0.07, 0.07, 0.01, C_WHITE, KIND.paint);
-      box(-0.12, 1.65, z + Math.sign(z) * 0.02, 0.07, 0.07, 0.01, C_WHITE, KIND.paint);
-    }
-  } else {
-    // vintage streetcar: green and cream with a trolley pole
-    const grn = lin('#2f6b4f'), cream = lin('#efe4c7');
-    box(0, 1.0, 0, 2.7, 1.2, 14, grn, KIND.plain);
-    box(0, 2.3, 0, 2.6, 1.4, 13.6, cream, KIND.plain);
-    for (const sx of [-1, 1]) for (let k = -5; k <= 5; k++) box(sx * 1.31, 2.35, k * 1.15, 0.03, 0.9, 0.8, GLASS, KIND.glass, 0.6);
-    box(0, 3.2, 0, 2.4, 0.4, 12.8, grn, KIND.plain);
-    for (const z of [-6.95, 6.95]) { box(0, 2.3, z, 2.2, 1.0, 0.04, GLASS, KIND.glass); box(0, 1.15, z * 1.003, 0.35, 0.3, 0.06, HEAD, KIND.glow, 2.4); }
-    mb.geo(T.cyl8, at(0, 4.6, -1.0, 0.04, 5.6, 0.04, -0.85), lin('#2a2a2a'), KIND.metal, 0);
-    for (const sx of [-1, 1]) for (const z of [-4.5, 4.5]) wheel(sx * 0.8, z, 0.4);
-  }
-}
-function vehicleMaterial() {
-  const m = cityMaterial();
-  const prev = m.onBeforeCompile;
-  m.onBeforeCompile = sh => {
-    prev(sh);
-    sh.vertexShader = sh.vertexShader.replace('#include <color_vertex>', `#include <color_vertex>
-#ifdef USE_INSTANCING_COLOR
-  vColor.xyz = mix(color.xyz, color.xyz * instanceColor.xyz, aKind > 29.5 ? 1.0 : 0.0);
-#endif`);
-    sh.fragmentShader = sh.fragmentShader.replace('if (kk == 1) {', 'if (kk == 30) { cRough = 0.28; cMetal = 0.35; }\n  else if (kk == 31) { float bl = step(0.45, fract(uTime * 1.4)); cEmit = diffuseColor.rgb * vEmit * mix(0.04, 1.0, bl) * mix(1.0, 2.6, uHDR); cRough = 0.3; }\n  else if (kk == 1) {');
-  };
-  m.customProgramCacheKey = () => 'kit-city-veh';
-  return m;
-}
+// The vehicle types, their geometry, paints, lamps and the walkable-top profile live in 26-vehicles.js (K.vehicles);
+// these aliases are bound in build() (K.vehicles is defined by a later part).
+let VT = null, vehicleTop = null;
 // ===================== traffic =====================
 const TR = { pool: [], active: [], lanes: [[], []], cross: [], built: false, seed: 1, kS: 0, kV: 0 };
-const CAR_PAINTS = ['#f2f2ef', '#1d1f24', '#b8bec6', '#c0392b', '#2e5c9a', '#2f6b4f', '#e2d4b0', '#8a1f2e', '#5a6470', '#f0c419', '#3a8fb7', '#d9662b'];
 function makeCar(type, idx) {
   const t = VT[type];
   return {
@@ -2470,20 +2278,18 @@ function makeCar(type, idx) {
 }
 const MESH = { veh: [], beams: null, rings: null, dash: null };
 function buildTraffic(group) {
-  const mat = vehicleMaterial();
+  const KV = K.vehicles;
   const counts = [16, 6, 6, 3, 2, 1, 3, 3];
   let id = 0;
   for (let t = 0; t < VT.length; t++) {
-    const mb = new MB();
-    vehicleGeo(mb, t, new THREE.Matrix4(), null);
-    const geo = mb.build();
+    const { geometry: geo, material: mat } = KV.build(t);
     const im = new THREE.InstancedMesh(geo, mat, counts[t]);
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false;
     const c = new THREE.Color();
     for (let i = 0; i < counts[t]; i++) {
       im.setMatrixAt(i, ZERO_M);
-      c.copy(t === 1 ? lin('#f4c21b') : t === 7 ? lin(['#7a5230', '#f2f2ef', '#c0392b'][i % 3]) : t >= 3 ? C_WHITE : lin(CAR_PAINTS[(i * 5 + t) % CAR_PAINTS.length]));
+      c.copy(KV.paint(t, i));
       im.setColorAt(i, c);
       const car = makeCar(t, i);
       car.id = id++;
@@ -2803,16 +2609,8 @@ function flightAt(u, out) {
 function ringsMesh() {
   const g = new THREE.TorusGeometry(0.62, 0.12, 8, 24);
   const m = new THREE.MeshStandardMaterial({ color: lin('#ffc61a'), metalness: 0.85, roughness: 0.22, emissive: lin('#ff9500'), emissiveIntensity: 0.32 });
-  m.onBeforeCompile = sh => {
-    sh.uniforms.uTime = U.time;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime;')
-      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
-  float rA = uTime * 3.0; float rC = cos(rA), rS = sin(rA);
-  objectNormal.xz = vec2(rC * objectNormal.x - rS * objectNormal.z, rS * objectNormal.x + rC * objectNormal.z);`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-  transformed.xz = vec2(rC * transformed.x - rS * transformed.z, rS * transformed.x + rC * transformed.z);`);
-  };
-  m.customProgramCacheKey = () => 'kit-city-ring';
+  // PORT(city): v2 spun every ring about its own axis in the vertex shader (angle = time * 3); r186 applies the
+  // instance matrix before positionNode, so the shared torus geometry is spun on the CPU instead (K.util.spinY, per frame)
   const n = RINGS.pos.length;
   // only the rings near Kit are drawn: a window along the route (and the sky rings once the pier is close)
   RINGS.cap = Math.min(n, 150);
@@ -2947,7 +2745,7 @@ function kitFaceTexture() {
   }
   g.fillStyle = '#1a0b05'; g.beginPath(); g.ellipse(0, 14, 10, 7, 0, 0, TAU); g.fill();
   g.strokeStyle = '#3d1707'; g.lineWidth = 4; g.beginPath(); g.arc(-6, 30, 14, 0.2, Math.PI - 0.6); g.stroke();
-  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 function goalMesh(group) {
@@ -3126,7 +2924,7 @@ function routePoint(s, d, h, out) { const p = rp(s, d, h); return (out || new V3
 const ST = { built: false, entered: false, time: 0, pickT: -1, sK: 0, vK: 0, kitD: 0, kitOn: false, cp: -1, focus: new V3(), buildMs: 0, prev: null, env: null, sun: null, hemi: null, fog: null, bg: null, kitS: 0, last: new V3() };
 function buildLights(group) {
   const touch = isTouch();
-  const sun = new THREE.DirectionalLight(lin(SUN_HEX), 2.3);
+  const sun = new THREE.DirectionalLight(lin(SUN_HEX), 2.3 * LIGHT_PI);
   sun.castShadow = true;
   const size = touch ? 1024 : 2048, ext = touch ? 44 : 56;
   sun.shadow.mapSize.set(size, size);
@@ -3136,10 +2934,10 @@ function buildLights(group) {
   sun.shadow.bias = -0.0007; sun.shadow.normalBias = 0.05;
   ST.shadowExt = ext; ST.shadowSize = size;
   group.add(sun); group.add(sun.target);
-  const hemi = new THREE.HemisphereLight(lin('#8f92cc'), lin('#8a6652'), 0.5);
+  const hemi = new THREE.HemisphereLight(lin('#8f92cc'), lin('#8a6652'), 0.5 * LIGHT_PI);
   group.add(hemi);
   // the open evening sky opposite the sun: a cool fill so the streets in the shade keep their asphalt, cars and Kit readable
-  const fill = new THREE.DirectionalLight(lin('#adb7da'), 0.4);
+  const fill = new THREE.DirectionalLight(lin('#adb7da'), 0.4 * LIGHT_PI);
   fill.position.set(-SUN_DIR.x * 0.55, 0.8, -SUN_DIR.z * 0.55).normalize().multiplyScalar(100);
   group.add(fill); group.add(fill.target);
   ST.sun = sun; ST.hemi = hemi; ST.fill = fill;
@@ -3166,8 +2964,8 @@ function bakeParked(group) {
     const pitch = Math.atan(FB.g * p.dir);
     _ce.set(-pitch, p.yaw, 0, 'YXZ'); _cq.setFromEuler(_ce);
     const M = new THREE.Matrix4().compose(new V3(x, y, z), _cq, new V3(1, 1, 1));
-    const paint = p.type === 1 ? lin('#f4c21b') : lin(CAR_PAINTS[Math.floor(hash(p.s * 1.7) * CAR_PAINTS.length) % CAR_PAINTS.length]);
-    vehicleGeo(chunk(p.s).mb, p.type, M, paint);
+    const paint = K.vehicles.parkedPaint(p.type, p.s);
+    K.vehicles.addTo(chunk(p.s).mb, p.type, M, paint);
     const t = VT[p.type];
     addSolid({ x, y: y + t.hy, z, hx: t.hx, hy: t.hy, hz: t.hz, yaw: p.yaw, kind: 'car', type: p.type, y0: y, top: true });
     PXL.push({ F: { ox: x, oy: y, oz: z, ax: Math.cos(p.yaw), az: -Math.sin(p.yaw), bx: Math.sin(p.yaw), bz: Math.cos(p.yaw) }, a0: -t.hx, a1: t.hx, y0: 0, y1: t.hy * 1.9, b0: -t.hz, b1: t.hz });
@@ -3180,6 +2978,9 @@ function propSolids() {
 }
 const LAMP_POSTS = [];
 function build(scene) {
+  const KV = K.vehicles;
+  if (!KV || !KV.VT) throw new Error('K.vehicles (26-vehicles.js) is missing');
+  VT = KV.VT; vehicleTop = KV.vehicleTop;
   if (ST.built) return C.group;
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   scene = scene || (K.view && K.view.scene);
@@ -3319,7 +3120,7 @@ function enter() {
   }
   if (!env) env = ownEnvironment();
   if (env) sc.environment = env;
-  ST.hemi.intensity = sc.environment ? 0.5 : 0.8;
+  ST.hemi.intensity = (sc.environment ? 0.5 : 0.8) * LIGHT_PI;
   reset({ full: true });
 }
 function ownEnvironment() {
@@ -3390,6 +3191,8 @@ function update(dt, t) {
   if (!(dt > 0 && dt < 0.25)) dt = 1 / 60;
   ST.time += dt;
   U.time.value = ST.time % 3600;
+  if (K.vehicles && K.vehicles.update) K.vehicles.update(dt, U.time.value);
+  if (MESH.rings) K.util.spinY(MESH.rings.geometry, U.time.value * 3);
   const P = K.player;
   let kx = 0, kz = 0, ky = 0, alive = false;
   if (P && finV(P.pos)) {
@@ -3465,6 +3268,8 @@ function stats() {
     chunks: CK.list.filter(c => c.mesh).length, lamps: LAMPS.length
   };
 }
+// city internals the vehicles part builds with (mesh builder, templates, surface kinds, shared colours, material)
+K.cityLib = { MB, templates, TRS, KIND, lin, hash, U, cityMaterial, C_WHITE, IRON, STEEL, WOOD };
 const C = K.city = {
   group: null, start: null, checkpoints: [], deathY: -3, bumper: null, goal: null, offset: new V3(OX, 0, OZ),
   build, enter, exit, update, reset, stats,

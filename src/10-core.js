@@ -24,6 +24,25 @@ const util = K.util = {
     };
   },
   easeOut: t => 1 - Math.pow(1 - clamp(t, 0, 1), 3),
+  // Spins a (shared, instanced) geometry about its local Y axis to angle a (radians), in place: positions and normals
+  // are rewritten from a copy of the originals (x' = cos a x - sin a z, z' = sin a x + cos a z). r186 applies the
+  // instance matrix before a material's positionNode, so a per-instance local spin is done here on the CPU.
+  spinY(geo, a) {
+    if (!geo || !geo.attributes || !geo.attributes.position || !Number.isFinite(a)) return;
+    const P = geo.attributes.position, N = geo.attributes.normal;
+    let o = geo.userData.spin0;
+    if (!o) o = geo.userData.spin0 = { p: Float32Array.from(P.array), n: N ? Float32Array.from(N.array) : null, a: NaN };
+    if (o.a === a) return;
+    o.a = a;
+    const c = Math.cos(a), s = Math.sin(a), pa = P.array, p0 = o.p;
+    for (let i = 0; i < p0.length; i += 3) { const x = p0[i], z = p0[i + 2]; pa[i] = c * x - s * z; pa[i + 2] = s * x + c * z; }
+    P.needsUpdate = true;
+    if (N && o.n) {
+      const na = N.array, n0 = o.n;
+      for (let i = 0; i < n0.length; i += 3) { const x = n0[i], z = n0[i + 2]; na[i] = c * x - s * z; na[i + 2] = s * x + c * z; }
+      N.needsUpdate = true;
+    }
+  },
   sign: v => (v < 0 ? -1 : v > 0 ? 1 : 0)
 };
 
@@ -46,42 +65,102 @@ const touchUI = document.getElementById('touch');
 const rotateHint = document.getElementById('rotate');
 const mq = q => { try { return matchMedia(q).matches; } catch (e) { return false; } };
 
+const fatalEl = document.getElementById('fatal');
 const view = K.view = {
   renderer: null, scene: null, camera: null,
   W: 640, H: 360, dpr: 1, hudDpr: 1,
   isTouch: false, reduceMotion: false, shadowSize: 2048,
   hud: null, onResize: [], ok: false, lost: false, error: '',
   qualityCap: 2,
-  init() {
+  // 'webgpu' | 'webgl2' once init() resolved; forceGL: ?gl in the URL forces the renderer's WebGL 2 backend
+  backend: '', forceGL: false, initMs: 0,
+  // Creates the three.js r186 WebGPURenderer on #gl (WebGPU when the browser has it, the renderer's own WebGL 2 backend
+  // otherwise or with ?gl) and waits for its init. Resolves true when the renderer is ready, false with view.error
+  // (French) when no backend could start. Shadows on (PCF), sRGB output, ACES (K.post overrides the tone mapping
+  // when its pipeline runs).
+  async init() {
     if (this.ok) return true;
+    const t0 = performance.now();
     this.isTouch = mq('(pointer: coarse)') || (navigator.maxTouchPoints > 0 && !mq('(pointer: fine)'));
     this.reduceMotion = mq('(prefers-reduced-motion: reduce)');
     this.shadowSize = this.isTouch ? 1024 : 2048;
     this.qualityCap = this.isTouch ? 1.5 : 2;
     this.hud = hudCv.getContext('2d');
-    if (typeof THREE === 'undefined') { this.error = 'Le moteur 3D (three.js) n’a pas pu être chargé.'; this.fit(); return false; }
+    this.fit();
+    let q = '';
+    try { q = location.search || ''; } catch (e) { /* no location */ }
+    this.forceGL = /[?&]gl(=|&|$)/.test(q);
     let r = null;
+    const make = forceWebGL => new THREE.WebGPURenderer({ canvas: glCv, antialias: false, powerPreference: 'high-performance', forceWebGL });
     try {
-      r = new THREE.WebGLRenderer({ canvas: glCv, antialias: true, powerPreference: 'high-performance', stencil: false });
+      r = make(this.forceGL);
+      await r.init();
     } catch (e) {
-      this.error = 'WebGL n’est pas disponible sur cet appareil.'; this.fit(); return false;
+      // the WebGPU backend falls back to WebGL 2 by itself when WebGPU is missing; a failure here is a hard one,
+      // try WebGL 2 once more explicitly
+      console.warn('Kit Rush 3D: renderer init failed', e);
+      r = null;
+      if (!this.forceGL) {
+        try { r = make(true); await r.init(); } catch (e2) { console.warn('Kit Rush 3D: WebGL 2 init failed', e2); r = null; }
+      }
     }
+    if (!r || !r.backend) {
+      this.error = 'Ni WebGPU ni WebGL 2 ne sont disponibles sur cet appareil.';
+      return false;
+    }
+    this.backend = r.backend.isWebGPUBackend ? 'webgpu' : 'webgl2';
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
-    r.outputEncoding = THREE.sRGBEncoding;
+    r.shadowMap.type = THREE.PCFShadowMap;
+    r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.05;
     r.setClearColor(0x9fd8ff, 1);
+    // GPU device / WebGL context lost: stop drawing and say so (the renderer cannot be restored in place)
+    r.onDeviceLost = info => {
+      view.lost = true;
+      console.warn('Kit Rush 3D: GPU device lost', info && info.message);
+      view.showFatal('Le rendu 3D s’est interrompu (carte graphique réinitialisée). Recharge la page pour reprendre.');
+    };
     this.renderer = r;
+    // draw-call accounting: three r186 only resets renderer.info inside its own animation loop, the game drives frames
+    // itself. beginFrame() resets it, renders of the game scene (scene pass, shadow maps) are summed separately from
+    // the post passes; endFrame() publishes view.stats {calls, tris, sceneCalls, sceneTris} (tests and budgets read it).
+    const rawRender = r.render.bind(r), inf = r.info.render, st = this.stats;
+    let depth = 0; // shadow maps render the scene again from inside its own render: count the outermost call only
+    r.render = function (scene, camera) {
+      if (scene !== view.scene || depth > 0) return rawRender(scene, camera);
+      const c0 = inf.drawCalls, t0 = inf.triangles;
+      depth++;
+      try { return rawRender(scene, camera); } finally {
+        depth--;
+        st.sceneCalls += inf.drawCalls - c0; st.sceneTris += inf.triangles - t0;
+      }
+    };
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.1, 900);
     this.camera.position.set(0, 4, 8);
     this._v = new THREE.Vector3();
-    glCv.addEventListener('webglcontextlost', e => { e.preventDefault(); view.lost = true; }, false);
-    glCv.addEventListener('webglcontextrestored', () => { view.lost = false; view.fit(); }, false);
     this.ok = true;
     this.fit();
+    this.initMs = Math.round(performance.now() - t0);
     return true;
+  },
+  stats: { calls: 0, tris: 0, sceneCalls: 0, sceneTris: 0, frames: 0 },
+  beginFrame() {
+    const r = this.renderer; if (!r) return;
+    r.info.reset();
+    this.stats.sceneCalls = 0; this.stats.sceneTris = 0;
+  },
+  endFrame() {
+    const r = this.renderer; if (!r) return;
+    const inf = r.info.render, st = this.stats;
+    st.calls = inf.drawCalls; st.tris = inf.triangles; st.frames++;
+  },
+  // French error overlay (DOM, so it can link to the classic version in legacy/)
+  showFatal(msg) {
+    if (msg) this.error = msg;
+    if (typeof window.__kitFail === 'function') window.__kitFail(msg);
+    else if (fatalEl) fatalEl.hidden = false;
   },
   // Lays out the game area, sizes both canvases and notifies listeners.
   fit() {
@@ -165,6 +244,40 @@ document.addEventListener('fullscreenchange', () => setTimeout(() => view.fit(),
 document.addEventListener('webkitfullscreenchange', () => setTimeout(() => view.fit(), 60));
 if (window.visualViewport) visualViewport.addEventListener('resize', queueFit);
 if (window.ResizeObserver) { try { new ResizeObserver(queueFit).observe(stageEl); } catch (e) { /* older browsers: window resize covers it */ } }
+
+// ================= TSL helpers =================
+// Small shader functions shared by the node materials of every part (each is emitted once per shader thanks to its
+// layout). p: vec2 unless noted. hash21 -> 0..1, vnoise -> 0..1 value noise (smooth), fbm -> 0..1 (4 octaves),
+// fw(p) -> pixel footprint max(|dFdx|, |dFdy|) (call it outside If/select branches: WGSL needs uniform control flow
+// for derivatives), checker(p, w) -> 0..1 box-filtered checkerboard (w = footprint, e.g. fw(p)).
+{
+  const { Fn, vec2, vec3, float, fract, floor, dot, mix, abs, max, dFdx, dFdy } = TSL;
+  const hash21 = Fn(([p]) => {
+    const p3 = fract(vec3(p.x, p.y, p.x).mul(0.1031)).toVar();
+    p3.addAssign(dot(p3, p3.yzx.add(33.33)));
+    return fract(p3.x.add(p3.y).mul(p3.z));
+  }).setLayout({ name: 'kHash21', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
+  const vnoise = Fn(([p]) => {
+    const i = floor(p).toVar(), f = fract(p).toVar();
+    const u = f.mul(f).mul(f.mul(-2).add(3)).toVar();
+    const a = hash21(i), b = hash21(i.add(vec2(1, 0))), c = hash21(i.add(vec2(0, 1))), d = hash21(i.add(vec2(1, 1)));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+  }).setLayout({ name: 'kNoise', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
+  const fbm = Fn(([p]) => {
+    const n = vnoise(p).mul(0.5).toVar();
+    n.addAssign(vnoise(p.mul(2.03).add(17.1)).mul(0.25));
+    n.addAssign(vnoise(p.mul(4.01).add(31.7)).mul(0.125));
+    n.addAssign(vnoise(p.mul(7.97).add(5.3)).mul(0.0625));
+    return n.div(0.9375);
+  }).setLayout({ name: 'kFbm', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
+  const checker = Fn(([p, w0]) => {
+    const w = w0.add(1e-4).toVar();
+    const i = abs(fract(p.sub(w.mul(0.5)).mul(0.5)).sub(0.5)).sub(abs(fract(p.add(w.mul(0.5)).mul(0.5)).sub(0.5))).mul(2).div(w);
+    return float(0.5).sub(i.x.mul(i.y).mul(0.5));
+  }).setLayout({ name: 'kChecker', type: 'float', inputs: [{ name: 'p', type: 'vec2' }, { name: 'w', type: 'vec2' }] });
+  const fw = p => max(abs(dFdx(p)), abs(dFdy(p)));
+  K.tsl = { hash21, vnoise, fbm, checker, fw };
+}
 
 // ================= audio =================
 const A = { ctx: null, out: null, music: null, sfx: null, fxSend: null, muted: !!store.get('muted', false), noise: null, timer: 0 };

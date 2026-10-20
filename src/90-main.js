@@ -126,20 +126,28 @@ function startAct(cardLen) {
 // Act 2 starts behind a short loading card: the city is built the first time it is needed
 function beginAct2() {
   G.cpIndex = -1; G.cpTime = 0; G.timeOver = false;
-  G.state = 'loading'; G.st = 0; G.paused = false; G.timerOn = false; G.res = null; G.bossActive = false;
+  G.state = 'loading'; G.st = 0; G.paused = false; G.timerOn = false; G.res = null; G.bossActive = false; G.loadBusy = false;
   cine(false);
   K.audio.stopMusic(); K.audio.setSpeed(1);
   clearPopups();
   syncPauseBtn();
 }
+// Act 2 is built behind the "Chargement…" card: the city is built at once (synchronously, as in v2), its textures
+// (K.tex group 'act2') stream in and its shaders compile (compileAsync) in the background; the card waits for both,
+// at most ACT2_WAIT seconds (K.tex hands out neutral textures until the real ones arrive, so nothing breaks).
+const ACT2_WAIT = 4;
 function loadAct2() {
+  G.loadBusy = true; G.loadDone = false; G.compileDone = false; G.loadP = 0;
   try {
+    const T = K.tex;
+    const pre = T && typeof T.preloadGroup === 'function' ? T.preloadGroup('act2', p => { G.loadP = p; needDraw = true; }) : Promise.resolve();
+    pre.catch(e => console.warn('Kit Rush 3D: Act 2 textures', e)).then(() => { G.loadDone = true; });
     if (!K.city.built) K.city.build(K.view.scene);
     setAct(2);
     if (G.act !== 2) throw new Error('the city is not available');
-    try { K.view.renderer.compile(K.view.scene, K.view.camera); } catch (e) { /* shaders compile lazily instead */ }
-    startAct(2.6);
+    precompile().then(() => { G.compileDone = true; });
   } catch (e) {
+    G.loadBusy = false;
     console.error('Kit Rush 3D: Act 2 could not start', e);
     setAct(1);
     placePlayer();
@@ -147,6 +155,17 @@ function loadAct2() {
     G.loadErr = true; G.state = 'end'; G.st = 0;
     syncPauseBtn();
   }
+}
+function loadAct2Wait() {
+  if ((G.loadDone && G.compileDone) || G.st > ACT2_WAIT) { G.loadBusy = false; startAct(2.6); }
+}
+// compiles the scene's pipelines for the current camera so the first frames do not stall (lazily otherwise)
+function precompile() {
+  const V = K.view, r = V.renderer;
+  if (!r || typeof r.compileAsync !== 'function') return Promise.resolve();
+  let p;
+  try { p = r.compileAsync(V.scene, V.camera); } catch (e) { return Promise.resolve(); }
+  return Promise.resolve(p).catch(e => console.warn('Kit Rush 3D: precompile', e));
 }
 function toTitle() {
   setAct(1);
@@ -385,7 +404,7 @@ function setPaused(p) {
   if (p) { if (postOn()) K.post.speed(0); }
   syncPauseBtn();
 }
-// pause rows: 0 Reprendre, 1 Graphismes, 2 Super Résolution, 3 Retour au titre
+// pause rows: 0 Reprendre, 1 Graphismes, 2 Super Résolution, 3 Retour au titre, 4 Version classique (legacy/, three r128)
 function cycleQuality(d) {
   if (!K.post || typeof K.post.setQuality !== 'function') return;
   const i = QUALITIES.indexOf(K.post.quality);
@@ -404,14 +423,21 @@ function pauseConfirm(dir) {
   if (s === 1) cycleQuality(dir || 1);
   else if (s === 2) toggleSuperRes();
   else if (s === 3) { setPaused(false); toTitle(); }
+  else if (s === 4) openLegacy();
   else setPaused(false);
+}
+const PAUSE_ROWS = 5;
+// the frozen v2 build (three.js r128, WebGL 1-style rendering) for browsers or GPUs that struggle with this one
+function openLegacy() {
+  try { K.audio.stopMusic(); } catch (e) { /* ignore */ }
+  try { location.href = 'legacy/'; } catch (e) { /* navigation refused by the host */ }
 }
 function pauseMenu() {
   const I = K.input;
   if (I.hit('pause')) { setPaused(false); return; }
   const ny = I.move.y > 0.55 ? -1 : I.move.y < -0.55 ? 1 : 0;
   if (ny && ny !== G.navLast) {
-    const n = clamp(G.pauseSel + ny, 0, 3);
+    const n = clamp(G.pauseSel + ny, 0, PAUSE_ROWS - 1);
     if (n !== G.pauseSel) { G.pauseSel = n; sfx('tick'); }
   }
   G.navLast = ny;
@@ -451,7 +477,11 @@ function step() {
       break;
     case 'loading':
       I.neutral();
-      if (G.st >= 0.1) loadAct2();
+      if (G.loadBusy) loadAct2Wait();
+      else if (G.st >= 0.1) loadAct2();
+      break;
+    case 'boot':
+      I.neutral();
       break;
     case 'card':
       I.neutral(); simulate(false); watchPlayer(false);
@@ -1053,6 +1083,17 @@ function drawCard() {
   c.strokeStyle = NAVY; c.lineWidth = 4; c.stroke();
   txt('ACTE', bx, by - 8, 12, GOLD, 'center'); txt(two ? '2' : '1', bx, by + 19, 29, WHITE, 'center');
 }
+// first screen while the renderer starts and the Act 1 assets load (K.boot is async)
+function drawBoot() {
+  const g = c.createLinearGradient(0, 0, 0, LH);
+  g.addColorStop(0, '#1b2a6b'); g.addColorStop(1, '#070a1d');
+  c.fillStyle = g; c.fillRect(0, 0, LW, LH);
+  txt('KIT RUSH 3D', LW / 2, LH * 0.42, 44, GOLD, 'center', true);
+  const p = clamp(num(G.bootP, 0), 0, 1), bw = Math.min(260, LW - 60), bx = LW / 2 - bw / 2, by = LH * 0.58;
+  c.fillStyle = 'rgba(255,255,255,.14)'; rrect(c, bx, by, bw, 10, 5); c.fill();
+  if (p > 0) { c.fillStyle = GOLD; rrect(c, bx, by, Math.max(10, bw * p), 10, 5); c.fill(); }
+  txt('Chargement…', LW / 2, LH * 0.7, 16, WHITE, 'center');
+}
 function drawLoading() {
   const g = c.createLinearGradient(0, 0, 0, LH);
   g.addColorStop(0, '#2a1c5a'); g.addColorStop(0.55, '#121845'); g.addColorStop(1, '#070a1d');
@@ -1070,9 +1111,9 @@ function drawLoading() {
   txt('Chargement…', LW / 2, LH * 0.78, 16, WHITE, 'center');
 }
 const pauseRects = [];
-for (let i = 0; i < 4; i++) pauseRects.push({ x: 0, y: 0, w: 0, h: 0 });
+for (let i = 0; i < PAUSE_ROWS; i++) pauseRects.push({ x: 0, y: 0, w: 0, h: 0 });
 function pauseItemAt(x, y) {
-  for (let i = 0; i < 4; i++) { const r = pauseRects[i]; if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return i; }
+  for (let i = 0; i < PAUSE_ROWS; i++) { const r = pauseRects[i]; if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return i; }
   return -1;
 }
 function drawPause() {
@@ -1080,10 +1121,10 @@ function drawPause() {
   txt('PAUSE', LW / 2, LH * 0.19, 44, GOLD, 'center', true);
   const Q = K.post, ok = postOn();
   const q = Q && QLABEL[Q.quality] ? QLABEL[Q.quality] : QLABEL.high;
-  const items = ['Reprendre', 'Graphismes', 'Super Résolution', 'Retour au titre'];
-  const vals = [null, ok ? q : 'Simple', ok ? (Q.superRes ? 'Oui' : 'Non') : '—', null];
-  const y0 = LH * 0.235, step = 34, h = 28;
-  for (let i = 0; i < 4; i++) {
+  const items = ['Reprendre', 'Graphismes', 'Super Résolution', 'Retour au titre', 'Version classique'];
+  const vals = [null, ok ? q : 'Simple', ok ? (Q.superRes ? 'Oui' : 'Non') : '—', null, null];
+  const y0 = LH * 0.235, step = 30, h = 25;
+  for (let i = 0; i < PAUSE_ROWS; i++) {
     const val = vals[i], w = val === null ? 200 : 262, x = LW / 2 - w / 2, y = y0 + i * step, sel = G.pauseSel === i;
     const r = pauseRects[i]; r.x = x; r.y = y; r.w = w; r.h = h;
     c.globalAlpha = val !== null && !ok ? 0.55 : 1;
@@ -1105,11 +1146,14 @@ function drawPause() {
   }
   c.textBaseline = 'alphabetic';
   const dev = K.input.device;
-  const yEnd = y0 + 3 * step + h;
+  const yEnd = y0 + (PAUSE_ROWS - 1) * step + h;
+  // which renderer runs (bottom-right corner, clear of the lives box and the help lines)
+  const be = K.view.backend;
+  txt('Rendu : ' + (be === 'webgpu' ? 'WebGPU' : be === 'webgl2' ? 'WebGL 2' : '—'), LW - 10, LH - 8, 12, '#9fe8ff', 'right');
   const hint = !ok && (G.pauseSel === 1 || G.pauseSel === 2) ? 'Effets graphiques indisponibles : rendu simple'
     : dev === 'touch' ? 'Touche un choix' : dev === 'pad' ? 'Start pour reprendre · ← → pour régler' : 'Entrée ou Échap pour reprendre · ← → pour régler';
-  txt(hint, LW / 2, yEnd + 20, 13, WHITE, 'center', false, LW - 30);
-  drawHelp(yEnd + 42);
+  txt(hint, LW / 2, yEnd + 17, 13, WHITE, 'center', false, LW - 30);
+  drawHelp(yEnd + 35);
 }
 function drawResults() {
   const t = G.st, R = G.res;
@@ -1168,7 +1212,11 @@ function drawFatal() {
 
 function render() {
   const V = K.view;
-  if (!fatal && V.ok && !V.lost && G.state !== 'loading') { if (K.post && K.post.ok) K.post.render(); else V.renderer.render(V.scene, V.camera); }
+  if (!fatal && V.ok && !V.lost && G.state !== 'loading' && G.state !== 'boot') {
+    V.beginFrame();
+    if (K.post && K.post.ok) K.post.render(); else V.renderer.render(V.scene, V.camera);
+    V.endFrame();
+  }
   c = V.hud; if (!c) return;
   const cv = c.canvas;
   c.setTransform(1, 0, 0, 1, 0, 0);
@@ -1181,6 +1229,7 @@ function render() {
   else switch (G.state) {
     case 'title': drawTitle(); break;
     case 'loading': drawLoading(); break;
+    case 'boot': drawBoot(); break;
     case 'card': case 'play':
       drawSpeedLines(); drawPopups(); drawReticle(); drawHUD();
       if (G.act === 2) { drawTricks(); drawHint(); }
@@ -1364,6 +1413,8 @@ function ensureApi() {
   if (!P.forward) P.forward = new THREE.Vector3(0, 0, -1);
 }
 let booted = false;
+// Boot: the HUD shows the loading screen at once while the renderer starts (async: WebGPU adapter/device or WebGL 2
+// context), the Act 1 textures load, the island is built and its shaders compiled; then the title screen.
 K.boot = function (data) {
   if (booted) return;
   booted = true;
@@ -1374,12 +1425,31 @@ K.boot = function (data) {
   G.sel = K.store.get('act', 1) === 2 ? 2 : 1;
   wireTools();
   V.onResize.push(() => { needDraw = true; });
-  const ok = V.init();
-  if (!ok) { fatal = V.error || 'Le jeu n’a pas pu démarrer.'; startLoop(); return; }
+  G.state = 'boot'; G.st = 0; G.bootP = 0; G.booted = false;
+  V.fit();
+  if (!V.hud) V.hud = $('hud').getContext('2d');
+  startLoop();
+  bootAsync(data).catch(e => {
+    console.error(e);
+    fatal = 'Le niveau n’a pas pu être construit.';
+    V.showFatal(fatal);
+  });
+};
+async function bootAsync(data) {
+  const V = K.view;
+  const ok = await V.init();
+  if (!ok) { fatal = V.error || 'Le jeu n’a pas pu démarrer.'; V.showFatal(fatal); return; }
+  G.bootP = 0.15;
   tmpV = new THREE.Vector3();
   for (let i = 0; i < 12; i++) pops.push({ on: false, pos: new THREE.Vector3(), txt: '', t: 0, col: WHITE });
+  ensureApi();
+  const T = K.tex;
+  if (T && typeof T.init === 'function') { try { await T.init(); } catch (e) { console.warn('Kit Rush 3D: textures', e); } }
+  if (T && typeof T.preloadGroup === 'function') {
+    try { await T.preloadGroup('act1', p => { G.bootP = 0.15 + 0.6 * p; needDraw = true; }); } catch (e) { console.warn('Kit Rush 3D: textures', e); }
+  }
+  G.bootP = 0.75;
   try {
-    ensureApi();
     K.world.build(V.scene);
     K.player.create(V.scene);
     K.entities.build(V.scene);
@@ -1399,10 +1469,15 @@ K.boot = function (data) {
   } catch (e) {
     console.error(e);
     fatal = 'Le niveau n’a pas pu être construit.';
-    startLoop();
+    V.showFatal(fatal);
     return;
   }
-  try { V.renderer.compile(V.scene, V.camera); } catch (e) { /* shaders compile lazily instead */ }
+  G.bootP = 0.85;
+  needDraw = true;
+  await precompile();
+  G.bootP = 1;
+  G.booted = true;
+  needDraw = true;
   const hot = window.claude && window.claude.hot;
   if (hot && typeof hot.snapshot === 'function') {
     hot.snapshot(() => ({
@@ -1414,11 +1489,9 @@ K.boot = function (data) {
     document.fonts.load(`20px "Lilita One"`).then(() => { logo = null; helpWrap.key = ''; needDraw = true; }).catch(() => {});
   }
   focusGame();
-  startLoop();
-};
+}
 
 const start = data => K.boot(data);
 if (window.claude?.hot?.ready) window.claude.hot.ready(start);
 else start(window.claude?.hot?.data ?? {});
 })();
-</script>

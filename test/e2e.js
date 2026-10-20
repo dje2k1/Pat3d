@@ -1,26 +1,41 @@
-// End-to-end test of the assembled game (test.html, built by ./build.sh).
-// Usage: node test/e2e.js [--only=name1,name2] [--no-phone]
+// End-to-end test of the assembled game (test.html, built by ./build.sh), three.js r186 WebGPURenderer.
+// Usage: node test/e2e.js [--only=name1,name2] [--no-phone] [--webgpu]
+//   default: every suite on the renderer's WebGL 2 backend (test.html?gl, Chromium + SwiftShader through ANGLE)
+//   --webgpu: the WebGPU suite (boot, Act 1 sample, Act 2 sample, presets, no errors) on WebGPU (SwiftShader Vulkan)
+//   --only=: desktop, valley, boss, act2, post, fullrun, regress, present, regress2, phone, v3 (backend, textures,
+//            budgets, legacy page, no GLSL), webgpu (same as --webgpu)
+// ES modules do not load from file://: test/serve.js serves the repository on 127.0.0.1 (a free port).
 // The game's rAF loop is driven deterministically by the test (fixed 60 Hz ticks, rendering only when a frame is
 // needed). Keyboard input goes through real key events; scripted bots set the analog stick through K.input.
 const { chromium } = require('playwright');
 const path = require('path'), fs = require('fs');
+const { serve } = require('./serve.js');
 const ROOT = path.resolve(__dirname, '..');
 const SHOTS = path.join(ROOT, 'shots');
-const THREE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-// three.js r128 example scripts (post-processing) from jsDelivr, served from the byte-identical vendored copies
-const EXAMPLES_URL = /^https:\/\/cdn\.jsdelivr\.net\/npm\/three@0\.128\.0\/examples\/js\/((?:postprocessing|shaders)\/[A-Za-z0-9]+\.js)$/;
-const routeExamples = page => page.route(EXAMPLES_URL, r => r.fulfill({ path: path.join(ROOT, 'vendor/examples', r.request().url().match(EXAMPLES_URL)[1]), contentType: 'application/javascript' }));
 fs.mkdirSync(SHOTS, { recursive: true });
 const argv = process.argv.slice(2);
 const onlyArg = argv.find(a => a.startsWith('--only='));
 const ONLY = onlyArg ? onlyArg.slice(7).split(',') : null;
-const PHONE = !argv.includes('--no-phone') && (!ONLY || ONLY.includes('phone'));
+const WEBGPU = argv.includes('--webgpu') || (!!ONLY && ONLY.includes('webgpu'));
+const PHONE = !WEBGPU && !argv.includes('--no-phone') && (!ONLY || ONLY.includes('phone'));
+// SPEC3 §7: WebGL 2 backend through SwiftShader ANGLE; WebGPU through SwiftShader Vulkan on an http://127.0.0.1 page
+const GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
+const GPU_ARGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader', '--use-webgpu-adapter=swiftshader'];
+let BASE = '';                         // http://127.0.0.1:<port>/ once the server runs
+const gameUrl = q => BASE + 'test.html' + (q != null ? q : WEBGPU ? '' : '?gl');
+const BOOT_MS = WEBGPU ? 900000 : 300000; // SwiftShader compiles every pipeline on the CPU (WebGPU: minutes)
 
 const results = [];
 const info = {};
 function check(name, pass, notes) {
   results.push({ name, pass: !!pass, notes: typeof notes === 'string' ? notes : JSON.stringify(notes) });
   console.log((pass ? 'PASS ' : 'FAIL ') + name + (notes ? '  ' + (typeof notes === 'string' ? notes : JSON.stringify(notes)) : ''));
+}
+// a v3 target that depends on a builder's work (SPEC3 roles): reported (PEND / pass), never fails the run; the builder
+// named in `owner` turns it into a check() when the work lands
+function pending(owner, name, pass, notes) {
+  results.push({ name, pass: true, pending: owner, met: !!pass, notes: typeof notes === 'string' ? notes : JSON.stringify(notes) });
+  console.log((pass ? 'PASS ' : 'PEND ') + '[' + owner + '] ' + name + (notes ? '  ' + (typeof notes === 'string' ? notes : JSON.stringify(notes)) : ''));
 }
 const want = n => !ONLY || ONLY.includes(n);
 
@@ -32,23 +47,33 @@ const RAF_SHIM = `(() => {
   window.__pump = ms => { if (!t) t = performance.now(); t += ms; const l = q.splice(0); for (const cb of l) cb(t); };
 })();`;
 
-async function openGame(browser, ctxOpts) {
+// page setup shared by every suite: error capture, fonts stubbed, deterministic rAF, the in-page helpers
+async function preparePage(page, errors, opts) {
+  opts = opts || {};
+  page.on('pageerror', e => errors.push('pageerror: ' + (e.stack || e.message)));
+  page.on('console', m => { if (m.type() === 'error' && !(opts.ignore && opts.ignore.test(m.text()))) errors.push('console.error: ' + m.text()); });
+  // Google Fonts are unreachable from the sandbox: answer with an empty stylesheet (fallback font) instead of failing
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  if (opts.raf !== false) await page.addInitScript(RAF_SHIM);
+  if (opts.helpers !== false) await page.addInitScript({ path: path.join(__dirname, 'page-helpers.js') });
+}
+// boot is async (renderer init, textures, shader precompile): wait for K.game.booted (or the fatal overlay)
+async function bootPage(page, url) {
+  const t0 = Date.now();
+  await page.goto(url || gameUrl(), { waitUntil: 'load', timeout: 120000 });
+  await page.waitForFunction(() => (window.__K && window.__K.game && window.__K.game.booted) || (document.getElementById('fatal') && !document.getElementById('fatal').hidden), null, { timeout: BOOT_MS, polling: 250 });
+  const ms = Date.now() - t0;
+  const fatal = await page.evaluate(() => !document.getElementById('fatal').hidden);
+  if (fatal) throw new Error('the game showed its fatal error screen: ' + await page.evaluate(() => document.getElementById('fatal-msg').textContent));
+  await page.evaluate(() => window.__installT());
+  return ms;
+}
+async function openGame(browser, ctxOpts, url) {
   const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();
   const errors = [];
-  page.on('pageerror', e => errors.push('pageerror: ' + (e.stack || e.message)));
-  page.on('console', m => { if (m.type() === 'error') errors.push('console.error: ' + m.text()); });
-  await page.route(THREE_URL, r => r.fulfill({ path: path.join(ROOT, 'vendor/three.min.js'), contentType: 'application/javascript' }));
-  await routeExamples(page);
-  // Google Fonts are unreachable from the sandbox: answer with an empty stylesheet (fallback font) instead of failing
-  await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
-  await page.addInitScript(RAF_SHIM);
-  await page.addInitScript({ path: path.join(__dirname, 'page-helpers.js') });
-  const t0 = Date.now();
-  await page.goto('file://' + path.join(ROOT, 'test.html'), { waitUntil: 'load', timeout: 120000 });
-  await page.waitForFunction(() => window.__K && window.__K.game && window.__K.view && window.__K.view.ok, null, { timeout: 120000 });
-  const bootMs = Date.now() - t0;
-  await page.evaluate(() => window.__installT());
+  await preparePage(page, errors);
+  const bootMs = await bootPage(page, url);
   return { ctx, page, errors, bootMs };
 }
 const ev = (page, fn, arg) => page.evaluate(fn, arg);
@@ -56,7 +81,7 @@ async function shot(page, name, prep) {
   await ev(page, () => { T.frame(); });
   if (prep) await ev(page, prep);
   await page.screenshot({ path: path.join(SHOTS, name + '.png') });
-  const s = await ev(page, () => ({ calls: __K.view.renderer.info.render.calls, tris: __K.view.renderer.info.render.triangles }));
+  const s = await ev(page, () => T.drawStats());
   info.shots = info.shots || {};
   info.shots[name] = s;
   return s;
@@ -391,13 +416,13 @@ async function desktop(browser) {
     T.ticks(30);
     const n = 24, ft = [];
     let calls = 0, tris = 0;
-    const gl = R.getContext(), px = new Uint8Array(4);
-    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    T.sync();
     for (let i = 0; i < n; i++) {
       const t0 = performance.now();
       T.frame();
-      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); // wait for the GPU so the frame cost is real
-      ft.push(performance.now() - t0); calls = Math.max(calls, R.info.render.calls); tris = Math.max(tris, R.info.render.triangles);
+      T.sync(); // wait for the GPU so the frame cost is real
+      const ds = T.drawStats();
+      ft.push(performance.now() - t0); calls = Math.max(calls, ds.calls); tris = Math.max(tris, ds.tris);
     }
     const t1 = performance.now(); T.ticks(240); const simMs = (performance.now() - t1) / 240;
     T.stop();
@@ -416,7 +441,7 @@ async function desktop(browser) {
 async function fullRun(browser) {
   const { page, errors } = await openGame(browser, { viewport: { width: 1280, height: 720 } });
   await ev(page, () => { T.ticks(40); T.tapKey('Space'); T.ticks(4); T.until(() => __K.game.state === 'play', 300); });
-  const mem = () => ev(page, () => { T.frame(); const m = __K.view.renderer.info.memory, X = __K.vfx.stats(); return { geo: m.geometries, tex: m.textures, prog: __K.view.renderer.info.programs.length, live: X.live, cap: X.cap, dropped: X.dropped, spawned: X.spawned, ribbons: X.ribbons }; });
+  const mem = () => ev(page, () => { T.frame(); const m = T.mem(), X = __K.vfx.stats(); return { geo: m.geo, tex: m.tex, prog: m.prog, live: X.live, cap: X.cap, dropped: X.dropped, spawned: X.spawned, ribbons: X.ribbons }; });
   await ev(page, () => T.ticks(600));
   const mem0 = await mem();
   const run = await ev(page, () => T.routeBot(60 * 400));
@@ -430,7 +455,7 @@ async function fullRun(browser) {
   // the pools stay under their caps and nothing new is allocated on the GPU
   const stress = await ev(page, () => {
     const K = __K, X = K.vfx, R = K.view.renderer, P = K.player, V3 = THREE.Vector3;
-    const memNow = () => { T.frame(); return { geo: R.info.memory.geometries, tex: R.info.memory.textures, prog: R.info.programs.length }; };
+    const memNow = () => { T.frame(); return T.mem(); };
     const c = P.center().clone(), up = new V3(0, 1, 0), dir = new V3(1, 0.2, 0).normalize(), v = new V3(14, 0, -6), q = new V3();
     X.jump(c, up, v); X.ringPickup(c, v); X.boom(c, 1); X.land(c, up, 20); X.impact(c, 0xffd23a, 2, up); X.sparks(c, dir, 20, 0xffc070);
     X.wheelSparks(c, v); X.airJump(c, dir); X.confetti(c); X.twinkle(c, 8, 0xffffff); X.flightTrail(c, v); X.ballTrail(c, v); X.homingTrail(c); X.speedLines(0.8, v);
@@ -739,21 +764,15 @@ async function postChecks(browser) {
   const open = async () => {
     const page = await ctx.newPage();
     const errors = [];
-    page.on('pageerror', e => errors.push('pageerror: ' + (e.stack || e.message)));
-    page.on('console', m => { if (m.type() === 'error') errors.push('console.error: ' + m.text()); });
-    await page.route(THREE_URL, r => r.fulfill({ path: path.join(ROOT, 'vendor/three.min.js'), contentType: 'application/javascript' }));
-    await routeExamples(page);
-    await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
-    await page.addInitScript(RAF_SHIM);
-    await page.addInitScript({ path: path.join(__dirname, 'page-helpers.js') });
-    await page.goto('file://' + path.join(ROOT, 'test.html'), { waitUntil: 'load', timeout: 120000 });
-    await page.waitForFunction(() => window.__K && window.__K.game && window.__K.view && window.__K.view.ok, null, { timeout: 120000 });
-    await page.evaluate(() => window.__installT());
+    await preparePage(page, errors);
+    await bootPage(page);
     return { page, errors };
   };
   const { page, errors } = await open();
-  const st = await ev(page, () => { T.ticks(40); T.frame(); const s = __K.post.stats(); return { ok: s.ok, hdr: s.hdr, quality: s.quality, superRes: s.superRes, passes: s.passes, msaa: s.msaa, env: s.env, calls: s.calls }; });
-  check('post pipeline: HDR + bloom + grade passes active (desktop default "Élevé")', st.ok && st.hdr && st.quality === 'high' && !st.superRes && st.passes.some(p => /bloom/.test(p)) && st.passes.some(p => /aces/.test(p)) && st.env && st.calls < 300, st);
+  const st = await ev(page, () => { T.ticks(40); T.frame(); const s = __K.post.stats(); return { ok: s.ok, hdr: s.hdr, quality: s.quality, superRes: s.superRes, passes: s.passes, env: s.env, calls: s.sceneCalls, gfx: s.gfx }; });
+  // v3 intent of the v2 check (HDR + bloom + grade): THREE.RenderPipeline with the scene pass, bloom and the ACES/sRGB
+  // output transform. PENDING(post): GTAO / SSR / godrays / DOF / TRAA passes and the full grade once ported.
+  check('post pipeline: RenderPipeline (scene pass + bloom + ACES grade) active, desktop default "Élevé", env map', st.ok && st.hdr && st.quality === 'high' && !st.superRes && st.passes.some(p => /bloom/.test(p)) && st.passes.some(p => /aces/.test(p)) && st.env && st.calls < 300 && st.gfx.preset === 'high', st);
   // presets through the pause menu rows (Graphismes: right arrow cycles, Super Résolution: Enter toggles)
   const pres = await ev(page, () => {
     const K = __K, G = K.game, out = [];
@@ -764,41 +783,38 @@ async function postChecks(browser) {
       T.key('ArrowRight', true); T.ticks(2); T.key('ArrowRight', false); T.ticks(2);
       T.frame();
       const s = K.post.stats(), g = T.glStats();
-      out.push({ sel: G.pauseSel, q: K.post.quality, stored: K.store.get('gfx', null), hdr: s.hdr, passes: s.passes.length, calls: s.calls, mean: g.mean });
+      out.push({ sel: G.pauseSel, q: K.post.quality, stored: K.store.get('gfx', null), hdr: s.hdr, passes: s.passes, calls: s.sceneCalls, mean: g.mean, gfx: s.gfx, texRes: K.tex.res });
     }
     T.key('ArrowDown', true); T.ticks(2); T.key('ArrowDown', false); T.ticks(2);
     T.tapKey('Enter'); T.ticks(2); T.frame();
-    const sr = { sel: G.pauseSel, on: K.post.superRes, stored: K.store.get('superres', null), scale: K.post.stats().scale };
+    const g = T.glStats();
+    const sr = { sel: G.pauseSel, on: K.post.superRes, stored: K.store.get('superres', null), scale: K.post.stats().scale, internal: K.post.stats().internal, mean: g.mean };
     T.key('ArrowUp', true); T.ticks(2); T.key('ArrowUp', false); T.ticks(2);
     T.key('ArrowLeft', true); T.ticks(2); T.key('ArrowLeft', false); T.ticks(2); // back from 'low' (wrapped) to ... one step left
     T.frame();
     return { out, sr, final: K.post.quality, paused: G.paused };
   });
   await shot(page, '33-pause-graphics');
-  const qs = pres.out.map(o => o.q);
-  check('quality presets switch from the pause menu (Ultra/Élevé/Moyen/Économie, Super Résolution) without errors', pres.out.every(o => o.sel === 1 && o.stored === o.q && o.calls < 320) &&
-    new Set(qs).size === 4 && pres.out.find(o => o.q === 'low').hdr === false && pres.out.find(o => o.q === 'ultra').hdr === true && pres.sr.sel === 2 && pres.sr.on === true && pres.sr.stored === true && pres.sr.scale < 1 && errors.length === 0, { pres, errors: errors.slice(0, 3) });
+  const qs = pres.out.map(o => o.q), byQ = q => pres.out.find(o => o.q === q) || {};
+  // v3 intent: each preset changes the pipeline and the K.gfx content knobs (Économie: no bloom, half textures, no fur
+  // shells; Ultra: bloom, full textures, 16 fur shells); Super Résolution renders at a lower internal resolution
+  check('quality presets switch from the pause menu (Ultra/Élevé/Moyen/Économie + K.gfx knobs, Super Résolution) without errors', pres.out.every(o => o.sel === 1 && o.stored === o.q && o.calls < 320 && o.mean > 30) &&
+    new Set(qs).size === 4 && !byQ('low').passes.some(p => /bloom/.test(p)) && byQ('ultra').passes.some(p => /bloom/.test(p)) &&
+    byQ('low').gfx.furShells === 0 && byQ('low').gfx.texRes === 'half' && byQ('low').texRes === 'half' && byQ('ultra').gfx.furShells === 16 && byQ('ultra').gfx.texRes === 'full' &&
+    pres.sr.sel === 2 && pres.sr.on === true && pres.sr.stored === true && pres.sr.scale < 1 && pres.sr.mean > 30 && errors.length === 0, { pres, errors: errors.slice(0, 3) });
   // a new page in the same browser profile starts with the saved settings
   const { page: page2, errors: errors2 } = await open();
-  const saved = await ev(page2, () => ({ q: __K.post.quality, sr: __K.post.superRes, ok: __K.post.ok }));
-  check('graphics settings persist across reloads (K.store gfx / superres)', saved.q === pres.final && saved.sr === true && saved.ok && errors2.length === 0, { saved, final: pres.final });
+  const saved = await ev(page2, () => ({ q: __K.post.quality, sr: __K.post.superRes, ok: __K.post.ok, gfx: __K.gfx.preset }));
+  check('graphics settings persist across reloads (K.store gfx / superres)', saved.q === pres.final && saved.gfx === pres.final && saved.sr === true && saved.ok && errors2.length === 0, { saved, final: pres.final });
   await ctx.close();
 
-  // jsDelivr blocked: direct rendering, both acts still play
+  // v3 intent of the v2 "jsDelivr blocked" fallback: the post pipeline is off (?nopost) -> direct rendering through
+  // the renderer's own ACES output, both acts still play
   const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const pg = await ctx2.newPage();
   const errs = [];
-  pg.on('pageerror', e => errs.push('pageerror: ' + (e.stack || e.message)));
-  // (the blocked script requests themselves log "Failed to load resource": that is the scenario, not a game error)
-  pg.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push('console.error: ' + m.text()); });
-  await pg.route(THREE_URL, r => r.fulfill({ path: path.join(ROOT, 'vendor/three.min.js'), contentType: 'application/javascript' }));
-  await pg.route(EXAMPLES_URL, r => r.abort());
-  await pg.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
-  await pg.addInitScript(RAF_SHIM);
-  await pg.addInitScript({ path: path.join(__dirname, 'page-helpers.js') });
-  await pg.goto('file://' + path.join(ROOT, 'test.html'), { waitUntil: 'load', timeout: 120000 });
-  await pg.waitForFunction(() => window.__K && window.__K.game && window.__K.view && window.__K.view.ok, null, { timeout: 120000 });
-  await pg.evaluate(() => window.__installT());
+  await preparePage(pg, errs);
+  await bootPage(pg, gameUrl(WEBGPU ? '?nopost' : '?gl&nopost'));
   const fb1 = await ev(pg, () => { T.ticks(40); T.tapKey('Space'); T.ticks(4); T.until(() => __K.game.state === 'play', 300); T.key('KeyW', true); T.ticks(90); T.key('KeyW', false); const g = T.glStats(); return { ok: __K.post.ok, why: __K.post.stats().why, vfx: __K.vfx.ready, z: +__K.player.pos.z.toFixed(1), mean: g.mean, std: g.std }; });
   await shot(pg, '34-fallback-act1');
   const fb2 = await ev(pg, () => {
@@ -808,13 +824,13 @@ async function postChecks(browser) {
     T.tapKey('Enter'); T.ticks(30);
     T.key('ArrowRight', true); T.ticks(3); T.key('ArrowRight', false); T.ticks(3);
     T.tapKey('Space'); T.ticks(2);
-    T.until(() => G.state === 'play', 600);
+    T.until(() => G.state === 'play', 900);
     T.key('ArrowUp', true); T.ticks(240); T.key('ArrowUp', false);
     const g = T.glStats(), b = K.board.stats();
     return { act: G.act, state: G.state, s: b.s, mode: b.mode, mean: g.mean, std: g.std, env: !!K.view.scene.environment };
   });
   await shot(pg, '35-fallback-act2');
-  check('post fallback: jsDelivr blocked -> direct rendering, Act 1 and Act 2 still play without errors', !fb1.ok && fb1.z < -10 && fb1.mean > 40 && fb1.std > 12 && fb2.act === 2 && fb2.state === 'play' && fb2.s > 60 && fb2.mean > 30 && fb2.std > 10 && errs.length === 0, { fb1, fb2, errs: errs.slice(0, 3) });
+  check('post fallback: pipeline off (?nopost) -> direct rendering, Act 1 and Act 2 still play without errors', !fb1.ok && fb1.z < -10 && fb1.mean > 40 && fb1.std > 12 && fb2.act === 2 && fb2.state === 'play' && fb2.s > 60 && fb2.mean > 30 && fb2.std > 10 && errs.length === 0, { fb1, fb2, errs: errs.slice(0, 3) });
   await ctx2.close();
 }
 
@@ -1024,23 +1040,22 @@ async function regressPresentation(browser) {
     }
     check('regression: adaptive resolution ignores a browser 30 Hz cap, drops when slow (floor 1 on 2x screens) and recovers', Object.values(res).every(o => o.capped30Hz === o.d0 && o.afterSlow < o.d0 && o.afterSlow >= 1 && o.recovered > o.afterSlow), res);
   }
-  // three.js blocked: the French error screen is drawn instead of a blank box
+  // three.js blocked (its module cannot load): the French error screen with the link to the classic version
   {
     const ctx = await browser.newContext({ viewport: { width: 844, height: 390 } });
     const page = await ctx.newPage();
     const errs = [];
     page.on('pageerror', e => errs.push(e.message));
-    await page.route(THREE_URL, r => r.abort());
+    await page.route(/\/lib\/three\/three\.webgpu\.js$/, r => r.abort());
     await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
-    await page.goto('file://' + path.join(ROOT, 'test.html'), { waitUntil: 'load', timeout: 120000 });
-    await page.waitForTimeout(800);
+    await page.goto(gameUrl(), { waitUntil: 'load', timeout: 120000 });
+    await page.waitForFunction(() => !document.getElementById('fatal').hidden, null, { timeout: 20000 }).catch(() => {});
     const st = await page.evaluate(() => {
-      const cv = document.getElementById('hud'), g = cv.getContext('2d'), d = g.getImageData(0, 0, cv.width, cv.height).data;
-      let on = 0, n = 0; for (let i = 3; i < d.length; i += 4 * 53) { n++; if (d[i] > 40) on++; }
-      return { cover: +(on / n).toFixed(3), fatal: window.__K ? null : 'no K' };
+      const f = document.getElementById('fatal'), a = f.querySelector('a'), r = f.getBoundingClientRect();
+      return { shown: !f.hidden, w: Math.round(r.width), h: Math.round(r.height), text: f.textContent.replace(/\s+/g, ' ').trim().slice(0, 160), href: a && a.getAttribute('href'), K: !!window.__K };
     });
     await page.screenshot({ path: path.join(SHOTS, '13-no-threejs.png') });
-    check('regression: if three.js cannot load, the French error screen is drawn (no exception)', errs.length === 0 && st.cover > 0.5, { st, errs: errs.slice(0, 2) });
+    check('regression: if three.js cannot load, the French error screen links to the classic version (no exception)', errs.length === 0 && st.shown && st.w >= 800 && /pas pu/.test(st.text) && st.href === 'legacy/', { st, errs: errs.slice(0, 2) });
     await ctx.close();
   }
 }
@@ -1171,8 +1186,7 @@ async function regressAct2(browser) {
       if (K.post && K.post.ok) K.post.setQuality(q);
       for (const s0 of [640, 1120]) {
         T.place2(s0, 0, 0); K.player.vel.set(0, 0, 0); K.player.invT = 9; T.ticks(90); T.frame();
-        const gl = K.view.renderer.getContext(), w = gl.drawingBufferWidth, h = gl.drawingBufferHeight, px = new Uint8Array(w * h * 4);
-        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        const { w, h, px } = T.pixelsGL();
         const L = [];
         for (let y = Math.floor(h * 0.05); y < Math.floor(h * 0.35); y += 2) for (let x = Math.floor(w * 0.2); x < Math.floor(w * 0.8); x += 2) { const i = (y * w + x) * 4; L.push(0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]); }
         L.sort((a, b) => a - b);
@@ -1230,8 +1244,7 @@ async function regressAct2(browser) {
       if (K.post && K.post.ok) K.post.setQuality(q);
       const st = K.level.start; T.teleport(st.pos.x, st.pos.z, st.yaw, 0); K.player.vel.set(0, 0, 0); T.ticks(100);
       T.frame();
-      const gl = K.view.renderer.getContext(), w = gl.drawingBufferWidth, h = gl.drawingBufferHeight, px = new Uint8Array(w * h * 4);
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      const { w, h, px } = T.pixelsGL();
       // mean luma per column over the grass in front of the camera (bottom quarter of the frame, GL rows from the bottom)
       const y0 = Math.floor(h * 0.03), y1 = Math.floor(h * 0.28), col = x => { let t = 0; for (let y = y0; y < y1; y++) { const i = (y * w + x) * 4; t += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; } return t / (y1 - y0); };
       const k = Math.max(3, Math.floor(w / 200)), step = x0 => { let a = 0, b = 0; for (let x = x0 - 2 * k; x < x0 - k; x++) a += col(x); for (let x = x0 + k; x < x0 + 2 * k; x++) b += col(x); return Math.abs(a - b) / k; };
@@ -1248,27 +1261,220 @@ async function regressAct2(browser) {
   check('regression Act 2 pages: no page or console errors', errors.length === 0, errors.slice(0, 5));
 }
 
+// ---------- v3: renderer backend, textures, budgets, legacy page, no GLSL ----------
+async function v3Checks(browser) {
+  // backend: ?gl forces the WebGL 2 backend; without WebGPU in the browser the renderer falls back to WebGL 2 by itself
+  {
+    const { ctx, page, errors } = await openGame(browser, { viewport: { width: 960, height: 540 } }, BASE + 'test.html?gl');
+    const b1 = await ev(page, () => ({ backend: __K.view.backend, forceGL: __K.view.forceGL, ok: __K.view.ok }));
+    await ctx.close();
+    const ctx2 = await browser.newContext({ viewport: { width: 960, height: 540 } });
+    const page2 = await ctx2.newPage();
+    const errors2 = [];
+    await preparePage(page2, errors2);
+    await page2.addInitScript(() => { try { Object.defineProperty(Navigator.prototype, 'gpu', { get: () => undefined, configurable: true }); } catch (e) { /* ignore */ } });
+    await bootPage(page2, BASE + 'test.html');
+    const b2 = await ev(page2, () => { T.ticks(30); const g = T.glStats(); return { backend: __K.view.backend, forceGL: __K.view.forceGL, state: __K.game.state, mean: g.mean, label: (__K.game.state === 'title') }; });
+    // the pause menu says which renderer runs
+    const pause = await ev(page2, () => { const G = __K.game; T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'play', 300); T.tapKey('Escape'); T.ticks(3); T.frame(); return { paused: G.paused, rows: G.hudRects().pause.length }; });
+    await shot(page2, '36-pause-renderer');
+    await ctx2.close();
+    check('renderer backend: ?gl forces WebGL 2, no WebGPU in the browser -> automatic WebGL 2 fallback, pause menu has "Version classique" + "Rendu"', b1.backend === 'webgl2' && b1.forceGL && b2.backend === 'webgl2' && !b2.forceGL && b2.state === 'title' && b2.mean > 40 && pause.paused && pause.rows === 5 && errors.length === 0 && errors2.length === 0, { b1, b2, pause, errors: errors.concat(errors2).slice(0, 3) });
+  }
+  // textures: the K.tex pipeline (manifest -> WebP -> THREE.Texture with the right colour space, full / half sets)
+  {
+    const { ctx, page, errors } = await openGame(browser, { viewport: { width: 960, height: 540 } });
+    const tx = await page.evaluate(async () => {
+      const X = __K.tex, THREE = window.THREE;
+      await X.init();
+      const names = Object.keys(X.manifest);
+      const a = X.load('foundation/sample_albedo'), n = X.load('foundation/sample_normal');
+      const fallback = { w: a.image.width, cs: a.colorSpace };
+      await X.preload(['foundation/sample_albedo', 'foundation/sample_normal']);
+      const full = { w: a.image.width, h: a.image.height, cs: a.colorSpace === THREE.SRGBColorSpace, ncs: n.colorSpace === THREE.NoColorSpace, nw: n.image.width };
+      X.set('half');
+      const t0 = performance.now();
+      while (a.image.width === full.w && performance.now() - t0 < 10000) await new Promise(r => setTimeout(r, 50));
+      const half = { w: a.image.width, nw: n.image.width };
+      X.set('full');
+      while (a.image.width !== full.w && performance.now() - t0 < 20000) await new Promise(r => setTimeout(r, 50));
+      const st = X.stats();
+      return { names: names.length, fallback, full, half, back: a.image.width, stats: { count: st.count, loaded: st.loaded, failed: st.failed, gpuBytes: st.gpuBytes, res: st.res } };
+    });
+    await ctx.close();
+    check('textures: K.tex loads the generated WebP sample (sRGB albedo / linear normal), 1x1 fallback first, half and full sets swap in place', tx.fallback.w === 1 && tx.full.w >= 256 && tx.full.cs && tx.full.ncs && tx.half.w === tx.full.w / 2 && tx.back === tx.full.w && tx.stats.failed === 0 && tx.stats.loaded >= 2 && errors.length === 0, { tx, errors: errors.slice(0, 3) });
+  }
+  // assets budget (SPEC3 §4): whole assets/ <= 40 MB, Act 1 initial (groups act1 + common) <= 15 MB, Act 2 extra <= 15 MB
+  {
+    let total = 0;
+    const walk = d => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const q = path.join(d, f.name); if (f.isDirectory()) walk(q); else total += fs.statSync(q).size; } };
+    if (fs.existsSync(path.join(ROOT, 'assets'))) walk(path.join(ROOT, 'assets'));
+    const groups = {};
+    const texDir = path.join(ROOT, 'assets/tex');
+    for (const role of fs.existsSync(texDir) ? fs.readdirSync(texDir) : []) {
+      const mf = path.join(texDir, role, 'manifest.json');
+      if (!fs.existsSync(mf)) continue;
+      const m = JSON.parse(fs.readFileSync(mf, 'utf8'));
+      for (const k in m.textures || {}) { const e = m.textures[k], g = e.group || 'none'; groups[g] = (groups[g] || 0) + (e.bytes || 0); }
+    }
+    const MB = 1024 * 1024, act1 = (groups.act1 || 0) + (groups.common || 0), act2 = groups.act2 || 0;
+    check('assets budget: assets/ <= 40 MB, Act 1 initial <= 15 MB, Act 2 extra <= 15 MB', total <= 40 * MB && act1 <= 15 * MB && act2 <= 15 * MB, { totalMB: +(total / MB).toFixed(2), act1MB: +(act1 / MB).toFixed(2), act2MB: +(act2 / MB).toFixed(2), groups });
+  }
+  // no GLSL / r128 pipeline left in the sources (build.sh refuses them too)
+  {
+    const bad = [];
+    for (const f of fs.readdirSync(path.join(ROOT, 'src'))) {
+      const t = fs.readFileSync(path.join(ROOT, 'src', f), 'utf8');
+      for (const re of [/onBeforeCompile/, /ShaderMaterial/, /RawShaderMaterial/, /EffectComposer/, /gl_FragColor/, /#include </, /WebGLRenderer\(/]) if (re.test(t)) bad.push(f + ': ' + re);
+    }
+    const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const ext = (html.match(/https?:\/\/[^"' )<>]+/g) || []).filter(u => !/^https:\/\/fonts\.(googleapis|gstatic)\.com/.test(u));
+    check('no GLSL left (TSL only) and no external URL but Google Fonts in index.html', bad.length === 0 && ext.length === 0, { bad, ext });
+  }
+  // performance budgets per preset (SPEC3 §6, scene pass incl. shadow maps): Ultra <= 350 calls / 2.5 M triangles,
+  // Moyen <= 220 / 800 k; Élevé and Économie must stay under the Ultra budget. Views: Act 1 start, valley, arena; Act 2
+  {
+    const { ctx, page, errors } = await openGame(browser, { viewport: { width: 1280, height: 720 } });
+    const views = await ev(page, () => {
+      const K = __K, G = K.game, out = {};
+      T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'play', 300);
+      const spots = [[0, -10], [-6, -100], [K.level.boss.center.x, K.level.boss.center.z + 20]];
+      for (const q of ['ultra', 'high', 'medium', 'low']) {
+        K.post.setQuality(q);
+        let calls = 0, tris = 0;
+        for (const [x, z] of spots) {
+          T.teleport(x, z, T.routeDirYaw(x, z), 0); T.ticks(30); T.renderNow();
+          const d = T.drawStats(); calls = Math.max(calls, d.calls); tris = Math.max(tris, d.tris);
+        }
+        out[q] = { calls, tris };
+      }
+      K.post.setQuality('high');
+      return out;
+    });
+    await ev(page, () => { T.toTitle(); T.ticks(10); });
+    const a2 = await toAct2(page);
+    const views2 = await ev(page, () => {
+      const K = __K, out = {};
+      for (const q of ['ultra', 'high', 'medium', 'low']) {
+        K.post.setQuality(q);
+        let calls = 0, tris = 0;
+        for (const s0 of [200, 640, 1120]) { T.place2(s0, 0, 0); K.player.invT = 9; T.ticks(40); T.renderNow(); const d = T.drawStats(); calls = Math.max(calls, d.calls); tris = Math.max(tris, d.tris); }
+        out[q] = { calls, tris };
+      }
+      K.post.setQuality('high');
+      return out;
+    });
+    await ctx.close();
+    const okU = o => o.ultra.calls <= 350 && o.ultra.tris <= 2.5e6 && o.high.calls <= 350 && o.low.calls <= 350;
+    const okM = o => o.medium.calls <= 220 && o.medium.tris <= 8e5;
+    check('performance budgets: Ultra / Élevé / Économie <= 350 draw calls, Ultra <= 2.5 M triangles (Act 1 and Act 2 views)', a2.act === 2 && okU(views) && okU(views2) && errors.length === 0, { act1: views, act2: views2, errors: errors.slice(0, 3) });
+    // the placeholder scene is the same on every preset: Moyen's lighter content (decor density, shadow casters, LOD by
+    // K.gfx) is the art roles' work
+    pending('world+city+entities', 'performance budget Moyen: <= 220 draw calls / 800 k triangles (Act 1 and Act 2 views)', okM(views) && okM(views2), { act1: views.medium, act2: views2.medium });
+  }
+  // the frozen v2 build in legacy/ still loads (three r128 from the CDN, served here from vendor/)
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on('pageerror', e => errs.push('pageerror: ' + (e.stack || e.message)));
+    page.on('console', m => { if (m.type() === 'error') errs.push('console.error: ' + m.text()); });
+    await page.route('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', r => r.fulfill({ path: path.join(ROOT, 'vendor/three.min.js'), contentType: 'application/javascript' }));
+    await page.route(/^https:\/\/cdn\.jsdelivr\.net\/npm\/three@0\.128\.0\/examples\/js\/((?:postprocessing|shaders)\/[A-Za-z0-9]+\.js)$/, r => r.fulfill({ path: path.join(ROOT, 'vendor/examples', r.request().url().split('/examples/js/')[1]), contentType: 'application/javascript' }));
+    await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+    await page.goto(BASE + 'legacy/', { waitUntil: 'load', timeout: 120000 });
+    await page.waitForTimeout(6000);
+    const st = await page.evaluate(() => {
+      const cv = document.getElementById('hud'), g = cv.getContext('2d'), d = g.getImageData(0, 0, cv.width, cv.height).data;
+      let on = 0, n = 0; for (let i = 3; i < d.length; i += 4 * 53) { n++; if (d[i] > 40) on++; }
+      return { title: document.title, three: typeof THREE !== 'undefined' && THREE.REVISION, hud: +(on / n).toFixed(3), gl: !!document.getElementById('gl') };
+    });
+    await page.screenshot({ path: path.join(SHOTS, '37-legacy.png') });
+    await ctx.close();
+    check('legacy/ (frozen v2, three r128) loads and draws its title screen without errors', st.three === '128' && st.hud > 0.05 && errs.length === 0, { st, errs: errs.slice(0, 3) });
+  }
+}
+
+// ---------- WebGPU backend: boot, Act 1 sample, Act 2 sample, presets, no errors ----------
+async function webgpuSuite(browser) {
+  const { page, errors, bootMs } = await openGame(browser, { viewport: { width: 960, height: 540 } }, BASE + 'test.html');
+  const b = await ev(page, () => { T.ticks(30); const g = T.glStats(); return { backend: __K.view.backend, state: __K.game.state, mean: g.mean, std: g.std, colors: g.colors, post: __K.post.ok }; });
+  await shot(page, 'gpu-01-title');
+  check('WebGPU: the game boots on the WebGPU backend (title drawn)', b.backend === 'webgpu' && b.state === 'title' && b.post && b.mean > 40 && b.std > 12 && b.colors > 30, { bootMs, b });
+  const a1 = await ev(page, () => {
+    const K = __K, G = K.game, P = K.player;
+    T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'play', 300);
+    T.teleport(-6, -66, T.routeDirYaw(-6, -66), 22); T.follow(0);
+    for (let i = 0; i < 6; i++) { T.ticks(30); T.frame(); }
+    T.stop();
+    const jump0 = P.pos.y; T.key('Space', true); T.ticks(12); T.key('Space', false); T.ticks(4);
+    const g = T.glStats();
+    return { state: G.state, z: +P.pos.z.toFixed(1), rings: G.rings, rose: +(P.pos.y - jump0).toFixed(2), vfx: K.vfx.stats().spawned, mean: g.mean, std: g.std, dead: P.dead };
+  });
+  await shot(page, 'gpu-02-act1');
+  check('WebGPU: Act 1 plays a few seconds (run, rings, jump sparkles) and draws', a1.state === 'play' && a1.z < -90 && a1.rings > 0 && a1.vfx > 0 && !a1.dead && a1.mean > 40 && a1.std > 12, a1);
+  await ev(page, () => { T.toTitle(); T.ticks(10); });
+  const a2 = await toAct2(page);
+  const a2s = await ev(page, () => {
+    const K = __K, G = K.game;
+    T.key('ArrowUp', true);
+    for (let i = 0; i < 6; i++) { T.ticks(30); T.frame(); }
+    T.key('ArrowUp', false);
+    const g = T.glStats(), b = K.board.stats();
+    return { act: G.act, state: G.state, s: b.s, mode: b.mode, mean: g.mean, std: g.std };
+  });
+  await shot(page, 'gpu-03-act2');
+  check('WebGPU: Act 2 (city, skateboard, traffic) plays a few seconds and draws', a2.act === 2 && a2s.state === 'play' && a2s.s > 30 && a2s.mean > 30 && a2s.std > 10, { a2, a2s });
+  const pres = await ev(page, () => {
+    const K = __K, out = [];
+    for (const q of ['ultra', 'medium', 'low', 'high']) { K.post.setQuality(q); T.frame(); const g = T.glStats(); out.push({ q, passes: K.post.stats().passes.length, mean: g.mean }); }
+    K.post.setSuperRes(true); T.frame(); const g = T.glStats(); out.push({ q: 'sr', scale: K.post.stats().scale, mean: g.mean });
+    K.post.setSuperRes(false);
+    return out;
+  });
+  check('WebGPU: presets and Super Résolution switch and draw', pres.every(o => o.mean > 30) && pres[4].scale < 1, pres);
+  const tx = await page.evaluate(async () => {
+    const X = __K.tex, THREE = window.THREE;
+    await X.init();
+    const a = X.load('foundation/sample_albedo');
+    await X.preload(['foundation/sample_albedo']);
+    const w = a.image.width;
+    T.frame();
+    return { w, cs: a.colorSpace === THREE.SRGBColorSpace, failed: X.stats().failed };
+  });
+  check('WebGPU: K.tex texture upload (sample albedo, sRGB)', tx.w === 256 && tx.cs && tx.failed === 0, tx);
+  check('WebGPU: no page errors or console errors', errors.length === 0, errors.slice(0, 5));
+}
+
 (async () => {
-  const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const srv = await serve(ROOT, 0);
+  BASE = srv.url;
+  const browser = await chromium.launch({ args: WEBGPU ? GL_ARGS.concat(GPU_ARGS) : GL_ARGS });
   const t0 = Date.now();
   try {
-    if (!ONLY || ONLY.some(o => o !== 'phone' && o !== 'fullrun' && o !== 'regress' && o !== 'present' && o !== 'act2' && o !== 'post' && o !== 'regress2')) await desktop(browser);
-    if (!ONLY || ONLY.includes('act2')) await act2(browser);
-    if (!ONLY || ONLY.includes('post')) await postChecks(browser);
-    if (!ONLY || ONLY.includes('fullrun')) await fullRun(browser);
-    if (!ONLY || ONLY.includes('regress')) await regressGameplay(browser);
-    if (!ONLY || ONLY.includes('present')) await regressPresentation(browser);
-    if (!ONLY || ONLY.includes('regress2')) await regressAct2(browser);
-    if (PHONE) await phone(browser);
+    if (WEBGPU) await webgpuSuite(browser);
+    else {
+      const extra = ['phone', 'fullrun', 'regress', 'present', 'act2', 'post', 'regress2', 'v3'];
+      if (!ONLY || ONLY.some(o => extra.indexOf(o) < 0)) await desktop(browser);
+      if (!ONLY || ONLY.includes('v3')) await v3Checks(browser);
+      if (!ONLY || ONLY.includes('act2')) await act2(browser);
+      if (!ONLY || ONLY.includes('post')) await postChecks(browser);
+      if (!ONLY || ONLY.includes('fullrun')) await fullRun(browser);
+      if (!ONLY || ONLY.includes('regress')) await regressGameplay(browser);
+      if (!ONLY || ONLY.includes('present')) await regressPresentation(browser);
+      if (!ONLY || ONLY.includes('regress2')) await regressAct2(browser);
+      if (PHONE) await phone(browser);
+    }
   } catch (e) {
     check('test harness ran to completion', false, String(e && e.stack || e).slice(0, 800));
   }
   await browser.close();
-  const failed = results.filter(r => !r.pass);
-  console.log('\n===== Kit Rush 3D e2e report =====');
-  for (const r of results) console.log((r.pass ? '[pass] ' : '[FAIL] ') + r.name);
-  console.log(`\n${results.length - failed.length}/${results.length} passed in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  await srv.close();
+  const failed = results.filter(r => !r.pass), pend = results.filter(r => r.pending), checks = results.filter(r => !r.pending);
+  console.log('\n===== Kit Rush 3D e2e report (' + (WEBGPU ? 'WebGPU' : 'WebGL 2') + ' backend) =====');
+  for (const r of results) console.log((r.pending ? (r.met ? '[pass] ' : '[PEND] ') + '[' + r.pending + '] ' : r.pass ? '[pass] ' : '[FAIL] ') + r.name);
+  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed, ${pend.filter(r => !r.met).length}/${pend.length} builder targets pending, in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   if (info.perf) console.log('frame time (headless SwiftShader):', JSON.stringify(info.perf));
-  fs.writeFileSync(path.join(__dirname, 'e2e-report.json'), JSON.stringify({ results, info }, null, 1));
+  fs.writeFileSync(path.join(__dirname, WEBGPU ? 'e2e-report-webgpu.json' : 'e2e-report.json'), JSON.stringify({ results, info }, null, 1));
   process.exit(failed.length ? 1 : 0);
 })();

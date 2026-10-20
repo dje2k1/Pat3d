@@ -1,0 +1,56 @@
+{
+ "role": "foundation",
+ "textures": {
+  "sample_albedo": {
+   "full": "sample_albedo.webp",
+   "size": [
+    256,
+    256
+   ],
+   "colorSpace": "srgb",
+   "group": "none",
+   "wrap": "repeat",
+   "bytes": 6484,
+   "half": "sample_albedo_half.webp",
+   "halfSize": [
+    128,
+    128
+   ],
+   "halfBytes": 3334
+  },
+  "sample_normal": {
+   "full": "sample_normal.webp",
+   "size": [
+    256,
+    256
+   ],
+   "colorSpace": "linear",
+   "group": "none",
+   "wrap": "repeat",
+   "bytes": 18034,
+   "half": "sample_normal_half.webp",
+   "halfSize": [
+    128,
+    128
+   ],
+   "halfBytes": 7570
+  },
+  "sample_orm": {
+   "full": "sample_orm.webp",
+   "size": [
+    256,
+    256
+   ],
+   "colorSpace": "linear",
+   "group": "none",
+   "wrap": "repeat",
+   "bytes": 21342,
+   "half": "sample_orm_half.webp",
+   "halfSize": [
+    128,
+    128
+   ],
+   "halfBytes": 7956
+  }
+ }
+}

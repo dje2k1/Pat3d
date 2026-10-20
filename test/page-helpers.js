@@ -1,7 +1,7 @@
 // In-page test helpers for Kit Rush 3D (installed into test.html by e2e.js). Everything goes through window.__K.
 // The game's own requestAnimationFrame loop is driven by the test (deterministic fixed ticks, rendering on demand).
 window.__installT = function () {
-  const K = window.__K, G = K.game, P = K.player, V3 = THREE.Vector3;
+  const K = window.__K, G = K.game, P = K.player, THREE = window.THREE, V3 = THREE.Vector3;
   const ad = K.util.angleDiff;
   K.view._warm = 1e15; // keep the adaptive pixel ratio out of the deterministic run
   const R = K.view.renderer, realRender = R.render.bind(R);
@@ -96,14 +96,47 @@ window.__installT = function () {
     if (speed) P.vel.set(-Math.sin(yaw) * speed, 0, -Math.cos(yaw) * speed);
     T.resetBot();
   };
-  // pixels of the WebGL canvas right after a render (same task, so the drawing buffer is intact)
-  T.glStats = () => {
+  // v3 (three r186 WebGPURenderer, WebGL 2 or WebGPU backend): a frame is rendered through K.post without advancing
+  // the simulation, then the canvas is copied into a 2D canvas in the same task (works on both backends: the drawing
+  // buffer / current texture is still intact) and its pixels are read there.
+  T.renderNow = () => {
     const d = T.draw; T.draw = true;
-    realRender(K.view.scene, K.view.camera);
+    const V = K.view;
+    V.beginFrame();
+    if (K.post && K.post.ok) K.post.render(0); else realRender(V.scene, V.camera);
+    V.endFrame();
     T.draw = d;
-    const gl = R.getContext(), w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
-    const px = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  };
+  const rb = { cv: null, g: null };
+  // pixels of the 3D canvas, top row first: {w, h, px (Uint8ClampedArray RGBA)}; x0/y0/w/h: a sub-rectangle
+  T.pixels = (x0, y0, w, h) => {
+    T.renderNow();
+    const src = R.domElement, W = src.width, H = src.height;
+    x0 = x0 || 0; y0 = y0 || 0; w = w || W; h = h || H;
+    if (!rb.cv) { rb.cv = document.createElement('canvas'); rb.g = rb.cv.getContext('2d', { willReadFrequently: true }); }
+    if (rb.cv.width !== w || rb.cv.height !== h) { rb.cv.width = w; rb.cv.height = h; }
+    rb.g.clearRect(0, 0, w, h);
+    rb.g.drawImage(src, x0, y0, w, h, 0, 0, w, h);
+    return { w, h, px: rb.g.getImageData(0, 0, w, h).data };
+  };
+  // the same with the rows bottom first (the WebGL readPixels layout the v2 checks were written against)
+  T.pixelsGL = () => {
+    const { w, h, px } = T.pixels(), out = new Uint8Array(w * h * 4), row = w * 4;
+    for (let y = 0; y < h; y++) out.set(px.subarray((h - 1 - y) * row, (h - y) * row), y * row);
+    return { w, h, px: out };
+  };
+  // waits for the GPU to finish the last frame (a 1 px readback of the canvas)
+  T.sync = () => {
+    if (!rb.cv) { rb.cv = document.createElement('canvas'); rb.g = rb.cv.getContext('2d', { willReadFrequently: true }); }
+    rb.g.drawImage(R.domElement, 0, 0, 1, 1, 0, 0, 1, 1);
+    return rb.g.getImageData(0, 0, 1, 1).data[0];
+  };
+  // GPU memory counters (three r186 renderer.info.memory)
+  T.mem = () => { const m = R.info.memory; return { geo: m.geometries, tex: m.textures, prog: m.programs }; };
+  // draw calls / triangles of the last rendered frame: the game scene (scene pass + shadow maps) and the whole frame
+  T.drawStats = () => { const s = K.view.stats; return { calls: s.sceneCalls, tris: s.sceneTris, frameCalls: s.calls, frameTris: s.tris }; };
+  T.glStats = () => {
+    const { w, h, px } = T.pixels();
     let sum = 0, sum2 = 0, n = 0, dark = 0;
     const buckets = new Set();
     for (let i = 0; i < px.length; i += 4 * 97) {
@@ -111,8 +144,8 @@ window.__installT = function () {
       sum += l; sum2 += l * l; n++; if (l < 12) dark++;
       buckets.add((px[i] >> 5) * 64 + (px[i + 1] >> 5) * 8 + (px[i + 2] >> 5));
     }
-    const mean = sum / n;
-    return { w, h, mean: +mean.toFixed(1), std: +Math.sqrt(Math.max(0, sum2 / n - mean * mean)).toFixed(1), dark: +(dark / n).toFixed(3), colors: buckets.size, calls: R.info.render.calls, tris: R.info.render.triangles };
+    const mean = sum / n, ds = T.drawStats();
+    return { w, h, mean: +mean.toFixed(1), std: +Math.sqrt(Math.max(0, sum2 / n - mean * mean)).toFixed(1), dark: +(dark / n).toFixed(3), colors: buckets.size, calls: ds.calls, tris: ds.tris, frameCalls: ds.frameCalls };
   };
   T.hudStats = () => {
     const cv = document.getElementById('hud'), g = cv.getContext('2d');

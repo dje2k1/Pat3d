@@ -1,0 +1,12 @@
+three.js 0.186.1 from npm (https://registry.npmjs.org/three/-/three-0.186.1.tgz), MIT licence (LICENSE).
+
+build/three.webgpu.js, build/three.core.js, build/three.tsl.js minified with esbuild 0.25
+(--minify --legal-comments=inline --format=esm --target=es2020); the licence header is kept.
+addons/ = examples/jsm/ files copied unmodified, same relative layout (imports 'three', 'three/webgpu',
+'three/tsl' resolve through the import map of index.html).
+
+Local patch (three.webgpu.js): GPUTextureViewDescriptor.swizzle default 'rgba' -> undefined.
+Chromium <= 14x types GPUTextureViewDescriptor.swizzle as a dictionary and rejects the string 'rgba'
+("The provided value is not of type 'GPUTextureComponentSwizzle'"), which broke every render pass on WebGPU.
+Leaving it undefined means the identity swizzle on every browser. Re-apply after an upgrade:
+  sed -i 's/swizzle="rgba"/swizzle=void 0/g' lib/three/three.webgpu.js

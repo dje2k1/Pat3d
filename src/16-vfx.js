@@ -57,286 +57,242 @@ const ST = {
   sl: null, slI: 0, slTarget: 0, slLast: -1, sdX: 0, sdY: 0, sdZ: -1, sdLast: -1, flX: 0, flY: 0, flZ: -1
 };
 
-// ---------------------------------------------------------------- shaders
-const OUTC = [
-  'vec3 outc(vec3 c) {',
-  '#ifdef TONE_MAPPING',
-  '  c = toneMapping(c);',
-  '#endif',
-  '  return linearToOutputTexel(vec4(c, 1.0)).rgb;',
-  '}'].join('\n');
-const FOGP = [
-  '#ifdef USE_FOG',
-  '  uniform vec3 fogColor;',
-  '  #ifdef FOG_EXP2',
-  '    uniform float fogDensity;',
-  '  #else',
-  '    uniform float fogNear; uniform float fogFar;',
-  '  #endif',
-  '#endif'].join('\n');
-// premultiplied output: `add` share is pure light (fades in fog), the rest is alpha-blended (mixes toward the fog colour)
-const FOGOUT = [
-  '  float fogF = 0.0;',
-  '#ifdef USE_FOG',
-  '  #ifdef FOG_EXP2',
-  '    fogF = 1.0 - exp(-fogDensity * fogDensity * vDepth * vDepth);',
-  '  #else',
-  '    fogF = smoothstep(fogNear, fogFar, vDepth);',
-  '  #endif',
-  '#endif',
-  '  vec3 rgb = vec3(0.0);',
-  '  if (add > 0.004) rgb += outc(col * (a * add * (1.0 - fogF)));',
-  '  float aa = a * (1.0 - add);',
-  '  if (aa > 0.0) {',
-  '    vec3 cb = col;',
-  '#ifdef USE_FOG',
-  '    cb = mix(cb, fogColor, fogF);',
-  '#endif',
-  '    rgb += outc(cb) * aa;',
-  '  }',
-  '  gl_FragColor = vec4(rgb, aa);'].join('\n');
-
-const PV = [
-  'uniform float uTime;',
-  'uniform float uPx;',
-  'attribute vec2 aCorner;',
-  'attribute vec4 i0; attribute vec4 i1; attribute vec4 i2; attribute vec4 i3;',
-  'attribute vec4 i4; attribute vec4 i5; attribute vec4 i6; attribute vec4 i7;',
-  'varying vec2 vUv; varying vec4 vCol; varying vec4 vInfo; varying vec3 vMisc; varying float vDepth;',
-  'float sizeCurve(float c, float t) {',
-  '  if (c < 0.5) return 1.0 - (1.0 - t) * (1.0 - t);',
-  '  if (c < 1.5) return t;',
-  '  if (c < 2.5) return smoothstep(0.0, 0.14, t) * (1.0 - t * t);',
-  '  float u = 1.0 - t; return 1.0 - u * u * u * u;',
-  '}',
-  'void main() {',
-  '  vUv = aCorner; vCol = vec4(0.0); vInfo = vec4(0.0); vMisc = vec3(0.0); vDepth = 1.0;',
-  '  float age = uTime - i0.w;',
-  '  if (age < 0.0 || age >= i1.w) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }',
-  '  float t = age / i1.w;',
-  // i5.x packs shape + 8 * orientation + 32 * size curve (exact small integers)
-  '  float oc = floor(i5.x / 8.0 + 0.001);',
-  '  float shp = i5.x - 8.0 * oc;',
-  '  float curve = floor(oc / 4.0 + 0.001);',
-  '  float orient = oc - 4.0 * curve;',
-  '  bool planar = orient > 1.5 && orient < 2.5;',
-  '  vec3 pos = i0.xyz;',
-  '  vec3 vel = vec3(0.0);',
-  '  if (!planar) {',
-  '    float k = i2.z;',
-  '    vec3 g = vec3(0.0, -i2.w, 0.0);',
-  '    if (k > 0.001) {',
-  '      float ek = exp(-k * age);',
-  '      vec3 vt = g / k;',
-  '      pos += vt * age + (i1.xyz - vt) * ((1.0 - ek) / k);',
-  '      vel = vt + (i1.xyz - vt) * ek;',
-  '    } else {',
-  '      pos += i1.xyz * age + 0.5 * g * age * age;',
-  '      vel = i1.xyz + g * age;',
-  '    }',
-  '    if (i7.z > 0.0) {',
-  '      float s = i6.x * 40.0;',
-  '      pos += i7.z * min(age * 2.5, 1.0) * vec3(sin(age * 2.7 + s), 0.45 * sin(age * 1.9 + s * 1.7), cos(age * 2.3 + s * 0.6));',
-  '    }',
-  // carried frame: the effect travels with whoever emitted it (relative motion above keeps its drag)
-  '    pos += vec3(i5.y, i7.y, i7.w) * age;',
-  '  }',
-  '  float size = mix(i2.x, i2.y, sizeCurve(curve, t));',
-  '  float a = mix(i3.w, i4.w, t) * (1.0 - smoothstep(0.86, 1.0, t));',
-  '  if (i7.x > 0.0) a *= smoothstep(0.0, i7.x, t);',
-  '  vec3 col = mix(i3.rgb, i4.rgb, t);',
-  '  if (i6.y > 0.0) {',
-  '    float f = 0.5 + 0.5 * sin(age * i6.y + i6.x * 6.2832);',
-  '    f *= f;',
-  '    col *= 0.22 + 1.4 * f;',
-  '    size *= 0.7 + 0.42 * f;',
-  '  }',
-  '  vec4 mvc = modelViewMatrix * vec4(pos, 1.0);',
-  '  float depth = max(-mvc.z, 0.01);',
-  '  if (!planar) {',
-  '    float px = size * uPx / depth;',
-  '    if (px < 1.3) { a *= px / 1.3; size *= 1.3 / max(px, 1e-4); }',
-  '    a *= smoothstep(0.25, 1.2, depth);',
-  '  }',
-  '  float rot = i5.z + i5.w * age;',
-  '  float cr = cos(rot), sr = sin(rot);',
-  '  vec2 c = aCorner;',
-  '  float flip = 1.0;',
-  '  if (shp > 5.5 && shp < 6.5) { flip = cos(i6.x * 17.0 + age * i6.w); c.y *= max(abs(flip), 0.07); }',
-  '  vec4 mv = mvc;',
-  '  float light = 1.0;',
-  '  if (planar) {',
-  '    vec3 n = normalize(i1.xyz + vec3(0.0, 1e-6, 0.0));',
-  '    vec3 ax = abs(n.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);',
-  '    vec3 u = normalize(cross(n, ax));',
-  '    vec3 w = cross(n, u);',
-  '    vec2 rc = vec2(cr * c.x - sr * c.y, sr * c.x + cr * c.y);',
-  '    mv = modelViewMatrix * vec4(pos + (u * rc.x + w * rc.y) * size, 1.0);',
-  '  } else if (orient < 1.5 && orient > 0.5) {',
-  '    vec3 vv = (modelViewMatrix * vec4(vel, 0.0)).xyz;',
-  '    vec2 d = mvc.xy * vv.z - vv.xy * mvc.z;',
-  '    float dl = length(d);',
-  '    vec2 dir = dl > 1e-6 ? d / dl : vec2(0.0, 1.0);',
-  '    float len = size + i6.w * dl / depth;',
-  '    mv.xy += dir * mix(-len, size * 0.5, c.x * 0.5 + 0.5) + vec2(-dir.y, dir.x) * (c.y * size * 0.5);',
-  '  } else {',
-  // big soft sprites are pulled toward the eye (keeping their projected size) so they cut less into the ground
-  // (flashes, rings and flares are light effects: pulled much closer so ground and walls never slice them)
-  '    float pull = (shp < 0.5 || (shp > 4.5 && shp < 5.5) || shp > 6.5) ? min(size * 1.5, depth * 0.75) : (shp > 1.5 && shp < 3.5) ? min(size * 0.7, depth * 0.45) : 0.0;',
-  '    float kf = (depth - pull) / depth;',
-  '    mv = vec4(mvc.xyz * kf, 1.0);',
-  '    vec2 sc = orient > 2.5 ? vec2(c.x * i6.w, c.y) : vec2(cr * c.x - sr * c.y, sr * c.x + cr * c.y);',
-  '    mv.xy += sc * size * kf;',
-  '    light = clamp(0.5 + 0.38 * sc.y, 0.0, 1.0);',
-  '  }',
-  '  vDepth = planar ? -mv.z : depth;',
-  '  vCol = vec4(col, a);',
-  '  vInfo = vec4(shp, i6.z, i6.w, t);',
-  '  vMisc = vec3(i6.x, light, flip);',
-  '  gl_Position = projectionMatrix * mv;',
-  '}'].join('\n');
-
-const PF = [
-  'uniform sampler2D uPuff;',
-  FOGP,
-  'varying vec2 vUv; varying vec4 vCol; varying vec4 vInfo; varying vec3 vMisc; varying float vDepth;',
-  OUTC,
-  'float puff(vec2 p, float seed) {',
-  '  float cell = floor(fract(seed * 7.13) * 3.999);',
-  '  vec2 off = vec2(mod(cell, 2.0), floor(cell * 0.5)) * 0.5;',
-  '  return texture2D(uPuff, off + 0.25 + p * 0.24).a;',
-  '}',
-  'void main() {',
-  '  vec2 p = vUv;',
-  '  float shape = vInfo.x;',
-  '  float r2 = dot(p, p);',
-  '  vec3 col = vCol.rgb;',
-  '  float add = vInfo.y;',
-  '  float m;',
-  '  if (shape < 0.5) {',
-  '    if (r2 >= 1.0) discard;',
-  '    float q = 1.0 - r2;',
-  '    m = q * q * 0.5 + exp(-r2 * 20.0) * 0.8;',
-  '  } else if (shape < 1.5) {',
-  '    vec2 q = abs(p);',
-  '    float wx = 0.075 * (1.0 - q.x) + 0.006, wy = 0.075 * (1.0 - q.y) + 0.006;',
-  '    float rays = exp(-q.y * q.y / (wx * wx)) * (1.0 - q.x) + exp(-q.x * q.x / (wy * wy)) * (1.0 - q.y);',
-  '    float core = exp(-r2 * 42.0);',
-  '    m = rays * 0.95 + core * 1.25 + exp(-r2 * 8.0) * 0.16;',
-  '    col = mix(col, vec3(max(col.r, max(col.g, col.b))), min(core * 0.75, 1.0));',
-  '  } else if (shape < 2.5) {',
-  '    if (r2 >= 1.0) discard;',
-  '    m = puff(p, vMisc.x);',
-  '    col *= mix(0.68, 1.22, vMisc.y);',
-  '  } else if (shape < 3.5) {',
-  '    if (r2 >= 1.0) discard;',
-  '    float d = puff(p, vMisc.x);',
-  '    float heat = clamp(d * 1.3 - vInfo.w * 1.35 + 0.04, 0.0, 1.0);',
-  '    vec3 f = mix(vec3(0.1, 0.022, 0.012), vec3(1.5, 0.3, 0.035), smoothstep(0.0, 0.3, heat));',
-  '    f = mix(f, vec3(3.0, 1.2, 0.17), smoothstep(0.25, 0.62, heat));',
-  '    f = mix(f, vec3(4.8, 3.4, 1.5), smoothstep(0.62, 1.0, heat));',
-  '    col *= f;',
-  '    add *= 0.3 + 0.7 * smoothstep(0.02, 0.32, heat);',
-  '    m = d;',
-  '  } else if (shape < 4.5) {',
-  '    float x01 = p.x * 0.5 + 0.5;',
-  '    float y2 = p.y * p.y;',
-  '    float core = exp(-y2 * 22.0);',
-  '    m = (exp(-y2 * 3.5) * 0.45 + core) * pow(x01, 1.4) * smoothstep(1.0, 0.9, x01);',
-  '    col = mix(col, vec3(max(col.r, max(col.g, col.b))), core * 0.25);',
-  '  } else if (shape < 5.5) {',
-  '    float r = sqrt(r2);',
-  '    if (r >= 1.0) discard;',
-  '    float th = max(vInfo.z, 0.03);',
-  '    float rr = 1.0 - th;',
-  '    float e = (r - rr) / th;',
-  '    m = exp(-e * e * 2.6) + 0.07 * smoothstep(0.15, rr, r) * step(r, rr);',
-  '    m *= smoothstep(1.0, 0.95, r);',
-  '  } else if (shape < 6.5) {',
-  '    m = smoothstep(1.0, 0.8, abs(p.x)) * smoothstep(0.64, 0.46, abs(p.y));',
-  '    float fl = abs(vMisc.z);',
-  '    col = col * (0.42 + 0.58 * fl) + vec3(pow(fl, 40.0) * 1.6);',
-  '  } else {',
-  '    float ax = abs(p.x);',
-  '    m = exp(-p.y * p.y * 18.0) * pow(1.0 - ax, 2.4) + exp(-(p.x * p.x * 50.0 + p.y * p.y * 3.0)) * 0.7;',
-  '  }',
-  '  float a = vCol.a * m;',
-  '  if (a < 0.002) discard;',
-  FOGOUT,
-  '}'].join('\n');
-
-const RVS = [
-  'attribute vec3 aTan; attribute vec4 aCol; attribute vec4 aSide;',
-  'varying vec4 vCol; varying vec3 vR; varying float vDepth;',
-  'void main() {',
-  '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
-  '  vec3 tv = (modelViewMatrix * vec4(aTan, 0.0)).xyz;',
-  '  vec3 s = cross(tv, mv.xyz);',
-  '  float l = length(s);',
-  '  s = l > 1e-7 ? s / l : vec3(0.0);',
-  '  mv.xyz += s * (aSide.x * aSide.y);',
-  '  vCol = vec4(aCol.rgb, aCol.a * smoothstep(1.2, 4.0, -mv.z)); vR = vec3(aSide.x, aSide.z, aSide.w); vDepth = -mv.z;',
-  '  gl_Position = projectionMatrix * mv;',
-  '}'].join('\n');
-const RFS = [
-  'uniform float uClock;',
-  FOGP,
-  'varying vec4 vCol; varying vec3 vR; varying float vDepth;',
-  OUTC,
-  'void main() {',
-  '  float v = vR.x;',
-  '  float core = exp(-v * v * 14.0);',
-  '  float m = max(exp(-v * v * 2.4) - 0.09, 0.0) + core * 0.45;',
-  '  float energy = 0.8 + 0.2 * sin(vR.y * 4.0 - uClock * 26.0);',
-  '  vec3 col = mix(vCol.rgb, vec3(max(vCol.r, max(vCol.g, vCol.b))), core * 0.45) * energy;',
-  '  float a = vCol.a * m;',
-  '  if (a < 0.002) discard;',
-  '  float add = vR.z;',
-  FOGOUT,
-  '}'].join('\n');
-
-const SVS = [
-  'uniform float uTime; uniform float uInt; uniform vec3 uFlow;',
-  'attribute vec2 aCorner; attribute vec4 iA; attribute vec4 iB;',
-  'varying vec2 vUv; varying float vA;',
-  'void main() {',
-  '  vUv = aCorner; vA = 0.0;',
-  '  if (iB.z > uInt) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }',
-  '  vec3 f = normalize(uFlow + vec3(0.0, 0.0, -1e-4));',
-  '  vec3 ax = abs(f.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);',
-  '  vec3 u = normalize(cross(f, ax));',
-  '  vec3 w = cross(f, u);',
-  '  float span = 52.0;',
-  '  float z = 44.0 - mod(iA.z * span + uTime * iA.w, span);',
-  '  vec3 c = (u * cos(iA.x) + w * sin(iA.x)) * iA.y + f * z;',
-  '  float len = iB.x * (0.55 + 0.9 * uInt);',
-  '  vec3 p = c + f * (len * (aCorner.x * 0.5 + 0.5));',
-  '  vec3 sd = cross(f, p);',
-  '  float sl = length(sd);',
-  '  p += (sl > 1e-5 ? sd / sl : u) * (aCorner.y * iB.y);',
-  '  vA = smoothstep(44.0, 26.0, z) * smoothstep(-6.0, 1.5, z) * min(uInt * 1.7, 1.0) * iB.w;',
-  '  gl_Position = projectionMatrix * vec4(p, 1.0);',
-  '}'].join('\n');
-const SFS = [
-  'uniform vec3 uCol;',
-  'varying vec2 vUv; varying float vA;',
-  OUTC,
-  'void main() {',
-  '  float x01 = vUv.x * 0.5 + 0.5;',
-  '  float a = vA * exp(-vUv.y * vUv.y * 3.0) * sin(3.14159 * x01) * (0.35 + 0.65 * (1.0 - x01));',
-  '  if (a < 0.003) discard;',
-  '  gl_FragColor = vec4(outc(uCol * a), a * 0.2);',
-  '}'].join('\n');
-
-// float uniforms written every frame: their own object shape keeps `value` an unboxed double (three's shared
-// { value } shape holds textures/colours too, so each number written there would allocate)
-const fu = v => ({ f: 1, value: v });
+// ---------------------------------------------------------------- shaders (TSL)
+// The v2 GLSL particle / ribbon / speed-line programs ported to TSL node materials: the motion is still evaluated in
+// the vertex stage from the spawn data (vertexNode), the shapes in the fragment stage (fragmentNode, premultiplied
+// output: the `add` share is pure light, the rest alpha-blended).
+// PORT(vfx->post): v2 also fogged the effects (additive share fading out, alpha share mixing toward the fog colour) and
+// switched light effects to "screen" blending on the direct (non-HDR) path; v3 (post+vfx builder): soft particles
+// against the depth buffer, fog, HDR bloom-friendly intensities, maybe instancedArray / compute.
+const { Fn, If, Discard, uniform, attribute, varyingProperty, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp,
+  abs: tabs, max: tmax, min: tmin, fract: tfract, floor: tfloor, mod: tmod, sin: tsin, cos: tcos, pow: tpow, exp: texp,
+  dot: tdot, normalize: tnormalize, cross: tcross, length: tlength, sqrt: tsqrt, select, texture: ttexture,
+  modelViewMatrix, cameraProjectionMatrix } = TSL;
+const fu = v => uniform(v);
+const max3 = c => tmax(c.x, tmax(c.y, c.z));
 function blendMat(params) {
-  return new THREE.ShaderMaterial(Object.assign({
-    transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+  const m = new THREE.MeshBasicNodeMaterial(Object.assign({
+    transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, fog: false,
     blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
-    blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor
-  }, params));
+    blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor
+  }, params || {}));
+  return m;
+}
+// premultiplied output of a colour col with alpha a and additive share add
+const premul = (col, a, add) => {
+  const aa = a.mul(float(1).sub(add));
+  const rgb = select(add.greaterThan(0.004), col.mul(a.mul(add)), vec3(0)).add(col.mul(aa));
+  return vec4(rgb, aa);
+};
+function particleMaterial(U) {
+  const m = blendMat();
+  const vUv = varyingProperty('vec2', 'vfxUv'), vCol = varyingProperty('vec4', 'vfxCol'), vInfo = varyingProperty('vec4', 'vfxInfo');
+  const vMisc = varyingProperty('vec3', 'vfxMisc');
+  const sizeCurve = (c, t) => select(c.lessThan(0.5), float(1).sub(float(1).sub(t).mul(float(1).sub(t))),
+    select(c.lessThan(1.5), t, select(c.lessThan(2.5), smoothstep(0.0, 0.14, t).mul(float(1).sub(t.mul(t))), float(1).sub(tpow(float(1).sub(t), 4)))));
+  m.vertexNode = Fn(() => {
+    const i0 = attribute('i0', 'vec4'), i1 = attribute('i1', 'vec4'), i2 = attribute('i2', 'vec4'), i3 = attribute('i3', 'vec4');
+    const i4 = attribute('i4', 'vec4'), i5 = attribute('i5', 'vec4'), i6 = attribute('i6', 'vec4'), i7 = attribute('i7', 'vec4');
+    const aCorner = attribute('aCorner', 'vec2');
+    vUv.assign(aCorner); vCol.assign(vec4(0)); vInfo.assign(vec4(0)); vMisc.assign(vec3(0));
+    const out = vec4(0, 0, 2, 1).toVar();
+    const age = U.uTime.sub(i0.w).toVar();
+    If(age.greaterThanEqual(0).and(age.lessThan(i1.w)), () => {
+      const t = age.div(i1.w).toVar();
+      // i5.x packs shape + 8 * orientation + 32 * size curve (exact small integers)
+      const oc = tfloor(i5.x.div(8).add(0.001)).toVar();
+      const shp = i5.x.sub(oc.mul(8)).toVar();
+      const curve = tfloor(oc.div(4).add(0.001)).toVar();
+      const orient = oc.sub(curve.mul(4)).toVar();
+      const planar = orient.greaterThan(1.5).and(orient.lessThan(2.5));
+      const pos = vec3(i0.xyz).toVar();
+      const vel = vec3(0).toVar();
+      If(planar.not(), () => {
+        const k = i2.z, g = vec3(0, i2.w.negate(), 0);
+        If(k.greaterThan(0.001), () => {
+          const ek = texp(k.negate().mul(age));
+          const vt = g.div(k);
+          pos.addAssign(vt.mul(age).add(i1.xyz.sub(vt).mul(float(1).sub(ek).div(k))));
+          vel.assign(vt.add(i1.xyz.sub(vt).mul(ek)));
+        }).Else(() => {
+          pos.addAssign(i1.xyz.mul(age).add(g.mul(age.mul(age).mul(0.5))));
+          vel.assign(i1.xyz.add(g.mul(age)));
+        });
+        If(i7.z.greaterThan(0), () => {
+          const s = i6.x.mul(40);
+          pos.addAssign(vec3(tsin(age.mul(2.7).add(s)), tsin(age.mul(1.9).add(s.mul(1.7))).mul(0.45), tcos(age.mul(2.3).add(s.mul(0.6)))).mul(i7.z.mul(tmin(age.mul(2.5), 1))));
+        });
+        // carried frame: the effect travels with whoever emitted it
+        pos.addAssign(vec3(i5.y, i7.y, i7.w).mul(age));
+      });
+      const size = mix(i2.x, i2.y, sizeCurve(curve, t)).toVar();
+      const a = mix(i3.w, i4.w, t).mul(float(1).sub(smoothstep(0.86, 1.0, t))).toVar();
+      If(i7.x.greaterThan(0), () => { a.mulAssign(smoothstep(0.0, i7.x, t)); });
+      const col = mix(i3.xyz, i4.xyz, t).toVar();
+      If(i6.y.greaterThan(0), () => {
+        const f0 = tsin(age.mul(i6.y).add(i6.x.mul(6.2832))).mul(0.5).add(0.5);
+        const f = f0.mul(f0);
+        col.mulAssign(f.mul(1.4).add(0.22));
+        size.mulAssign(f.mul(0.42).add(0.7));
+      });
+      const mvc = modelViewMatrix.mul(vec4(pos, 1)).toVar();
+      const depth = tmax(mvc.z.negate(), 0.01).toVar();
+      If(planar.not(), () => {
+        const px = size.mul(U.uPx).div(depth);
+        If(px.lessThan(1.3), () => { a.mulAssign(px.div(1.3)); size.mulAssign(float(1.3).div(tmax(px, 1e-4))); });
+        a.mulAssign(smoothstep(0.25, 1.2, depth));
+      });
+      const rot = i5.z.add(i5.w.mul(age));
+      const cr = tcos(rot).toVar(), sr = tsin(rot).toVar();
+      const c = vec2(aCorner).toVar();
+      const flip = float(1).toVar();
+      If(shp.greaterThan(5.5).and(shp.lessThan(6.5)), () => {
+        flip.assign(tcos(i6.x.mul(17).add(age.mul(i6.w))));
+        c.assign(vec2(c.x, c.y.mul(tmax(tabs(flip), 0.07))));
+      });
+      const mv = vec4(mvc).toVar();
+      const light = float(1).toVar();
+      If(planar, () => {
+        const n = tnormalize(i1.xyz.add(vec3(0, 1e-6, 0)));
+        const ax = select(tabs(n.y).lessThan(0.95), vec3(0, 1, 0), vec3(1, 0, 0));
+        const u = tnormalize(tcross(n, ax)), w = tcross(n, u);
+        const rc = vec2(cr.mul(c.x).sub(sr.mul(c.y)), sr.mul(c.x).add(cr.mul(c.y)));
+        mv.assign(modelViewMatrix.mul(vec4(pos.add(u.mul(rc.x).add(w.mul(rc.y)).mul(size)), 1)));
+      }).ElseIf(orient.lessThan(1.5).and(orient.greaterThan(0.5)), () => {
+        const vv = modelViewMatrix.mul(vec4(vel, 0)).xyz;
+        const d = mvc.xy.mul(vv.z).sub(vv.xy.mul(mvc.z));
+        const dl = tlength(d);
+        const dir = select(dl.greaterThan(1e-6), d.div(tmax(dl, 1e-6)), vec2(0, 1));
+        const len = size.add(i6.w.mul(dl).div(depth));
+        const off = dir.mul(mix(len.negate(), size.mul(0.5), c.x.mul(0.5).add(0.5))).add(vec2(dir.y.negate(), dir.x).mul(c.y.mul(size).mul(0.5)));
+        mv.assign(vec4(mvc.xy.add(off), mvc.z, mvc.w));
+      }).Else(() => {
+        // big soft sprites are pulled toward the eye (keeping their projected size) so they cut less into the ground
+        const glowish = shp.lessThan(0.5).or(shp.greaterThan(4.5).and(shp.lessThan(5.5))).or(shp.greaterThan(6.5));
+        const puffish = shp.greaterThan(1.5).and(shp.lessThan(3.5));
+        const pull = select(glowish, tmin(size.mul(1.5), depth.mul(0.75)), select(puffish, tmin(size.mul(0.7), depth.mul(0.45)), float(0)));
+        const kf = depth.sub(pull).div(depth);
+        const sc = select(orient.greaterThan(2.5), vec2(c.x.mul(i6.w), c.y), vec2(cr.mul(c.x).sub(sr.mul(c.y)), sr.mul(c.x).add(cr.mul(c.y))));
+        mv.assign(vec4(mvc.xyz.mul(kf).add(vec3(sc.mul(size).mul(kf), 0)), 1));
+        light.assign(tclamp(sc.y.mul(0.38).add(0.5), 0, 1));
+      });
+      vCol.assign(vec4(col, a));
+      vInfo.assign(vec4(shp, i6.z, i6.w, t));
+      vMisc.assign(vec3(i6.x, light, flip));
+      out.assign(cameraProjectionMatrix.mul(mv));
+    });
+    return out;
+  })();
+  m.fragmentNode = Fn(() => {
+    // every value shared by several If branches is a var set before the branches: TSL would otherwise emit it inside
+    // the first branch that uses it and read it uninitialised in the others
+    const p = vec2(vUv).toVar(), shape = float(vInfo.x).toVar(), r2 = tdot(p, p).toVar();
+    // the puff atlas is sampled once, outside the branches (WGSL needs uniform control flow for implicit LOD)
+    const cell = tfloor(tfract(vMisc.x.mul(7.13)).mul(3.999));
+    const poff = vec2(tmod(cell, 2), tfloor(cell.mul(0.5))).mul(0.5);
+    const puffA = ttexture(U.uPuff, poff.add(0.25).add(p.mul(0.24))).a.toVar();
+    const col = vec3(vCol.xyz).toVar(), add = float(vInfo.y).toVar(), m0 = float(0).toVar();
+    If(shape.lessThan(0.5), () => {
+      If(r2.greaterThanEqual(1), () => { Discard(); });
+      const q = float(1).sub(r2);
+      m0.assign(q.mul(q).mul(0.5).add(texp(r2.mul(-20)).mul(0.8)));
+    }).ElseIf(shape.lessThan(1.5), () => {
+      const q = tabs(p);
+      const wx = float(1).sub(q.x).mul(0.075).add(0.006), wy = float(1).sub(q.y).mul(0.075).add(0.006);
+      const rays = texp(q.y.mul(q.y).div(wx.mul(wx)).negate()).mul(float(1).sub(q.x)).add(texp(q.x.mul(q.x).div(wy.mul(wy)).negate()).mul(float(1).sub(q.y)));
+      const core = texp(r2.mul(-42));
+      m0.assign(rays.mul(0.95).add(core.mul(1.25)).add(texp(r2.mul(-8)).mul(0.16)));
+      col.assign(mix(col, vec3(max3(col)), tmin(core.mul(0.75), 1)));
+    }).ElseIf(shape.lessThan(2.5), () => {
+      If(r2.greaterThanEqual(1), () => { Discard(); });
+      m0.assign(puffA);
+      col.mulAssign(mix(float(0.68), float(1.22), vMisc.y));
+    }).ElseIf(shape.lessThan(3.5), () => {
+      If(r2.greaterThanEqual(1), () => { Discard(); });
+      const d = puffA;
+      const heat = tclamp(d.mul(1.3).sub(vInfo.w.mul(1.35)).add(0.04), 0, 1);
+      const f = mix(mix(mix(vec3(0.1, 0.022, 0.012), vec3(1.5, 0.3, 0.035), smoothstep(0.0, 0.3, heat)), vec3(3.0, 1.2, 0.17), smoothstep(0.25, 0.62, heat)), vec3(4.8, 3.4, 1.5), smoothstep(0.62, 1.0, heat));
+      col.mulAssign(f);
+      add.mulAssign(smoothstep(0.02, 0.32, heat).mul(0.7).add(0.3));
+      m0.assign(d);
+    }).ElseIf(shape.lessThan(4.5), () => {
+      const x01 = p.x.mul(0.5).add(0.5), y2 = p.y.mul(p.y);
+      const core = texp(y2.mul(-22));
+      m0.assign(texp(y2.mul(-3.5)).mul(0.45).add(core).mul(tpow(x01, 1.4)).mul(smoothstep(1.0, 0.9, x01)));
+      col.assign(mix(col, vec3(max3(col)), core.mul(0.25)));
+    }).ElseIf(shape.lessThan(5.5), () => {
+      const r = tsqrt(r2);
+      If(r.greaterThanEqual(1), () => { Discard(); });
+      const th = tmax(vInfo.z, 0.03), rr = float(1).sub(th), e = r.sub(rr).div(th);
+      m0.assign(texp(e.mul(e).mul(-2.6)).add(smoothstep(0.15, rr, r).mul(select(r.lessThanEqual(rr), float(0.07), float(0)))).mul(smoothstep(1.0, 0.95, r)));
+    }).ElseIf(shape.lessThan(6.5), () => {
+      m0.assign(smoothstep(1.0, 0.8, tabs(p.x)).mul(smoothstep(0.64, 0.46, tabs(p.y))));
+      const fl = tabs(vMisc.z);
+      col.assign(col.mul(fl.mul(0.58).add(0.42)).add(vec3(tpow(fl, 40).mul(1.6))));
+    }).Else(() => {
+      const ax = tabs(p.x);
+      m0.assign(texp(p.y.mul(p.y).mul(-18)).mul(tpow(float(1).sub(ax), 2.4)).add(texp(p.x.mul(p.x).mul(50).add(p.y.mul(p.y).mul(3)).negate()).mul(0.7)));
+    });
+    const a = vCol.w.mul(m0);
+    If(a.lessThan(0.002), () => { Discard(); });
+    return premul(col, a, add);
+  })();
+  return m;
+}
+function ribbonMaterial(U) {
+  const m = blendMat();
+  const aTan = attribute('aTan', 'vec3'), aCol = attribute('aCol', 'vec4'), aSide = attribute('aSide', 'vec4');
+  const mv0 = modelViewMatrix.mul(vec4(attribute('position', 'vec3'), 1));
+  const tv = modelViewMatrix.mul(vec4(aTan, 0)).xyz;
+  const s0 = tcross(tv, mv0.xyz), l = tlength(s0);
+  const s = select(l.greaterThan(1e-7), s0.div(tmax(l, 1e-7)), vec3(0));
+  const mv = vec4(mv0.xyz.add(s.mul(aSide.x.mul(aSide.y))), 1);
+  m.vertexNode = cameraProjectionMatrix.mul(mv);
+  const fade = smoothstep(1.2, 4.0, mv.z.negate()).toVarying('vfxRibFade');
+  m.fragmentNode = Fn(() => {
+    const v = aSide.x;
+    const core = texp(v.mul(v).mul(-14));
+    const mm = tmax(texp(v.mul(v).mul(-2.4)).sub(0.09), 0).add(core.mul(0.45));
+    const energy = tsin(aSide.z.mul(4).sub(U.uClock.mul(26))).mul(0.2).add(0.8);
+    const col = mix(aCol.xyz, vec3(max3(aCol.xyz)), core.mul(0.45)).mul(energy);
+    const a = aCol.w.mul(fade).mul(mm);
+    If(a.lessThan(0.002), () => { Discard(); });
+    return premul(col, a, aSide.w);
+  })();
+  return m;
+}
+function speedLineMaterial(u) {
+  const m = blendMat();
+  const iA = attribute('iA', 'vec4'), iB = attribute('iB', 'vec4'), aCorner = attribute('aCorner', 'vec2');
+  const vA = varyingProperty('float', 'vfxSlA');
+  m.vertexNode = Fn(() => {
+    vA.assign(0);
+    const out = vec4(0, 0, 2, 1).toVar();
+    If(iB.z.lessThanEqual(u.uInt), () => {
+      const f = tnormalize(u.uFlow.add(vec3(0, 0, -1e-4)));
+      const ax = select(tabs(f.y).lessThan(0.9), vec3(0, 1, 0), vec3(1, 0, 0));
+      const uu = tnormalize(tcross(f, ax)), w = tcross(f, uu);
+      const span = 52.0;
+      const z = float(44).sub(tmod(iA.z.mul(span).add(u.uTime.mul(iA.w)), span));
+      const c = uu.mul(tcos(iA.x)).add(w.mul(tsin(iA.x))).mul(iA.y).add(f.mul(z));
+      const len = iB.x.mul(u.uInt.mul(0.9).add(0.55));
+      const p = c.add(f.mul(len.mul(aCorner.x.mul(0.5).add(0.5)))).toVar();
+      const sd = tcross(f, p), sl = tlength(sd);
+      p.addAssign(select(sl.greaterThan(1e-5), sd.div(tmax(sl, 1e-5)), uu).mul(aCorner.y.mul(iB.y)));
+      vA.assign(smoothstep(44.0, 26.0, z).mul(smoothstep(-6.0, 1.5, z)).mul(tmin(u.uInt.mul(1.7), 1)).mul(iB.w));
+      out.assign(cameraProjectionMatrix.mul(vec4(p, 1)));
+    });
+    return out;
+  })();
+  m.fragmentNode = Fn(() => {
+    const x01 = aCorner.x.mul(0.5).add(0.5);
+    const a = vA.mul(texp(aCorner.y.mul(aCorner.y).mul(-3))).mul(tsin(x01.mul(3.14159))).mul(float(1).sub(x01).mul(0.65).add(0.35));
+    If(a.lessThan(0.003), () => { Discard(); });
+    return vec4(u.uCol.mul(a), a.mul(0.2));
+  })();
+  m.uniforms = u;
+  return m;
 }
 
 // ---------------------------------------------------------------- procedural puff atlas (4 noisy cloud puffs, 2x2)
@@ -439,8 +395,8 @@ function put(P) {
   if (end > P.end) P.end = end;
   if (i < P.dmin) P.dmin = i;
   if (i > P.dmax) P.dmax = i;
-  P.ib.updateRange.offset = P.dmin * STRIDE;
-  P.ib.updateRange.count = (P.dmax - P.dmin + 1) * STRIDE;
+  P.ib.clearUpdateRanges();
+  P.ib.addUpdateRange(P.dmin * STRIDE, (P.dmax - P.dmin + 1) * STRIDE);
   P.ib.needsUpdate = true;
   P.geo.instanceCount = P.hw;
   P.mesh.visible = true;
@@ -651,8 +607,8 @@ function updateRibbons() {
     if (r.on) { any = true; top = ri + 1; }
   }
   if (R.dmax >= 0) {
-    R.ib.updateRange.offset = R.dmin;
-    R.ib.updateRange.count = R.dmax - R.dmin + 1;
+    R.ib.clearUpdateRanges();
+    R.ib.addUpdateRange(R.dmin, R.dmax - R.dmin + 1);
     R.ib.needsUpdate = true;
   }
   ST.ribMax = top;
@@ -755,8 +711,8 @@ function updateChunks() {
   mesh.count = n;
   mesh.visible = n > 0;
   if (n > 0) {
-    mesh.instanceMatrix.updateRange.offset = 0;
-    mesh.instanceMatrix.updateRange.count = n * 16;
+    mesh.instanceMatrix.clearUpdateRanges();
+    mesh.instanceMatrix.addUpdateRange(0, n * 16);
     mesh.instanceMatrix.needsUpdate = true;
     if (ST.chkDirty) { mesh.instanceColor.needsUpdate = true; ST.chkDirty = false; }
   }
@@ -779,10 +735,7 @@ function makeSpeedLines(n) {
   geo.setAttribute('iA', new THREE.InstancedBufferAttribute(a, 4));
   geo.setAttribute('iB', new THREE.InstancedBufferAttribute(b, 4));
   geo.instanceCount = n;
-  const mat = blendMat({
-    uniforms: { uTime: fu(0), uInt: fu(0), uFlow: { value: new THREE.Vector3(0, 0, -1) }, uCol: { value: new THREE.Vector3(1.3, 1.45, 1.65) } },
-    vertexShader: SVS, fragmentShader: SFS
-  });
+  const mat = speedLineMaterial({ uTime: fu(0), uInt: fu(0), uFlow: uniform(new THREE.Vector3(0, 0, -1)), uCol: uniform(new THREE.Vector3(1.3, 1.45, 1.65)) });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'vfx-speedlines'; mesh.frustumCulled = false; mesh.renderOrder = 27; mesh.matrixAutoUpdate = false;
   return { mesh, mat, n };
@@ -794,20 +747,12 @@ function build(scene) {
   ST.touch = touch;
   ST.tex = puffTexture();
   ST.uTime = fu(0); ST.uPx = fu(600); ST.uClock = fu(0);
-  const fogU = THREE.UniformsLib.fog;
-  ST.mat = blendMat({
-    uniforms: THREE.UniformsUtils.merge([fogU, { uPuff: { value: null }, uTime: { value: 0 }, uPx: { value: 0 } }]),
-    vertexShader: PV, fragmentShader: PF, fog: true
-  });
-  ST.mat.uniforms.uPuff.value = ST.tex;
-  ST.mat.uniforms.uTime = ST.uTime;
-  ST.mat.uniforms.uPx = ST.uPx;
-  ST.glowMat = ST.mat.clone();
-  ST.glowMat.uniforms = ST.mat.uniforms;
+  const PU = { uTime: ST.uTime, uPx: ST.uPx, uPuff: ST.tex };
+  ST.mat = particleMaterial(PU);
+  ST.glowMat = particleMaterial(PU);
   ST.soft = makePool(touch ? 800 : 2000, 24, 'vfx-soft', ST.mat);
   ST.glow = makePool(touch ? 1700 : 4000, 26, 'vfx-glow', ST.glowMat);
-  ST.ribMat = blendMat({ uniforms: THREE.UniformsUtils.merge([fogU, { uClock: { value: 0 } }]), vertexShader: RVS, fragmentShader: RFS, fog: true });
-  ST.ribMat.uniforms.uClock = ST.uClock;
+  ST.ribMat = ribbonMaterial({ uClock: ST.uClock });
   ST.chan = new Int16Array(CH_N).fill(-1);
   ST.chanT = new Float64Array(CH_N).fill(-1e9);
   ST.ribs.length = 0;
@@ -829,9 +774,6 @@ function init(scene) {
   if (!sc) return false;
   if (ST.ready) { if (sc !== ST.scene) { attach(sc); ST.warm = 3; } return true; }
   const R = K.view && K.view.renderer;
-  if (R && R.capabilities && !R.capabilities.isWebGL2 && R.extensions && typeof R.extensions.has === 'function' && !R.extensions.has('ANGLE_instanced_arrays')) {
-    ST.failed = true; return false;
-  }
   try { build(sc); ST.ready = true; }
   catch (err) { ST.failed = true; ST.ready = false; console.warn('K.vfx disabled:', err && err.message); }
   return ST.ready;
@@ -896,7 +838,7 @@ function rebase(P, off) {
   P.end -= off;
   if (P.hw > 0) {
     P.dmin = 0; P.dmax = Math.max(P.dmax, P.hw - 1);
-    P.ib.updateRange.offset = 0; P.ib.updateRange.count = (P.dmax + 1) * STRIDE; P.ib.needsUpdate = true;
+    P.ib.clearUpdateRanges(); P.ib.addUpdateRange(0, (P.dmax + 1) * STRIDE); P.ib.needsUpdate = true;
   }
 }
 // r128 does not rebuild programs when the renderer's tone mapping changes (post pipeline on/off): do it here.
@@ -904,13 +846,13 @@ function rebase(P, off) {
 // tone mapped straight to the display, so glows stay soft on bright skies instead of clipping to white.
 function refresh() {
   if (!ST.ready) return;
-  const R = K.view && K.view.renderer, direct = !R || R.toneMapping !== THREE.NoToneMapping;
+  const direct = !(K.post && K.post.ok && K.post.hdr);
   const mats = [ST.glowMat, ST.ribMat, ST.sl.mat];
   for (let i = 0; i < mats.length; i++) {
     mats[i].blendDst = direct ? THREE.OneMinusSrcColorFactor : THREE.OneMinusSrcAlphaFactor;
     mats[i].needsUpdate = true;
   }
-  ST.mat.needsUpdate = true; ST.chkMesh.material.needsUpdate = true;
+  ST.mat.needsUpdate = true; ST.glowMat.needsUpdate = true; ST.chkMesh.material.needsUpdate = true;
 }
 // effects follow the game's slow motion (bumper cinematic): explicit K.vfx.timeScale, else the board's
 function timeScale() {
@@ -921,11 +863,8 @@ function timeScale() {
 function update(dt, camera) {
   if (!ST.ready) return;
   dt = (fin(dt) ? clamp(dt, 0, 0.1) : 1 / 60) * timeScale();
-  const RR = K.view && K.view.renderer;
-  if (RR && (RR.toneMapping !== ST.tm || RR.outputEncoding !== ST.enc)) {
-    ST.tm = RR.toneMapping; ST.enc = RR.outputEncoding;
-    refresh();
-  }
+  const hdrNow = K.post && K.post.ok && K.post.hdr ? 1 : 0;
+  if (hdrNow !== ST.tm) { ST.tm = hdrNow; refresh(); }
   ST.T += dt; ST.clock += dt;
   ST.dt = dt;
   readCamera(camera || (K.view && K.view.camera));
@@ -952,7 +891,7 @@ function reset() {
   ST.chan.fill(-1); ST.chanT.fill(-1e9); ST.ribMax = 0;
   const R = ST.rib;
   R.arr.fill(0);
-  R.ib.updateRange.offset = 0; R.ib.updateRange.count = -1; R.ib.needsUpdate = true;
+  R.ib.clearUpdateRanges(); R.ib.needsUpdate = true;
   R.dmin = 1e9; R.dmax = -1;
   R.geo.setDrawRange(0, 0); R.mesh.visible = false;
   ST.chkN = 0; ST.chkMesh.count = 0; ST.chkMesh.visible = false;

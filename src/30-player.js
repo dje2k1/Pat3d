@@ -17,7 +17,7 @@ const yawOf = (x, z) => Math.atan2(-x, -z);
 const dirX = y => -Math.sin(y);
 const dirZ = y => -Math.cos(y);
 const hash = n => { const s = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return s - Math.floor(s); };
-const lin = hex => new THREE.Color(hex).convertSRGBToLinear();
+const lin = hex => new THREE.Color(hex); // r186 colour management: sRGB hex -> linear working space
 const UP = new V3(0, 1, 0);
 
 // Feel constants (units/s, 60 Hz)
@@ -198,23 +198,17 @@ function limb(rt, rb, len) {
   return g;
 }
 
-const RIM = { value: lin('#fff1d6').multiplyScalar(0.55) };
+const { uniform, attribute, float, vec3, clamp: tclamp, abs: tabs, dot: tdot, normalize: tnormalize, pow: tpow, sin: tsin,
+  atan: tatan, mix: tmix, normalView, positionView, positionGeometry, instancedBufferAttribute } = TSL;
+const RIM = uniform(lin('#fff1d6').multiplyScalar(0.55));
+// Kit's body material: vertex colours, per-vertex roughness (attribute 'rough') and a warm rim light.
+// PORT(kit): v2 = the same through MeshStandardMaterial shader injection (rim added to the outgoing light); v3: fur
+// shells, SSS / wrap lighting, eyes with iris textures, fabric textures for scarf/gloves/shoes (SPEC3 §5).
 function kitMaterial(double, map) {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0, side: double ? THREE.DoubleSide : THREE.FrontSide, map: map || null });
-  m.onBeforeCompile = sh => {
-    sh.uniforms.uRim = RIM;
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float rough;\nvarying float vRough;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRough = rough;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vRough;\nuniform vec3 uRim;')
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(vRough, 0.04, 1.0);')
-      .replace('gl_FragColor = vec4( outgoingLight, diffuseColor.a );',
-        'float kitRim = 1.0 - clamp(abs(dot(normalize(normal), normalize(vViewPosition))), 0.0, 1.0);\n' +
-        'outgoingLight += uRim * kitRim * kitRim * kitRim * (0.35 + 0.65 * clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));\n' +
-        'gl_FragColor = vec4( outgoingLight, diffuseColor.a );');
-  };
-  m.customProgramCacheKey = () => 'kit-rim-' + (double ? 2 : 1) + (map ? 'm' : '');
+  const m = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.6, metalness: 0, side: double ? THREE.DoubleSide : THREE.FrontSide, map: map || null });
+  m.roughnessNode = tclamp(attribute('rough', 'float'), 0.04, 1.0);
+  const rim = float(1).sub(tclamp(tabs(tdot(tnormalize(normalView), tnormalize(positionView.negate()))), 0, 1));
+  m.emissiveNode = RIM.mul(rim.mul(rim).mul(rim)).mul(tclamp(normalView.y.mul(0.5).add(0.5), 0, 1).mul(0.65).add(0.35));
   return m;
 }
 function canvasTex(w, h, draw) {
@@ -223,7 +217,7 @@ function canvasTex(w, h, draw) {
   const g = cv.getContext('2d');
   draw(g, w, h);
   const t = new THREE.CanvasTexture(cv);
-  t.encoding = THREE.sRGBEncoding;
+  t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
@@ -450,18 +444,19 @@ function sparkleTex() {
   });
 }
 
-const SHIELD_VS = `varying vec3 vN; varying vec3 vV; varying vec3 vP;
-void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = -mv.xyz; vP = position; gl_Position = projectionMatrix * mv; }`;
-const SHIELD_FS = `uniform float uT; uniform float uA; varying vec3 vN; varying vec3 vV; varying vec3 vP;
-void main(){
-  float f = 1.0 - abs(dot(normalize(vN), normalize(vV)));
-  float rim = pow(f, 2.4);
-  float band = pow(0.5 + 0.5 * sin(vP.y * 10.0 - uT * 4.0 + sin(vP.x * 6.0 + uT) * 1.5), 10.0);
-  float swirl = pow(0.5 + 0.5 * sin(atan(vP.z, vP.x) * 3.0 + vP.y * 4.0 + uT * 3.0), 16.0);
-  vec3 col = mix(vec3(0.42, 0.78, 1.0), vec3(0.92, 0.99, 1.0), rim);
-  float a = (0.07 + rim * 0.75 + band * 0.18 + swirl * 0.22) * uA;
-  gl_FragColor = vec4(col * (1.0 + band * 0.6 + swirl * 0.5), clamp(a, 0.0, 0.95));
-}`;
+// shield bubble: Fresnel rim + travelling bands + swirl, additive-ish transparent
+// PORT(kit): v2 GLSL shield ported 1:1 to TSL (MeshBasicNodeMaterial colour/opacity nodes)
+function shieldMaterial(U) {
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
+  const p = positionGeometry, t = U.uT;
+  const f = float(1).sub(tabs(tdot(tnormalize(normalView), tnormalize(positionView.negate()))));
+  const rim = tpow(f, 2.4);
+  const band = tpow(tsin(p.y.mul(10).sub(t.mul(4)).add(tsin(p.x.mul(6).add(t)).mul(1.5))).mul(0.5).add(0.5), 10);
+  const swirl = tpow(tsin(tatan(p.z, p.x).mul(3).add(p.y.mul(4)).add(t.mul(3))).mul(0.5).add(0.5), 16);
+  m.colorNode = tmix(vec3(0.42, 0.78, 1.0), vec3(0.92, 0.99, 1.0), rim).mul(band.mul(0.6).add(swirl.mul(0.5)).add(1));
+  m.opacityNode = tclamp(rim.mul(0.75).add(0.07).add(band.mul(0.18)).add(swirl.mul(0.22)).mul(U.uA), 0, 0.95);
+  return m;
+}
 
 function create(scene) {
   scene = scene || (K.view && K.view.scene);
@@ -618,10 +613,8 @@ function create(scene) {
   }
   // shield bubble
   {
-    FX.shieldU = { uT: { value: 0 }, uA: { value: 1 } };
-    FX.shield = new THREE.Mesh(new THREE.SphereGeometry(0.92, 36, 24), new THREE.ShaderMaterial({
-      uniforms: FX.shieldU, vertexShader: SHIELD_VS, fragmentShader: SHIELD_FS, transparent: true, depthWrite: false
-    }));
+    FX.shieldU = { uT: uniform(0), uA: uniform(1) };
+    FX.shield = new THREE.Mesh(new THREE.SphereGeometry(0.92, 36, 24), shieldMaterial(FX.shieldU));
     FX.shield.renderOrder = 3;
     FX.shield.visible = false;
     scene.add(FX.shield);
@@ -629,10 +622,17 @@ function create(scene) {
   // invincibility sparkles
   {
     const n = FX.sparkN = 26;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage));
-    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage));
-    FX.spark = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.42, map: sparkleTex(), vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+    // PORT(kit): v2 invincibility sparkles were GL points (PointsMaterial, size 0.42); WebGPU draws THREE.Points 1 px
+    // wide, so they are instanced sprites (SpriteNodeMaterial, count = 26) here
+    FX.sparkPos = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    FX.sparkCol = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    const sm = new THREE.SpriteNodeMaterial({ map: sparkleTex(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    sm.positionNode = instancedBufferAttribute(FX.sparkPos);
+    sm.colorNode = instancedBufferAttribute(FX.sparkCol).mul(TSL.texture(sm.map).rgb);
+    sm.opacityNode = TSL.texture(sm.map).a;
+    sm.scaleNode = float(0.25);
+    FX.spark = new THREE.Sprite(sm);
+    FX.spark.count = n;
     FX.spark.frustumCulled = false;
     FX.spark.visible = false;
     FX.spark.renderOrder = 4;
@@ -2349,7 +2349,7 @@ function updatePowerFx(dt, ballOn) {
   FX.trailI = (FX.trailI + 1) % FX.trail.length;
   FX.trail[FX.trailI].copy(c);
   if (on) {
-    const pa = FX.spark.geometry.attributes.position.array, ca = FX.spark.geometry.attributes.color.array;
+    const pa = FX.sparkPos.array, ca = FX.sparkCol.array;
     const n = FX.sparkN, fade = P.star < 2 ? (Math.floor(t * 10) % 2 ? 0.3 : 1) : 1;
     for (let i = 0; i < n; i++) {
       let x, y, z;
@@ -2367,8 +2367,8 @@ function updatePowerFx(dt, ballOn) {
       const tw = (0.35 + 0.65 * Math.max(0, Math.sin(t * 19 + i * 2.1))) * fade * (i < 12 ? 1 : 1 - (i - 12) / 16);
       ca[i * 3] = col.r * tw; ca[i * 3 + 1] = col.g * tw; ca[i * 3 + 2] = col.b * tw;
     }
-    FX.spark.geometry.attributes.position.needsUpdate = true;
-    FX.spark.geometry.attributes.color.needsUpdate = true;
+    FX.sparkPos.needsUpdate = true;
+    FX.sparkCol.needsUpdate = true;
   }
   // speed-shoes afterimages
   const snaps = FX.snaps;

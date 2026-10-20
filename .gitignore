@@ -1,6 +1,7 @@
 node_modules/
 test.html
 shots/
+dev/
 test/e2e-report.json
+test/e2e-report-webgpu.json
 test/*.log
-.main-check.js

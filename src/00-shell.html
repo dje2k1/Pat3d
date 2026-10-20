@@ -1,5 +1,4 @@
 <title>Kit Rush 3D</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&display=swap">
@@ -87,8 +86,21 @@ body{
   font-size:14px;letter-spacing:.03em;text-align:center;z-index:6;box-sizing:border-box;
 }
 #rotate svg{width:20px;height:20px;vertical-align:-5px;margin-right:6px;fill:none;stroke:var(--gold);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#fatal{
+  position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  padding:24px max(16px,var(--sr)) 24px max(16px,var(--sl));box-sizing:border-box;text-align:center;
+  background:linear-gradient(#1b2a6b,#070a1d);color:var(--ink);font-family:var(--font-display);
+}
+#fatal h1{margin:0;font-size:40px;font-weight:400;color:var(--gold);letter-spacing:.03em;text-shadow:0 3px 0 var(--navy)}
+#fatal p{margin:0;max-width:34em;font-size:16px;line-height:1.4;color:#dfe4ff}
+#fatal a{
+  display:inline-block;margin-top:6px;padding:10px 18px;border-radius:12px;background:var(--gold);color:var(--navy);
+  text-decoration:none;font-size:17px;letter-spacing:.02em;box-shadow:0 4px 18px rgba(0,0,0,.35)
+}
+#fatal a:focus-visible{outline:2px solid #fff;outline-offset:3px}
+#fatal small{font-size:13px;color:var(--muted)}
 </style>
-
+<!-- BODY -->
 <div id="stage">
   <div id="game">
     <canvas id="gl" aria-hidden="true"></canvas>
@@ -106,11 +118,9 @@ body{
   <button id="btnJump" class="tbtn" type="button" aria-label="Sauter">SAUT</button>
 </div>
 <div id="rotate" hidden><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M20.5 14a8.5 8.5 0 0 1-6.5 7M3.5 10A8.5 8.5 0 0 1 10 3"/></svg>Tourne ton téléphone à l'horizontale pour jouer en grand</div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
-<script>
-'use strict';
-const K = {};
+<div id="fatal" hidden role="alert">
+  <h1>KIT RUSH 3D</h1>
+  <p id="fatal-msg">Le jeu n’a pas pu démarrer sur ce navigateur.</p>
+  <a href="legacy/">Jouer à la version classique</a>
+  <small>Recharge la page ou essaie un navigateur récent (Chrome, Edge, Firefox ou Safari).</small>
+</div>

@@ -15,7 +15,9 @@ const easeOut = t => { t = clamp(t, 0, 1); return 1 - (1 - t) * (1 - t) * (1 - t
 const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
 const angDiff = (a, b) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU; return d || 0; };
 const hash = n => { const s = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return s - Math.floor(s); };
-const lin = h => new THREE.Color(h).convertSRGBToLinear();
+const lin = h => new THREE.Color(h); // r186 colour management: sRGB hex -> linear working space
+const { uniform, attribute, float, vec2, vec3, vec4, mix, pow: tpow, max: tmax, dot: tdot, clamp: tclamp, smoothstep, sin: tsin, normalize: tnormalize,
+  select, positionGeometry, texture: ttexture, uv: tuv, mod: tmod, floor: tfloor, instancedBufferAttribute } = TSL;
 const rand = Math.random;
 const hd2 = (a, b) => { const x = a.x - b.x, z = a.z - b.z; return x * x + z * z; };
 const d2 = (a, b) => { const x = a.x - b.x, y = a.y - b.y, z = a.z - b.z; return x * x + y * y + z * z; };
@@ -275,7 +277,7 @@ function canvas(w, h, fn) {
 }
 function texOf(c, srgb) {
   const t = new THREE.CanvasTexture(c);
-  if (srgb) t.encoding = THREE.sRGBEncoding;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
   return t;
 }
@@ -416,24 +418,18 @@ function makeEnv() {
     const sd = W && finV(W.sunDir) && W.sunDir.lengthSq() > 1e-6 ? W.sunDir.clone().normalize() : new V3(0.5, 0.7, -0.42).normalize();
     const sc = new THREE.Scene();
     geo = new THREE.SphereGeometry(20, 48, 24);
-    mat = new THREE.ShaderMaterial({
-      side: THREE.BackSide, depthWrite: false,
-      uniforms: { uSun: { value: sd } },
-      vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-      fragmentShader: [
-        'uniform vec3 uSun; varying vec3 vP;',
-        'void main(){',
-        '  vec3 d = normalize(vP); float y = d.y;',
-        '  vec3 zen = vec3(0.09, 0.30, 0.86), hor = vec3(0.86, 0.93, 1.0), gnd = vec3(0.13, 0.34, 0.08), deep = vec3(0.05, 0.11, 0.04);',
-        '  vec3 c = y > 0.0 ? mix(hor, zen, pow(y, 0.55)) : mix(mix(hor, gnd, 0.55), mix(gnd, deep, clamp(-y * 1.5, 0.0, 1.0)), smoothstep(0.0, 0.2, -y));',
-        '  float cl = smoothstep(0.55, 0.8, sin(d.x * 7.0 + 1.3) * sin(d.z * 5.0 - 0.4) * 0.5 + 0.5) * smoothstep(0.03, 0.18, y) * smoothstep(0.7, 0.3, y);',
-        '  c = mix(c, vec3(1.15), cl * 0.7);',
-        '  float s = max(dot(d, uSun), 0.0);',
-        '  c += vec3(1.0, 0.92, 0.75) * (pow(s, 600.0) * 40.0 + pow(s, 14.0) * 0.7);',
-        '  gl_FragColor = vec4(c, 1.0);',
-        '  #include <encodings_fragment>',
-        '}'].join('\n')
-    });
+    // a simple bright island sky (gradient, cloud bands, hot sun) for the metal parts
+    // PORT(entities): v2 GLSL sky ported 1:1; v3 can use the world's PMREM (scene.environment) instead
+    mat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false });
+    {
+      const d = tnormalize(positionGeometry), y = d.y, uSun = uniform(sd);
+      const zen = vec3(0.09, 0.30, 0.86), hor = vec3(0.86, 0.93, 1.0), gnd = vec3(0.13, 0.34, 0.08), deep = vec3(0.05, 0.11, 0.04);
+      let c = select(y.greaterThan(0), mix(hor, zen, tpow(tmax(y, 0), 0.55)), mix(mix(hor, gnd, 0.55), mix(gnd, deep, tclamp(y.mul(-1.5), 0, 1)), smoothstep(0.0, 0.2, y.negate())));
+      const cl = smoothstep(0.55, 0.8, tsin(d.x.mul(7).add(1.3)).mul(tsin(d.z.mul(5).sub(0.4))).mul(0.5).add(0.5)).mul(smoothstep(0.03, 0.18, y)).mul(smoothstep(0.7, 0.3, y));
+      c = mix(c, vec3(1.15), cl.mul(0.7));
+      const sv = tmax(tdot(d, uSun), 0);
+      mat.colorNode = c.add(vec3(1.0, 0.92, 0.75).mul(tpow(sv, 600).mul(40).add(tpow(sv, 14).mul(0.7))));
+    }
     sc.add(new THREE.Mesh(geo, mat));
     pm = new THREE.PMREMGenerator(R);
     const rt = pm.fromScene(sc, 0);
@@ -448,15 +444,13 @@ function makeEnv() {
   }
 }
 // one vertex-coloured PBR material for every procedural model; roughness/metalness come per vertex (aRM)
+// PORT(entities): v2 = the same through MeshStandardMaterial shader injection; v3: painted metal, chrome, emissive eyes,
+// K.tex PBR sets (SPEC3 §5).
 function stdMaterial(env, met) {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: met, envMap: env || null, envMapIntensity: 1 });
-  m.onBeforeCompile = (sh) => {
-    sh.vertexShader = 'attribute vec2 aRM;\nvarying vec2 vRM;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vRM = aRM;');
-    sh.fragmentShader = 'varying vec2 vRM;\n' + sh.fragmentShader
-      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = roughness * vRM.x;')
-      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = metalness * vRM.y;');
-  };
-  m.customProgramCacheKey = () => 'kitrush-std';
+  const m = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 1, metalness: met, envMap: env || null, envMapIntensity: 1 });
+  const rm = attribute('aRM', 'vec2');
+  m.roughnessNode = rm.x;
+  m.metalnessNode = rm.y.mul(met);
   return m;
 }
 function makeMaterials(env) {
@@ -495,78 +489,38 @@ function glow(x, y, z, size, c, a, tile, rot) {
   glowBuf[o + 4] = c.r; glowBuf[o + 5] = c.g; glowBuf[o + 6] = c.b; glowBuf[o + 7] = a;
   glowBuf[o + 8] = tile || 0; glowBuf[o + 9] = rot || 0;
 }
-const FXV = [
-  'uniform float uScale;',
-  'attribute vec4 aColor; attribute float aSize; attribute float aRot; attribute float aTile;',
-  'varying vec4 vColor; varying float vRot; varying float vTile; varying float vDepth;',
-  'void main() {',
-  '  vColor = aColor; vRot = aRot; vTile = aTile;',
-  '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
-  '  vDepth = -mv.z;',
-  '  gl_PointSize = clamp(aSize * uScale / max(-mv.z, 0.05), 0.0, 640.0);',
-  '  gl_Position = projectionMatrix * mv;',
-  '}'].join('\n');
-const FXF = [
-  'uniform sampler2D uMap;',
-  '#ifdef USE_FOG',
-  '  uniform vec3 fogColor; uniform float fogNear; uniform float fogFar;',
-  '  #ifdef FOG_EXP2',
-  '    uniform float fogDensity;',
-  '  #endif',
-  '#endif',
-  'varying vec4 vColor; varying float vRot; varying float vTile; varying float vDepth;',
-  'void main() {',
-  '  vec2 p = gl_PointCoord - 0.5;',
-  '  float c = cos(vRot), s = sin(vRot);',
-  '  p = vec2(c * p.x - s * p.y, s * p.x + c * p.y);',
-  '  if (abs(p.x) > 0.495 || abs(p.y) > 0.495) discard;',
-  '  vec2 uv = (p + 0.5 + vec2(mod(vTile, 2.0), floor(vTile * 0.5 + 0.01))) * 0.5;',
-  '  vec4 t = texture2D(uMap, uv);',
-  '  vec4 col = vec4(vColor.rgb * t.rgb, vColor.a * t.a);',
-  '  if (col.a < 0.003) discard;',
-  '  #ifdef USE_FOG',
-  '    #ifdef FOG_EXP2',
-  '      float f = 1.0 - exp(-fogDensity * fogDensity * vDepth * vDepth);',
-  '    #else',
-  '      float f = smoothstep(fogNear, fogFar, vDepth);',
-  '    #endif',
-  '    #ifdef FX_ADD',
-  '      col.a *= 1.0 - f;',
-  '    #else',
-  '      col.rgb = mix(col.rgb, fogColor, f);',
-  '    #endif',
-  '  #endif',
-  '  gl_FragColor = col;',
-  '  #include <tonemapping_fragment>',
-  '  #include <encodings_fragment>',
-  '}'].join('\n');
+// PORT(entities): v2 drew these as GL point sprites (atlas tile, rotation, size in world units, fog: additive ones fade,
+// alpha ones mix toward the fog colour); r186/WebGPU points are 1 px, so they are instanced sprites here (count = live).
 function fxMaterial(additive) {
-  const u = THREE.UniformsUtils.merge([THREE.UniformsLib.fog]);
-  u.uMap = { value: FXS.map };
-  u.uScale = FXS.scale;
-  const m = new THREE.ShaderMaterial({
-    uniforms: u, vertexShader: FXV, fragmentShader: FXF, transparent: true, depthWrite: false, fog: true,
-    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending
-  });
-  if (additive) m.defines = { FX_ADD: '' };
-  return m;
+  return { additive, sprites: [] };
+}
+function fxSprite(n, additive, attrs) {
+  const m = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, fog: !additive, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
+  m.positionNode = instancedBufferAttribute(attrs.aPos);
+  m.scaleNode = instancedBufferAttribute(attrs.aSize);
+  m.rotationNode = instancedBufferAttribute(attrs.aRot);
+  const col = instancedBufferAttribute(attrs.aCol), tile = instancedBufferAttribute(attrs.aTile);
+  const u = tuv();
+  const tuvn = vec2(u.x, float(1).sub(u.y)).add(vec2(tmod(tile, 2), tfloor(tile.mul(0.5).add(0.01)))).mul(0.5);
+  const t = ttexture(FXS.map, tuvn);
+  m.colorNode = col.xyz.mul(t.rgb);
+  m.opacityNode = col.w.mul(t.a);
+  m.alphaTest = 0.003;
+  const sp = new THREE.Sprite(m);
+  sp.count = 0;
+  sp.frustumCulled = false;
+  return sp;
 }
 function fxSystem(n, mat, order, scene) {
-  const geo = new THREE.BufferGeometry();
-  const mk = (k, size) => {
-    const a = new THREE.BufferAttribute(new Float32Array(n * size), size);
-    a.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute(k, a);
-    return a;
-  };
+  const mk = size => new THREE.InstancedBufferAttribute(new Float32Array(n * size), size).setUsage(THREE.DynamicDrawUsage);
   const S = {
-    n, geo, cur: 0, parts: [],
-    aPos: mk('position', 3), aCol: mk('aColor', 4), aSize: mk('aSize', 1), aRot: mk('aRot', 1), aTile: mk('aTile', 1)
+    n, cur: 0, parts: [],
+    aPos: mk(3), aCol: mk(4), aSize: mk(1), aRot: mk(1), aTile: mk(1)
   };
-  geo.setDrawRange(0, 0);
-  geo.boundingSphere = new THREE.Sphere(new V3(), 1e6);
-  const pts = new THREE.Points(geo, mat);
-  pts.frustumCulled = false; pts.renderOrder = order;
+  const pts = fxSprite(n, mat.additive, S);
+  pts.renderOrder = order;
+  // v2 kept a draw range on a point geometry: the sprite's instance count plays that part
+  S.geo = { setDrawRange: (a, k) => { pts.count = k; } };
   scene.add(pts);
   S.pts = pts;
   for (let i = 0; i < n; i++) {
@@ -759,7 +713,7 @@ function writeSys(S, extra) {
   S.geo.setDrawRange(0, k);
   if (k > 0) {
     for (const [a, sz] of [[S.aPos, 3], [S.aCol, 4], [S.aSize, 1], [S.aRot, 1], [S.aTile, 1]]) {
-      a.updateRange.offset = 0; a.updateRange.count = k * sz; a.needsUpdate = true;
+      a.clearUpdateRanges(); a.addUpdateRange(0, k * sz); a.needsUpdate = true;
     }
   }
 }
@@ -787,19 +741,13 @@ const ents = [];           // generic {root, home, vis, show} for distance culli
 // ===================== rings =====================
 const RG = { n: 0, pos: [], got: [], mesh: null, spin: { value: 0 }, lost: [], lostMesh: null, lostSpin: { value: 0 }, glowGeo: null, glowAttr: null, twk: 0, lostDirty: false, dirty: true, cullT: 0 };
 const RING_FAR2 = 190 * 190; // farther rings are a few pixels wide: only their glow sprite is drawn
+// PORT(entities): v2 spun the rings in the vertex shader (uSpin); r186 applies instancing before positionNode, so the
+// shared torus is spun on the CPU (K.util.spinY in updRings). v3: polished gold PBR (SPEC3 §5).
 function ringMaterial(spinU) {
-  const m = new THREE.MeshStandardMaterial({
+  return new THREE.MeshStandardMaterial({
     color: COL.ring, metalness: ST.env ? 0.9 : 0.55, roughness: ST.env ? 0.22 : 0.32, envMap: ST.env || null, envMapIntensity: 1.25,
     emissive: COL.ringE, emissiveIntensity: 1
   });
-  m.onBeforeCompile = (sh) => {
-    sh.uniforms.uSpin = spinU;
-    sh.vertexShader = 'uniform float uSpin;\n' + sh.vertexShader
-      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n{ float sc = cos(uSpin), ss = sin(uSpin); objectNormal = vec3(sc * objectNormal.x + ss * objectNormal.z, objectNormal.y, -ss * objectNormal.x + sc * objectNormal.z); }')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ float sc = cos(uSpin), ss = sin(uSpin); transformed = vec3(sc * transformed.x + ss * transformed.z, transformed.y, -ss * transformed.x + sc * transformed.z); }');
-  };
-  m.customProgramCacheKey = () => 'kitrush-ring';
-  return m;
 }
 function ringGeometry() {
   // phones: half the triangles (up to ~140 rings are on screen at once)
@@ -829,24 +777,18 @@ function buildRings(scene) {
     RG.mesh.instanceMatrix.needsUpdate = true;
     scene.add(RG.mesh);
     // soft golden halo behind every ring (one static point cloud)
-    const gg = new THREE.BufferGeometry();
     const p = new Float32Array(RG.n * 3), c = new Float32Array(RG.n * 4), s = new Float32Array(RG.n), r = new Float32Array(RG.n), t = new Float32Array(RG.n);
     for (let i = 0; i < RG.n; i++) {
       p[i * 3] = RG.pos[i].x; p[i * 3 + 1] = RG.pos[i].y; p[i * 3 + 2] = RG.pos[i].z;
       c[i * 4] = FCOL.ringGlow.r; c[i * 4 + 1] = FCOL.ringGlow.g; c[i * 4 + 2] = FCOL.ringGlow.b; c[i * 4 + 3] = 0.24;
       s[i] = 1.55;
     }
-    gg.setAttribute('position', new THREE.BufferAttribute(p, 3));
-    RG.glowAttr = new THREE.BufferAttribute(c, 4);
-    gg.setAttribute('aColor', RG.glowAttr);
-    gg.setAttribute('aSize', new THREE.BufferAttribute(s, 1));
-    gg.setAttribute('aRot', new THREE.BufferAttribute(r, 1));
-    gg.setAttribute('aTile', new THREE.BufferAttribute(t, 1));
-    gg.boundingSphere = new THREE.Sphere(new V3(), 1e6);
-    const pts = new THREE.Points(gg, FXS.matAdd);
-    pts.frustumCulled = false; pts.renderOrder = 19;
+    RG.glowAttr = new THREE.InstancedBufferAttribute(c, 4);
+    const pts = fxSprite(RG.n, true, { aPos: new THREE.InstancedBufferAttribute(p, 3), aCol: RG.glowAttr, aSize: new THREE.InstancedBufferAttribute(s, 1), aRot: new THREE.InstancedBufferAttribute(r, 1), aTile: new THREE.InstancedBufferAttribute(t, 1) });
+    pts.count = RG.n;
+    pts.renderOrder = 19;
     scene.add(pts);
-    RG.glowGeo = gg;
+    RG.glowGeo = pts;
   }
   for (let i = 0; i < 32; i++) RG.lost.push({ on: false, pos: new V3(), vel: new V3(), t: 0 });
   RG.lostMesh = new THREE.InstancedMesh(RG.n ? geo.clone() : geo, ringMaterial(RG.lostSpin), 32);
@@ -885,8 +827,10 @@ function resetRings() {
 }
 function updRings(dt) {
   RG.spin.value = (RG.spin.value + dt * 4.4) % TAU;
+  if (RG.mesh) K.util.spinY(RG.mesh.geometry, -RG.spin.value);
   if (RG.dirty || --RG.cullT <= 0) writeRings();
   RG.lostSpin.value = (RG.lostSpin.value + dt * 10) % TAU;
+  if (RG.lostMesh) K.util.spinY(RG.lostMesh.geometry, -RG.lostSpin.value);
   if (PL.ok && RG.n) {
     const cx = PL.c.x, cy = PL.c.y, cz = PL.c.z, R = 1.3, R2 = R * R;
     for (let i = 0; i < RG.n; i++) {
@@ -2510,6 +2454,7 @@ function setActive(on) {
 }
 function updAway(dt) {
   RG.lostSpin.value = (RG.lostSpin.value + dt * 10) % TAU;
+  if (RG.lostMesh) K.util.spinY(RG.lostMesh.geometry, -RG.lostSpin.value);
   updLostRings(dt);
 }
 function reset() {

@@ -10,8 +10,9 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const sstep = (a, b, x) => { let t = (x - a) / (b - a); t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); };
   const fin = (v) => typeof v === 'number' && v === v && v !== Infinity && v !== -Infinity;
-  const lin = (hex) => new THREE.Color(hex).convertSRGBToLinear();
+  const lin = (hex) => new THREE.Color(hex); // r186 colour management: sRGB hex -> linear working space
   const SUN_DIR = new V3(0.5, 0.7, -0.42).normalize();
+  const LIGHT_PI = Math.PI; // r128 -> r186 light units (see HEMI_BASE)
   const FOG_HEX = '#cfeaff';
 
   function rngOf(seed) {
@@ -310,193 +311,113 @@
     return out.set(-gx / l, 1 / l, -gz / l);
   }
 
-  // ======================= shared shader bits =======================
-  const TIME = { value: 0 };
-  const CAMXZ = { value: new THREE.Vector2() };
+  // ======================= shared shader bits (TSL) =======================
+  const { Fn, uniform, attribute, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp, abs: tabs, max: tmax, min: tmin, fract: tfract,
+    sin: tsin, cos: tcos, pow: tpow, exp: texp, dot: tdot, normalize: tnormalize, cross: tcross, reflect: treflect, length: tlength,
+    atan: tatan, select, dFdx, dFdy, positionWorld, positionLocal, positionGeometry, normalWorld, normalViewGeometry, cameraPosition,
+    cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix, instanceIndex, texture: ttexture, step: tstep } = TSL;
+  const TL = K.tsl;
+  const TIME = uniform(0);
+  const CAMXZ = uniform(new THREE.Vector2());
   const GM_UNI = {
-    gmGrassA: { value: lin('#34b846') }, gmGrassB: { value: lin('#1f8f36') },
-    gmLip: { value: lin('#16762f') }, gmLipHi: { value: lin('#8af078') },
-    gmChkA: { value: lin('#dd8a3c') }, gmChkB: { value: lin('#a35522') }
+    gmGrassA: uniform(lin('#34b846')), gmGrassB: uniform(lin('#1f8f36')),
+    gmLip: uniform(lin('#16762f')), gmLipHi: uniform(lin('#8af078')),
+    gmChkA: uniform(lin('#dd8a3c')), gmChkB: uniform(lin('#a35522'))
   };
-  const GM_VERT_PARS = `
-varying vec3 vGmW; varying vec3 vGmN;
-#ifdef GM_TERRAIN
-attribute vec3 aRoute; attribute float aAO; varying vec3 vGmR; varying float vGmAO;
-#endif
-#if defined(GM_PROP) || defined(GM_LOCAL)
-attribute float aLip; varying float vGmLip;
-#endif
-#ifdef GM_LOCAL
-varying vec3 vGmL;
-#endif
-`;
-  const GM_VERT_MAIN = `
-vec4 gmW = vec4(transformed, 1.0);
-vec3 gmN = objectNormal;
-#ifdef USE_INSTANCING
-gmW = instanceMatrix * gmW; gmN = mat3(instanceMatrix) * gmN;
-#endif
-gmW = modelMatrix * gmW;
-vGmW = gmW.xyz;
-vGmN = mat3(modelMatrix) * gmN;
-#ifdef GM_TERRAIN
-vGmR = aRoute; vGmAO = aAO;
-#endif
-#if defined(GM_PROP) || defined(GM_LOCAL)
-vGmLip = aLip;
-#endif
-#ifdef GM_LOCAL
-vGmL = transformed;
-#endif
-`;
-  const GM_FRAG_PARS = `
-varying vec3 vGmW; varying vec3 vGmN;
-#ifdef GM_TERRAIN
-varying vec3 vGmR; varying float vGmAO;
-#endif
-#if defined(GM_PROP) || defined(GM_LOCAL)
-varying float vGmLip;
-#endif
-#ifdef GM_LOCAL
-varying vec3 vGmL;
-#endif
-uniform vec3 gmGrassA; uniform vec3 gmGrassB; uniform vec3 gmLip; uniform vec3 gmLipHi; uniform vec3 gmChkA; uniform vec3 gmChkB;
-float gmHash(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-float gmNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(gmHash(i), gmHash(i + vec2(1.0, 0.0)), f.x), mix(gmHash(i + vec2(0.0, 1.0)), gmHash(i + vec2(1.0, 1.0)), f.x), f.y); }
-float gmChecker(vec2 p, vec2 w){ w += 1e-4;
-  vec2 i = 2.0 * (abs(fract((p - 0.5 * w) * 0.5) - 0.5) - abs(fract((p + 0.5 * w) * 0.5) - 0.5)) / w;
-  return 0.5 - 0.5 * i.x * i.y; }
-vec2 gmFw(vec2 p){ return max(abs(dFdx(p)), abs(dFdy(p))); }
-vec3 gmCheckerCol(vec2 p, vec2 w){
-  float c = gmChecker(p, w);
-  vec3 col = mix(gmChkA, gmChkB, c);
-  vec2 f = fract(p); w = w * 1.5 + 1e-4;
-  float fade = clamp(1.0 - max(w.x, w.y) * 3.5, 0.0, 1.0);
-  float hi = max(smoothstep(0.92 - w.y, 0.92 + w.y, f.y), 1.0 - smoothstep(0.06 - w.x, 0.06 + w.x, f.x));
-  float lo = max(1.0 - smoothstep(0.06 - w.y, 0.06 + w.y, f.y), smoothstep(0.94 - w.x, 0.94 + w.x, f.x));
-  col *= 1.0 + fade * (0.2 * hi - 0.26 * lo);
-  col *= 0.95 + 0.1 * gmNoise(p * 6.0);
-  return col;
-}
-`;
-  const GM_FRAG_MAIN = `
-vec3 gN = normalize(vGmN);
-#ifdef GM_LOCAL
-vec3 gP = vGmL;
-#else
-vec3 gP = vGmW;
-#endif
-vec3 gA = abs(gN);
-vec2 gqY = gP.xz * 0.4; vec2 gqX = gP.zy * 0.4; vec2 gqZ = gP.xy * 0.4;
-vec2 gwY = gmFw(gqY); vec2 gwX = gmFw(gqX); vec2 gwZ = gmFw(gqZ);
-bool gUY = gA.y > gA.x && gA.y > gA.z; bool gUX = gA.x > gA.z;
-vec2 gq = gUY ? gqY : (gUX ? gqX : gqZ);
-vec2 gw = gUY ? gwY : (gUX ? gwX : gwZ);
-vec3 gChk = gmCheckerCol(gq, gw);
-// bevelled tiles: the normal rolls off at every square's edge (faded out where a square is a few pixels wide)
-vec2 gTf = fract(gq);
-vec2 gBv = vec2(smoothstep(0.9, 1.0, gTf.x) - smoothstep(0.1, 0.0, gTf.x), smoothstep(0.9, 1.0, gTf.y) - smoothstep(0.1, 0.0, gTf.y));
-gBv *= 0.6 * clamp(1.0 - max(gw.x, gw.y) * 5.0, 0.0, 1.0);
-vec3 gBump = gUY ? vec3(gBv.x, 0.0, gBv.y) : (gUX ? vec3(0.0, gBv.y, gBv.x) : vec3(gBv.x, gBv.y, 0.0));
-#ifdef GM_CHECKER
-vec3 gCol = gChk;
-#else
-float gn1 = gmNoise(gP.xz * 0.045);
-float gn2 = gmNoise(gP.xz * 0.55 + 7.0);
-vec3 gGrass = mix(gmGrassA, gmGrassB, smoothstep(0.25, 0.8, gn1));
-gGrass *= 0.92 + 0.14 * gn2;
-#ifdef GM_TERRAIN
-// mowing stripes: a stripe is centred on the route (no edge down the middle of the screen behind Kit)
-vec2 gLq = vec2(vGmR.x / 7.0, vGmR.y / 5.5 + 0.5);
-float gLawn = gmChecker(gLq, min(gmFw(gLq), vec2(0.5)));
-gGrass *= 1.0 + (gLawn - 0.5) * 0.09 * clamp(vGmR.z, 0.0, 1.0);
-#endif
-vec3 gFN = normalize(cross(dFdx(vGmW), dFdy(vGmW)));
-float gSt = 1.0 - gN.y;
-#ifdef GM_TERRAIN
-gSt = mix(gSt, 1.0 - abs(gFN.y), 0.72);
-#endif
-gSt += (gmNoise(gP.xz * 0.8 + gP.y * 0.7) - 0.5) * 0.07;
-float gMask = 1.0 - smoothstep(0.31, 0.34, gSt);
-float gLipM = 1.0 - smoothstep(0.39, 0.42, gSt);
-vec3 gCol = mix(gChk, gmLip * (0.92 + 0.12 * gmNoise(gP.xz * 2.0 + gP.y)), gLipM);
-gCol = mix(gCol, gGrass, gMask);
-gCol = mix(gCol, gmLipHi, gMask * smoothstep(0.235, 0.3, gSt) * 0.5);
-#if defined(GM_PROP) || defined(GM_LOCAL)
-gCol = mix(gCol, gmLip * (0.8 + 0.35 * gmNoise(gP.xz * 3.0 + gP.y * 2.0)), clamp(vGmLip, 0.0, 1.0));
-#endif
-// grass detail: tufts (fine noise, its gradient tilts the normal) and soft mounds, faded with the pixel footprint;
-// sun-dried and lush patches
-vec2 gFoot = gmFw(gP.xz);
-float gFoo = max(gFoot.x, gFoot.y);
-float gFine = 1.0 - smoothstep(0.025, 0.11, gFoo), gMidF = 1.0 - smoothstep(0.1, 0.45, gFoo);
-vec2 gTq = gP.xz * vec2(7.3, 8.9);
-float gT0 = gmNoise(gTq), gTx = gmNoise(gTq + vec2(0.2, 0.0)), gTz = gmNoise(gTq + vec2(0.0, 0.2));
-vec2 gUq = gP.xz * vec2(2.9, 3.4) + 5.3;
-float gU0 = gmNoise(gUq), gUx = gmNoise(gUq + vec2(0.2, 0.0)), gUz = gmNoise(gUq + vec2(0.0, 0.2));
-vec2 gGb = vec2(gTx - gT0, gTz - gT0) * 0.9 * gFine + vec2(gUx - gU0, gUz - gU0) * 0.45 * gMidF;
-gBump = mix(gBump, vec3(-gGb.x, 0.0, -gGb.y), gMask);
-gCol *= mix(1.0, 0.86 + 0.16 * gT0 + 0.1 * gU0, gMidF * gMask);
-float gPatch = gmNoise(gP.xz * 0.075 + 13.0);
-gCol = mix(gCol, gCol * vec3(1.16, 1.06, 0.66), smoothstep(0.6, 0.88, gPatch) * gMask * 0.5);
-gCol = mix(gCol, gCol * vec3(0.78, 0.92, 0.86), smoothstep(0.62, 0.9, 1.0 - gPatch) * gMask * 0.45);
-#ifdef GM_TERRAIN
-gCol *= mix(1.0, vGmAO, 0.65);
-#endif
-#endif
-diffuseColor.rgb = gCol;
-`;
-  // the baked cavity term also shades the sky light and reflections (contact darkening at cliff bases and in hollows)
-  const GM_FRAG_AO = `
-#ifdef GM_TERRAIN
-float gIAO = vGmAO * vGmAO;
-reflectedLight.indirectDiffuse *= gIAO;
-reflectedLight.indirectSpecular *= gIAO;
-#endif
-`;
+  // checkerboard tile colour with bevelled edges (faded out where a square is a few pixels wide)
+  const gmCheckerCol = (p, w) => {
+    const c = TL.checker(p, w);
+    const f = tfract(p), w2 = w.mul(1.5).add(1e-4);
+    const fade = tclamp(float(1).sub(tmax(w2.x, w2.y).mul(3.5)), 0, 1);
+    const hi = tmax(smoothstep(float(0.92).sub(w2.y), float(0.92).add(w2.y), f.y), float(1).sub(smoothstep(float(0.06).sub(w2.x), float(0.06).add(w2.x), f.x)));
+    const lo = tmax(float(1).sub(smoothstep(float(0.06).sub(w2.y), float(0.06).add(w2.y), f.y)), smoothstep(float(0.94).sub(w2.x), float(0.94).add(w2.x), f.x));
+    return mix(GM_UNI.gmChkA, GM_UNI.gmChkB, c)
+      .mul(float(1).add(fade.mul(hi.mul(0.2).sub(lo.mul(0.26)))))
+      .mul(float(0.95).add(TL.vnoise(p.mul(6)).mul(0.1)));
+  };
+  // Emerald grass / lip / checkerboard ground (v2 GM shader, colour + bevel/tuft bump, ported to TSL).
+  // mode: 'terrain' (heightfield: route lawn stripes, baked cavity AO), 'prop' / 'local' (aLip blend; local = checker in
+  // object space), 'checker' (plain checkerboard).
+  // PORT(world): v2 GLSL = this same recipe injected into MeshStandardMaterial's shader; v3 should replace it with
+  // textured PBR grass/rock/soil (K.tex), grass blades and real normal detail.
   function groundMaterial(mode) {
-    const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
-    m.extensions = { derivatives: true };
-    const def = { terrain: 'GM_TERRAIN', prop: 'GM_PROP', local: 'GM_LOCAL', checker: 'GM_CHECKER' }[mode];
-    m.defines = Object.assign({}, m.defines || {}, { [def]: '' });
-    m.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, GM_UNI);
-      sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\n' + GM_VERT_PARS)
-        .replace('#include <project_vertex>', '#include <project_vertex>\n' + GM_VERT_MAIN);
-      sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\n' + GM_FRAG_PARS)
-        .replace('#include <color_fragment>', '#include <color_fragment>\n' + GM_FRAG_MAIN)
-        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize(normal + mat3(viewMatrix) * gBump);')
-        .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n' + GM_FRAG_AO);
-    };
-    m.customProgramCacheKey = () => 'kitGM2_' + mode;
+    const m = new THREE.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
+    const terrain = mode === 'terrain', local = mode === 'local', propLip = mode === 'prop' || mode === 'local', chkOnly = mode === 'checker';
+    // (pure expressions: no assign outside Fn; derivatives are taken at the top level, outside any select)
+    const gN = tnormalize(normalWorld);
+    const gP = local ? positionGeometry : positionWorld;
+    const gA = tabs(gN);
+    const gqY = gP.xz.mul(0.4), gqX = gP.zy.mul(0.4), gqZ = gP.xy.mul(0.4);
+    const gwY = TL.fw(gqY), gwX = TL.fw(gqX), gwZ = TL.fw(gqZ);
+    const gUY = gA.y.greaterThan(gA.x).and(gA.y.greaterThan(gA.z)), gUX = gA.x.greaterThan(gA.z);
+    const gq = select(gUY, gqY, select(gUX, gqX, gqZ));
+    const gw = select(gUY, gwY, select(gUX, gwX, gwZ));
+    const gChk = gmCheckerCol(gq, gw);
+    const gTf = tfract(gq);
+    const gBv = vec2(smoothstep(0.9, 1.0, gTf.x).sub(smoothstep(0.1, 0.0, gTf.x)), smoothstep(0.9, 1.0, gTf.y).sub(smoothstep(0.1, 0.0, gTf.y)))
+      .mul(tclamp(float(1).sub(tmax(gw.x, gw.y).mul(5)), 0, 1).mul(0.6));
+    let gBump = select(gUY, vec3(gBv.x, 0, gBv.y), select(gUX, vec3(0, gBv.y, gBv.x), vec3(gBv.x, gBv.y, 0)));
+    let colorNode;
+    if (chkOnly) colorNode = gChk;
+    else {
+      const gn1 = TL.vnoise(gP.xz.mul(0.045)), gn2 = TL.vnoise(gP.xz.mul(0.55).add(7));
+      let gGrass = mix(GM_UNI.gmGrassA, GM_UNI.gmGrassB, smoothstep(0.25, 0.8, gn1)).mul(float(0.92).add(gn2.mul(0.14)));
+      let gSt = float(1).sub(gN.y);
+      if (terrain) {
+        // mowing stripes: a stripe is centred on the route (no edge down the middle of the screen behind Kit)
+        const R = attribute('aRoute', 'vec3');
+        const gLq = vec2(R.x.div(7), R.y.div(5.5).add(0.5));
+        const lawn = TL.checker(gLq, tmin(TL.fw(gLq), vec2(0.5)));
+        gGrass = gGrass.mul(float(1).add(lawn.sub(0.5).mul(0.09).mul(tclamp(R.z, 0, 1))));
+        const gFN = tnormalize(tcross(dFdx(positionWorld), dFdy(positionWorld)));
+        gSt = mix(gSt, float(1).sub(tabs(gFN.y)), 0.72);
+      }
+      gSt = gSt.add(TL.vnoise(gP.xz.mul(0.8).add(gP.y.mul(0.7))).sub(0.5).mul(0.07));
+      const gMask = float(1).sub(smoothstep(0.31, 0.34, gSt));
+      const gLipM = float(1).sub(smoothstep(0.39, 0.42, gSt));
+      let gCol = mix(gChk, GM_UNI.gmLip.mul(float(0.92).add(TL.vnoise(gP.xz.mul(2).add(gP.y)).mul(0.12))), gLipM);
+      gCol = mix(gCol, gGrass, gMask);
+      gCol = mix(gCol, GM_UNI.gmLipHi, gMask.mul(smoothstep(0.235, 0.3, gSt)).mul(0.5));
+      if (propLip) gCol = mix(gCol, GM_UNI.gmLip.mul(float(0.8).add(TL.vnoise(gP.xz.mul(3).add(gP.y.mul(2))).mul(0.35))), tclamp(attribute('aLip', 'float'), 0, 1));
+      // grass detail: tufts and soft mounds (their gradient tilts the normal), sun-dried and lush patches
+      const gFoot = TL.fw(gP.xz), gFoo = tmax(gFoot.x, gFoot.y);
+      const gFine = float(1).sub(smoothstep(0.025, 0.11, gFoo)), gMidF = float(1).sub(smoothstep(0.1, 0.45, gFoo));
+      const gTq = gP.xz.mul(vec2(7.3, 8.9));
+      const gT0 = TL.vnoise(gTq), gTx = TL.vnoise(gTq.add(vec2(0.2, 0))), gTz = TL.vnoise(gTq.add(vec2(0, 0.2)));
+      const gUq = gP.xz.mul(vec2(2.9, 3.4)).add(5.3);
+      const gU0 = TL.vnoise(gUq), gUx = TL.vnoise(gUq.add(vec2(0.2, 0))), gUz = TL.vnoise(gUq.add(vec2(0, 0.2)));
+      const gGb = vec2(gTx.sub(gT0), gTz.sub(gT0)).mul(gFine.mul(0.9)).add(vec2(gUx.sub(gU0), gUz.sub(gU0)).mul(gMidF.mul(0.45)));
+      gBump = mix(gBump, vec3(gGb.x.negate(), 0, gGb.y.negate()), gMask);
+      gCol = gCol.mul(mix(float(1), float(0.86).add(gT0.mul(0.16)).add(gU0.mul(0.1)), gMidF.mul(gMask)));
+      const gPatch = TL.vnoise(gP.xz.mul(0.075).add(13));
+      gCol = mix(gCol, gCol.mul(vec3(1.16, 1.06, 0.66)), smoothstep(0.6, 0.88, gPatch).mul(gMask).mul(0.5));
+      gCol = mix(gCol, gCol.mul(vec3(0.78, 0.92, 0.86)), smoothstep(0.62, 0.9, float(1).sub(gPatch)).mul(gMask).mul(0.45));
+      if (terrain) {
+        const ao = attribute('aAO', 'float');
+        gCol = gCol.mul(mix(float(1), ao, 0.65));
+        m.aoNode = ao.mul(ao); // the baked cavity term also shades the sky light and reflections
+      }
+      colorNode = gCol;
+    }
+    m.colorNode = colorNode;
+    m.normalNode = tnormalize(normalViewGeometry.add(cameraViewMatrix.mul(vec4(gBump, 0)).xyz));
     return m;
   }
-  const ANIM_PRE = `
-#ifdef USE_INSTANCING
-vec3 kIP = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
-#else
-vec3 kIP = vec3(0.0);
-#endif
-float kPh = kIP.x * 0.37 + kIP.z * 0.23;
-`;
-  const ANIM = {
-    palm: 'transformed.x += sin(uTime * 1.5 + kPh) * aAnim * 0.32; transformed.z += cos(uTime * 1.1 + kPh * 1.3) * aAnim * 0.22; transformed.y += sin(uTime * 2.1 + kPh) * aAnim * 0.1;',
-    sunflower: 'if (aAnim > 0.5) { vec3 kp = vec3(0.0, 2.1, 0.09); vec3 kl = transformed - kp; float ka = uTime * 1.4 + kPh; float kc = cos(ka); float ks = sin(ka); transformed = kp + vec3(kc * kl.x - ks * kl.y, ks * kl.x + kc * kl.y, kl.z); } transformed.x += sin(uTime * 1.3 + kPh) * 0.04 * transformed.y;',
-    flower: 'transformed.x += sin(uTime * 1.8 + kPh) * aAnim * 0.08; transformed.z += cos(uTime * 1.4 + kPh) * aAnim * 0.06;',
-    bird: 'transformed.y += sin(uTime * 9.0 + kPh * 3.0) * aAnim * 0.55;'
-  };
+  // Swaying palms / flowers / flapping birds (vertex animation weighted by the aAnim attribute).
+  // PORT(world): v2 animated in the instance's local space with a phase from the instance position and spun the
+  // sunflower heads about their pivot (0, 2.1, 0.09); r186 applies instancing before positionNode, so this placeholder
+  // sways in model space with a per-instance hash phase and the heads no longer spin.
   function animMaterial(kind, params) {
-    const m = new THREE.MeshStandardMaterial(Object.assign({ vertexColors: true, roughness: 0.82, metalness: 0 }, params || {}));
-    m.onBeforeCompile = (sh) => {
-      sh.uniforms.uTime = TIME;
-      sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime;\nattribute float aAnim;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + ANIM_PRE + ANIM[kind]);
-    };
-    m.customProgramCacheKey = () => 'kitAnim_' + kind;
+    const m = new THREE.MeshStandardNodeMaterial(Object.assign({ vertexColors: true, roughness: 0.82, metalness: 0 }, params || {}));
+    const aAnim = attribute('aAnim', 'float');
+    const kPh = TL.hash21(vec2(float(instanceIndex).mul(0.37), 1.7)).mul(6.2832);
+    const p = positionLocal;
+    let off;
+    if (kind === 'palm') off = vec3(tsin(TIME.mul(1.5).add(kPh)).mul(aAnim).mul(0.32), tsin(TIME.mul(2.1).add(kPh)).mul(aAnim).mul(0.1), tcos(TIME.mul(1.1).add(kPh.mul(1.3))).mul(aAnim).mul(0.22));
+    else if (kind === 'sunflower') off = vec3(tsin(TIME.mul(1.3).add(kPh)).mul(0.04).mul(positionGeometry.y), 0, 0);
+    else if (kind === 'flower') off = vec3(tsin(TIME.mul(1.8).add(kPh)).mul(aAnim).mul(0.08), 0, tcos(TIME.mul(1.4).add(kPh)).mul(aAnim).mul(0.06));
+    else off = vec3(0, tsin(TIME.mul(9).add(kPh.mul(3))).mul(aAnim).mul(0.55), 0);
+    m.positionNode = p.add(off);
     return m;
   }
 
@@ -699,7 +620,7 @@ float kPh = kIP.x * 0.37 + kIP.z * 0.23;
   function buildLights(scene) {
     const hemi = new THREE.HemisphereLight(lin('#cfe9ff'), lin('#4f8f3c'), HEMI_BASE);
     scene.add(hemi);
-    const sun = new THREE.DirectionalLight(lin('#fff0d4'), 1.38);
+    const sun = new THREE.DirectionalLight(lin('#fff0d4'), 1.38 * LIGHT_PI);
     sun.castShadow = true;
     sun.shadow.mapSize.set(S.shadowSize, S.shadowSize);
     const c = sun.shadow.camera;
@@ -732,66 +653,54 @@ float kPh = kIP.x * 0.37 + kIP.z * 0.23;
     for (const s of stops) gr.addColorStop(s[0], s[1]);
     g.fillStyle = gr; g.fillRect(0, 0, size, size);
     const t = new THREE.CanvasTexture(c);
-    t.encoding = THREE.sRGBEncoding;
+    t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }
   // the sky, in linear colours: the dome draws it, the water reflects it. uHDR (K.post) deepens it for the
   // tone-mapped HDR pipeline; with 0 it matches the original display-space sky exactly.
-  const POST_HDR = (K.post && K.post.uHDR) || { value: 0 };
   const SKY_UNI = {
-    uSkyZen: { value: lin('#1f4fd0') }, uSkyMid: { value: lin('#4a8cee') }, uSkyHor: { value: lin(FOG_HEX) },
-    uSkyZenH: { value: lin('#1844c6') }, uSkyMidH: { value: lin('#3a82ec') }, uSkyHorH: { value: lin('#98cdff') },
-    uSkySun: { value: SUN_DIR.clone() }, uSkySunCol: { value: lin('#fff4d6') }, uTime: TIME, uHDR: POST_HDR
+    uSkyZen: uniform(lin('#1f4fd0')), uSkyMid: uniform(lin('#4a8cee')), uSkyHor: uniform(lin(FOG_HEX)),
+    uSkyZenH: uniform(lin('#1844c6')), uSkyMidH: uniform(lin('#3a82ec')), uSkyHorH: uniform(lin('#98cdff')),
+    uSkySun: uniform(SUN_DIR.clone()), uSkySunCol: uniform(lin('#fff4d6')), uTime: TIME,
+    uHDR: K.post && K.post.uHDR && K.post.uHDR.isNode ? K.post.uHDR : uniform(0)
   };
   const FAR_HDR = new THREE.Color(lin('#98cdff').r / lin(FOG_HEX).r, lin('#98cdff').g / lin(FOG_HEX).g, 1);
-  const SKY_GLSL = `uniform vec3 uSkyZen; uniform vec3 uSkyMid; uniform vec3 uSkyHor; uniform vec3 uSkyZenH; uniform vec3 uSkyMidH; uniform vec3 uSkyHorH;
-uniform vec3 uSkySun; uniform vec3 uSkySunCol;
-vec3 skyGradient(vec3 d, float hdr){
-  float h = d.y;
-  vec3 hor = mix(uSkyHor, uSkyHorH, hdr), mid = mix(uSkyMid, uSkyMidH, hdr), zen = mix(uSkyZen, uSkyZenH, hdr);
-  vec3 col = mix(hor, mid, smoothstep(0.0, 0.3, h));
-  col = mix(col, zen, smoothstep(0.25, 0.95, h));
-  // warm forward scattering low around the sun (HDR only: the old sky had none)
-  float sd = max(dot(d, uSkySun), 0.0);
-  col += hdr * vec3(1.0, 0.78, 0.5) * pow(sd, 5.0) * 0.16 * (1.0 - smoothstep(0.0, 0.6, h));
-  return col;
-}`;
+  // sky gradient toward direction d (unit vec3 node), hdr: 0 (display-space sky) .. 1 (deeper HDR sky)
+  const skyGradient = (d, hdr) => {
+    const U = SKY_UNI, h = d.y;
+    const hor = mix(U.uSkyHor, U.uSkyHorH, hdr), mid = mix(U.uSkyMid, U.uSkyMidH, hdr), zen = mix(U.uSkyZen, U.uSkyZenH, hdr);
+    const col = mix(mix(hor, mid, smoothstep(0.0, 0.3, h)), zen, smoothstep(0.25, 0.95, h));
+    // warm forward scattering low around the sun (HDR only)
+    const sd = tmax(tdot(d, U.uSkySun), 0);
+    return col.add(vec3(1.0, 0.78, 0.5).mul(hdr).mul(tpow(sd, 5)).mul(0.16).mul(float(1).sub(smoothstep(0.0, 0.6, h))));
+  };
   function buildSky(scene) {
     const fog = new THREE.Fog(new THREE.Color(FOG_HEX), 120, 640);
-    fog.hdrColor = SKY_UNI.uSkyHorH.value; // the HDR pipeline fogs toward its own (linear) horizon
     scene.fog = fog; S.fog = fog;
     scene.background = S.bg = new THREE.Color(FOG_HEX);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: SKY_UNI,
-      vertexShader: `varying vec3 vDir;
-void main(){ vDir = position; vec4 p = projectionMatrix * viewMatrix * vec4(position + cameraPosition, 1.0); p.z = p.w * 0.99999; gl_Position = p; }`,
-      fragmentShader: `uniform float uTime; uniform float uHDR;
-varying vec3 vDir;
-${SKY_GLSL}
-float sh(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-float sn(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(sh(i), sh(i + vec2(1.0, 0.0)), f.x), mix(sh(i + vec2(0.0, 1.0)), sh(i + vec2(1.0, 1.0)), f.x), f.y); }
-void main(){
-  vec3 d = normalize(vDir);
-  float h = d.y;
-  vec3 col = skyGradient(d, uHDR);
-  float az = atan(d.z, d.x);
-  vec2 cp = vec2(az * 7.0 + uTime * 0.004, h * 26.0);
-  float cl = sn(cp) * 0.6 + sn(cp * 2.3 + 3.1) * 0.3 + sn(cp * 5.1 + 7.7) * 0.1;
-  float band = smoothstep(0.0, 0.035, h) * (1.0 - smoothstep(0.08, 0.2, h));
-  float sd = max(dot(d, uSkySun), 0.0);
-  vec3 cloudCol = mix(vec3(1.0), vec3(1.0, 0.94, 0.84) * (1.0 + 0.6 * uHDR), pow(sd, 6.0));
-  col = mix(col, cloudCol, smoothstep(0.5, 0.75, cl) * band * 0.75);
-  col += uSkySunCol * (pow(sd, 1200.0) * 1.4 + pow(sd, 60.0) * 0.32 + pow(sd, 7.0) * 0.12);
-  // HDR: a real sun disc and aureole (bloom and light shafts feed on them); direct rendering keeps the old clamp
-  col += uHDR * uSkySunCol * (smoothstep(0.99962, 0.99985, sd) * 24.0 + pow(sd, 600.0) * 1.5 + pow(sd, 60.0) * 0.1);
-  col = mix(min(col, vec3(1.0)), col, uHDR);
-  gl_FragColor = vec4(col, 1.0);
-  #include <tonemapping_fragment>
-  #include <encodings_fragment>
-}`,
-      side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false, toneMapped: false
-    });
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(800, 32, 16), mat);
+    // PORT(world): v2 GLSL sky dome = this gradient + a band of value-noise clouds near the horizon + sun disc and
+    // aureole (HDR); v3 should move to SkyMesh / a TSL physical sky with real clouds and feed the PMREM from it.
+    const mat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false });
+    {
+      const U = SKY_UNI, hdr = U.uHDR;
+      const d = tnormalize(positionGeometry);
+      const h = d.y;
+      let col = skyGradient(d, hdr);
+      const az = tatan(d.z, d.x);
+      const cp = vec2(az.mul(7).add(TIME.mul(0.004)), h.mul(26));
+      const cl = TL.vnoise(cp).mul(0.6).add(TL.vnoise(cp.mul(2.3).add(3.1)).mul(0.3)).add(TL.vnoise(cp.mul(5.1).add(7.7)).mul(0.1));
+      const band = smoothstep(0.0, 0.035, h).mul(float(1).sub(smoothstep(0.08, 0.2, h)));
+      const sd = tmax(tdot(d, U.uSkySun), 0);
+      const cloudCol = mix(vec3(1), vec3(1.0, 0.94, 0.84).mul(float(1).add(hdr.mul(0.6))), tpow(sd, 6));
+      col = mix(col, cloudCol, smoothstep(0.5, 0.75, cl).mul(band).mul(0.75));
+      col = col.add(U.uSkySunCol.mul(tpow(sd, 1200).mul(1.4).add(tpow(sd, 60).mul(0.32)).add(tpow(sd, 7).mul(0.12))));
+      col = col.add(U.uSkySunCol.mul(hdr).mul(smoothstep(0.99962, 0.99985, sd).mul(24).add(tpow(sd, 600).mul(1.5)).add(tpow(sd, 60).mul(0.1))));
+      mat.colorNode = mix(tmin(col, vec3(1)), col, hdr);
+      // the dome is centred on the camera and drawn at the far plane (it never clips, even with a short phone far)
+      const clip = cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(positionLocal.add(cameraPosition), 1));
+      mat.vertexNode = vec4(clip.xy, clip.w.mul(0.99999), clip.w);
+    }
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16), mat);
     dome.renderOrder = -100; dome.frustumCulled = false;
     dome.onBeforeRender = (r, sc, cam) => skyFollow(cam);
     scene.add(dome); S.sky = dome;
@@ -802,15 +711,18 @@ void main(){
     glow.scale.set(300, 300, 1); glow.frustumCulled = false; glow.renderOrder = -90;
     scene.add(glow); S.sunSprite = glow;
   }
+  const FOG_LDR = lin(FOG_HEX), FOG_HDR = lin('#98cdff');
   function skyFollow(cam) {
     if (!cam) return;
+    // the HDR pipeline fogs toward its own (linear) horizon
+    if (S.fog) S.fog.color.copy(SKY_UNI.uHDR.value ? FOG_HDR : FOG_LDR);
     CAMXZ.value.set(cam.position.x, cam.position.z);
     if (S.sunSprite) {
       S.sunSprite.position.copy(cam.position).addScaledVector(SUN_DIR, 700); S.sunSprite.updateMatrixWorld();
-      S.sunSprite.material.opacity = POST_HDR.value ? 0.22 : 1;
+      S.sunSprite.material.opacity = SKY_UNI.uHDR.value ? 0.22 : 1;
     }
     // far islands fade into the horizon of whichever sky is drawn
-    if (S.farMat) S.farMat.color.copy(POST_HDR.value ? FAR_HDR : WHITE);
+    if (S.farMat) S.farMat.color.copy(SKY_UNI.uHDR.value ? FAR_HDR : WHITE);
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const stale = !S.lastWall || now - S.lastWall > 150;
     if (stale && S._lastRender) animate(clamp((now - S._lastRender) / 1000, 0, 0.1));
@@ -846,86 +758,66 @@ void main(){
     const tex = new THREE.DataTexture(data, NX, NZ, THREE.RGBAFormat);
     tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.needsUpdate = true;
-    const uni = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
-      uSun: { value: SUN_DIR.clone() }, uSunCol: { value: lin('#fff2d0') },
-      uDeep: { value: lin('#1550b4') }, uMid: { value: lin('#2a86dc') }, uShallow: { value: lin('#3fd6d2') },
-      uFoam: { value: lin('#f6fcff') },
-      uHeight: { value: null }, uHB: { value: new THREE.Vector4(T.XMIN - CELL / 2, T.ZMIN - CELL / 2, 1 / (CELL * NX), 1 / (CELL * NZ)) }
-    }]);
-    uni.uHeight.value = tex;
-    uni.uTime = TIME;
-    for (const k in SKY_UNI) if (k !== 'uTime') uni[k] = SKY_UNI[k];
-    const mat = new THREE.ShaderMaterial({
-      uniforms: uni, fog: true,
-      vertexShader: `uniform float uTime; varying vec3 vWP;
-#include <fog_pars_vertex>
-void main(){
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  wp.y += sin(wp.x * 0.08 + uTime * 1.1) * 0.1 + sin(wp.z * 0.11 - uTime * 0.9) * 0.08;
-  vWP = wp.xyz;
-  vec4 mvPosition = viewMatrix * wp;
-  gl_Position = projectionMatrix * mvPosition;
-  #include <fog_vertex>
-}`,
-      fragmentShader: `uniform float uTime; uniform float uHDR; uniform vec3 uSun; uniform vec3 uSunCol; uniform vec3 uDeep; uniform vec3 uMid; uniform vec3 uShallow; uniform vec3 uFoam;
-uniform sampler2D uHeight; uniform vec4 uHB; varying vec3 vWP;
-${SKY_GLSL}
-#include <fog_pars_fragment>
-float sh(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-float sn(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(sh(i), sh(i + vec2(1.0, 0.0)), f.x), mix(sh(i + vec2(0.0, 1.0)), sh(i + vec2(1.0, 1.0)), f.x), f.y); }
-void main(){
-  vec2 p = vWP.xz; float t = uTime;
-  float dist = length(cameraPosition - vWP);
-  float near = 1.0 - smoothstep(25.0, 130.0, dist);
-  vec2 g = vec2(0.0);
-  vec2 d1 = vec2(0.8, 0.6); vec2 d2 = vec2(-0.5, 0.866); vec2 d3 = vec2(0.196, -0.98); vec2 d4 = vec2(-0.949, -0.316);
-  g += d1 * cos(dot(d1, p) * 0.21 + t * 1.3) * 0.021;
-  g += d2 * cos(dot(d2, p) * 0.37 + t * 1.7) * 0.022;
-  g += d3 * cos(dot(d3, p) * 0.73 + t * 2.3) * 0.022;
-  g += d4 * cos(dot(d4, p) * 1.31 + t * 3.1) * 0.02;
-  vec2 q = p * 0.9 + vec2(t * 0.35, t * 0.2);
-  float n0 = sn(q); float nx = sn(q + vec2(0.35, 0.0)); float nz = sn(q + vec2(0.0, 0.35));
-  g += vec2(nx - n0, nz - n0) * 0.3;
-  // fine ripples close to the camera only (they would shimmer far away)
-  vec2 q2 = p * 2.6 + vec2(-t * 0.7, t * 0.5);
-  float m0 = sn(q2); float mx = sn(q2 + vec2(0.18, 0.0)); float mz = sn(q2 + vec2(0.0, 0.18));
-  g += vec2(mx - m0, mz - m0) * 0.2 * near;
-  vec3 N = normalize(vec3(-g.x, 1.0, -g.y));
-  vec3 V = normalize(cameraPosition - vWP);
-  vec2 uv = (p - uHB.xy) * uHB.zw;
-  float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-  vec4 ht = texture2D(uHeight, clamp(uv, 0.0, 1.0));
-  float hg = mix(-6.0, ht.r * 12.0 - 6.0, inside);
-  float hb = mix(-6.0, ht.g * 12.0 - 6.0, inside);
-  float depth = max(-hg, 0.0);
-  vec3 col = mix(uShallow, uMid, smoothstep(0.3, 3.2, depth));
-  col = mix(col, uDeep, smoothstep(3.0, 5.9, depth) * 0.85 + 0.15 * smoothstep(5.0, 6.0, -hb));
-  // sunlight dancing on the shallow bottom
-  float cs = sn(p * 0.8 + vec2(t * 0.4, t * 0.25) + g * 6.0) * sn(p * 1.15 - vec2(t * 0.3, -t * 0.35) - g * 5.0);
-  col += uSunCol * smoothstep(0.32, 0.62, cs) * (1.0 - smoothstep(0.4, 2.6, depth)) * 0.22 * (0.6 + 0.4 * near);
-  // the sky reflected with Fresnel (same sky as the dome)
-  vec3 R = reflect(-V, N); R.y = abs(R.y);
-  float fr = pow(1.0 - max(dot(N, V), 0.0), 5.0);
-  col = mix(col, skyGradient(R, uHDR), clamp(0.06 + fr * 0.82, 0.0, 1.0));
-  vec3 Hh = normalize(uSun + V);
-  float nh = max(dot(N, Hh), 0.0);
-  col += uSunCol * (pow(nh, 420.0) * 3.0 + pow(nh, 60.0) * 0.16);
-  col += uHDR * uSunCol * pow(nh, 1800.0) * 40.0;
-  float sp = sn(p * 2.7 + vec2(t * 0.9, -t * 0.6)) * sn(p * 3.3 - vec2(t * 0.5, t * 1.1));
-  float gfade = 1.0 - smoothstep(50.0, 190.0, dist);
-  col += uSunCol * smoothstep(0.6, 0.82, sp) * pow(nh, 16.0) * (2.4 + 4.0 * uHDR) * gfade;
-  float fnz = sn(p * 0.45 + vec2(t * 0.22, -t * 0.17));
-  float shore = smoothstep(-5.4, -1.0, hb);
-  float band = 0.5 + 0.5 * sin(hb * 2.4 - t * 1.8 + fnz * 4.0);
-  float foam = shore * smoothstep(0.62, 0.9, band * 0.7 + fnz * 0.45);
-  foam += smoothstep(-1.7, -0.25, hg) * (0.6 + 0.4 * fnz);
-  col = mix(col, uFoam * (0.9 + 0.25 * max(uSun.y, 0.0)), clamp(foam, 0.0, 1.0) * 0.9);
-  gl_FragColor = vec4(col, 1.0);
-  #include <tonemapping_fragment>
-  #include <encodings_fragment>
-  #include <fog_fragment>
-}`
-    });
+    // PORT(world): v2 GLSL sea (same recipe, ported 1:1 to TSL here): 4 Gerstner-like normal waves + noise ripples,
+    // depth colour from the blurred heightfield (uHeight), caustics on the shallows, Fresnel sky reflection, sun glints
+    // and shoreline foam bands. v3: SSR / planar reflections, real depth fog, animated foam texture.
+    const U = {
+      uSun: uniform(SUN_DIR.clone()), uSunCol: uniform(lin('#fff2d0')),
+      uDeep: uniform(lin('#1550b4')), uMid: uniform(lin('#2a86dc')), uShallow: uniform(lin('#3fd6d2')), uFoam: uniform(lin('#f6fcff')),
+      uHB: uniform(new THREE.Vector4(T.XMIN - CELL / 2, T.ZMIN - CELL / 2, 1 / (CELL * NX), 1 / (CELL * NZ)))
+    };
+    const mat = new THREE.MeshBasicNodeMaterial({ fog: true });
+    {
+      const t = TIME, hdr = SKY_UNI.uHDR;
+      const wp = positionWorld;
+      const wg = modelWorldMatrix.mul(vec4(positionGeometry, 1));
+      mat.positionNode = positionLocal.add(vec3(0, tsin(wg.x.mul(0.08).add(t.mul(1.1))).mul(0.1).add(tsin(wg.z.mul(0.11).sub(t.mul(0.9))).mul(0.08)), 0));
+      const p = wp.xz;
+      const dist = tlength(cameraPosition.sub(wp));
+      const near = float(1).sub(smoothstep(25.0, 130.0, dist));
+      const d1 = vec2(0.8, 0.6), d2 = vec2(-0.5, 0.866), d3 = vec2(0.196, -0.98), d4 = vec2(-0.949, -0.316);
+      let g = d1.mul(tcos(tdot(d1, p).mul(0.21).add(t.mul(1.3))).mul(0.021))
+        .add(d2.mul(tcos(tdot(d2, p).mul(0.37).add(t.mul(1.7))).mul(0.022)))
+        .add(d3.mul(tcos(tdot(d3, p).mul(0.73).add(t.mul(2.3))).mul(0.022)))
+        .add(d4.mul(tcos(tdot(d4, p).mul(1.31).add(t.mul(3.1))).mul(0.02)));
+      const q = p.mul(0.9).add(vec2(t.mul(0.35), t.mul(0.2)));
+      const n0 = TL.vnoise(q), nx = TL.vnoise(q.add(vec2(0.35, 0))), nz = TL.vnoise(q.add(vec2(0, 0.35)));
+      g = g.add(vec2(nx.sub(n0), nz.sub(n0)).mul(0.3));
+      const q2 = p.mul(2.6).add(vec2(t.mul(-0.7), t.mul(0.5)));
+      const m0 = TL.vnoise(q2), mx = TL.vnoise(q2.add(vec2(0.18, 0))), mz = TL.vnoise(q2.add(vec2(0, 0.18)));
+      g = g.add(vec2(mx.sub(m0), mz.sub(m0)).mul(0.2).mul(near));
+      const N = tnormalize(vec3(g.x.negate(), 1.0, g.y.negate()));
+      const Vd = tnormalize(cameraPosition.sub(wp));
+      const huv = p.sub(U.uHB.xy).mul(U.uHB.zw);
+      const inside = tstep(0.0, huv.x).mul(tstep(huv.x, 1.0)).mul(tstep(0.0, huv.y)).mul(tstep(huv.y, 1.0));
+      const ht = ttexture(tex, tclamp(huv, 0.0, 1.0));
+      const hg = mix(float(-6), ht.r.mul(12).sub(6), inside);
+      const hb = mix(float(-6), ht.g.mul(12).sub(6), inside);
+      const depth = tmax(hg.negate(), 0);
+      let col = mix(U.uShallow, U.uMid, smoothstep(0.3, 3.2, depth));
+      col = mix(col, U.uDeep, smoothstep(3.0, 5.9, depth).mul(0.85).add(smoothstep(5.0, 6.0, hb.negate()).mul(0.15)));
+      // sunlight dancing on the shallow bottom
+      const cs = TL.vnoise(p.mul(0.8).add(vec2(t.mul(0.4), t.mul(0.25))).add(g.mul(6))).mul(TL.vnoise(p.mul(1.15).sub(vec2(t.mul(0.3), t.mul(-0.35))).sub(g.mul(5))));
+      col = col.add(U.uSunCol.mul(smoothstep(0.32, 0.62, cs)).mul(float(1).sub(smoothstep(0.4, 2.6, depth))).mul(0.22).mul(float(0.6).add(near.mul(0.4))));
+      // the sky reflected with Fresnel (same sky as the dome)
+      const Rr = treflect(Vd.negate(), N);
+      const R = vec3(Rr.x, tabs(Rr.y), Rr.z);
+      const fr = tpow(float(1).sub(tmax(tdot(N, Vd), 0)), 5);
+      col = mix(col, skyGradient(R, hdr), tclamp(fr.mul(0.82).add(0.06), 0, 1));
+      const Hh = tnormalize(U.uSun.add(Vd));
+      const nh = tmax(tdot(N, Hh), 0);
+      col = col.add(U.uSunCol.mul(tpow(nh, 420).mul(3).add(tpow(nh, 60).mul(0.16))));
+      col = col.add(U.uSunCol.mul(hdr).mul(tpow(nh, 1800)).mul(40));
+      const sp = TL.vnoise(p.mul(2.7).add(vec2(t.mul(0.9), t.mul(-0.6)))).mul(TL.vnoise(p.mul(3.3).sub(vec2(t.mul(0.5), t.mul(1.1)))));
+      const gfade = float(1).sub(smoothstep(50.0, 190.0, dist));
+      col = col.add(U.uSunCol.mul(smoothstep(0.6, 0.82, sp)).mul(tpow(nh, 16)).mul(hdr.mul(4).add(2.4)).mul(gfade));
+      const fnz = TL.vnoise(p.mul(0.45).add(vec2(t.mul(0.22), t.mul(-0.17))));
+      const shore = smoothstep(-5.4, -1.0, hb);
+      const bandW = tsin(hb.mul(2.4).sub(t.mul(1.8)).add(fnz.mul(4))).mul(0.5).add(0.5);
+      const foam = shore.mul(smoothstep(0.62, 0.9, bandW.mul(0.7).add(fnz.mul(0.45)))).add(smoothstep(-1.7, -0.25, hg).mul(fnz.mul(0.4).add(0.6)));
+      col = mix(col, U.uFoam.mul(tmax(U.uSun.y, 0).mul(0.25).add(0.9)), tclamp(foam, 0, 1).mul(0.9));
+      mat.colorNode = col;
+    }
     const geo = new THREE.PlaneGeometry(2600, 2600, 96, 96);
     geo.rotateX(-Math.PI / 2);
     const sea = new THREE.Mesh(geo, mat);
@@ -1979,7 +1871,7 @@ void main(){
     }
     const t = new THREE.CanvasTexture(c);
     t.wrapS = THREE.ClampToEdgeWrapping; t.wrapT = THREE.RepeatWrapping;
-    t.encoding = THREE.sRGBEncoding;
+    t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }
   function buildWaterfalls(scene) {
@@ -2040,20 +1932,25 @@ void main(){
       scene.add(m);
     }
     if (mistPts.length) {
+      // PORT(world): v2 waterfall mist = GL points (PointsMaterial size 4.2); WebGPU draws THREE.Points 1 px wide, so
+      // these are instanced sprites (one soft glow per mist puff)
       const pos = new Float32Array(mistPts.length * 3);
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      const pm = new THREE.PointsMaterial({ size: 4.2, map: glowTexture(64, [[0, 'rgba(255,255,255,0.9)'], [0.5, 'rgba(240,250,255,0.35)'], [1, 'rgba(240,250,255,0)']]), transparent: true, depthWrite: false, sizeAttenuation: true, color: 0xffffff });
-      const pts = new THREE.Points(g, pm);
+      const attr = new THREE.InstancedBufferAttribute(pos, 3);
+      attr.setUsage(THREE.DynamicDrawUsage);
+      const pm = new THREE.SpriteNodeMaterial({ map: glowTexture(64, [[0, 'rgba(255,255,255,0.9)'], [0.5, 'rgba(240,250,255,0.35)'], [1, 'rgba(240,250,255,0)']]), transparent: true, depthWrite: false, color: 0xffffff });
+      pm.positionNode = TSL.instancedBufferAttribute(attr);
+      pm.scaleNode = float(2.5);
+      const pts = new THREE.Sprite(pm);
+      pts.count = mistPts.length;
       pts.frustumCulled = false; pts.renderOrder = 3;
       scene.add(pts);
-      S.mist = pts; S.mistData = mistPts;
+      S.mist = pts; S.mistAttr = attr; S.mistData = mistPts;
       updateMist();
     }
   }
   function updateMist() {
     if (!S.mist) return;
-    const a = S.mist.geometry.attributes.position, t = S.time;
+    const a = S.mistAttr, t = S.time;
     S.mistData.forEach((m, i) => { a.setXYZ(i, m.x + Math.sin(t * 0.9 + m.ph) * 0.4, 0.5 + Math.abs(Math.sin(t * 1.3 + m.ph)) * 1.2, m.z + Math.cos(t * 0.7 + m.ph) * 0.4); });
     a.needsUpdate = true;
   }
@@ -2134,15 +2031,14 @@ void main(){
         return c;
       }, M4().makeTranslation(Math.cos(a) * dist, 0, Math.sin(a) * dist), 0);
     }
-    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, toneMapped: false });
+    const mat = new THREE.MeshBasicNodeMaterial({ vertexColors: true, fog: false });
     S.farMat = mat;
-    mat.onBeforeCompile = (sh) => {
-      sh.uniforms.uCamXZ = CAMXZ;
-      // kept just inside the far plane: the islands stand beyond the fog, and phones use a shorter view distance
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec2 uCamXZ;').replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.xz += uCamXZ;')
-        .replace('#include <project_vertex>', '#include <project_vertex>\ngl_Position.z = min(gl_Position.z, gl_Position.w * 0.99995);');
-    };
-    mat.customProgramCacheKey = () => 'kitFarIslands';
+    // follows the camera on xz and is kept just inside the far plane: the islands stand beyond the fog, and phones use
+    // a shorter view distance (PORT(world): v2 GLSL vertex trick ported 1:1 as a vertexNode)
+    {
+      const clip = cameraProjectionMatrix.mul(cameraViewMatrix).mul(modelWorldMatrix).mul(vec4(positionLocal.add(vec3(CAMXZ.x, 0, CAMXZ.y)), 1));
+      mat.vertexNode = vec4(clip.xy, tmin(clip.z, clip.w.mul(0.99995)), clip.w);
+    }
     const mesh = new THREE.Mesh(gb.build(), mat);
     mesh.frustumCulled = false; mesh.renderOrder = -50;
     scene.add(mesh);
@@ -2179,7 +2075,8 @@ void main(){
     if (!S.hemi) return;
     S.hemi.intensity = S.scene && S.scene.environment ? HEMI_ENV : HEMI_BASE;
   }
-  const HEMI_BASE = 0.6, HEMI_ENV = 0.22;
+  // r155+ physically based light units: three r128 multiplied punctual and hemisphere light by PI in its shaders
+  const HEMI_BASE = 0.6 * LIGHT_PI, HEMI_ENV = 0.22 * LIGHT_PI;
 
   // ======================= public API =======================
   const W = K.world = {
