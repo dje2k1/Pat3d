@@ -66,7 +66,7 @@ const LOOK = {
   bloomStrength: 0.42, bloomRadius: 0.55, bloomThreshold: 0.95,
   sat: 1.1, curve: 0.26, gamut: 0.22, vignette: 0.34, grain: 0.022,
   shadowTint: [0.94, 0.985, 1.08], highTint: [1.05, 1.0, 0.92],
-  ao: 0.85, gi: 0.6, ssr: 1.0, dofScale: 1, dofRange: 0.08, shafts: 0.5, flare: 0.08, glare: 0.35, ca: 0.0022, caSpeed: 0.018, sharp: 0.25, taaSharp: 0.35
+  ao: 0.85, gi: 0.6, ssr: 1.0, dofScale: 1, dofRange: 0.08, shafts: 0.5, flare: 0.08, glare: 0.35, ca: 0.0022, caSpeed: 0.018, sharp: 0.25, fsrSharp: 0.25, taaSharp: 0.35
 };
 
 // ---------- K.gfx: the active preset's content knobs (other parts rebuild what depends on them in onChange) ----------
@@ -196,10 +196,36 @@ function overlays(c, u) {
   return vec4(tclamp(mix(o, vec3(0), bar), 0, 1), 1);
 }
 
-// spatial Super Résolution (the FSR1 recipe): a Catmull-Rom reconstruction of the low-resolution LDR image at the
-// output resolution (5 bilinear taps, the EASU stand-in) followed by RCAS contrast-adaptive sharpening (SharpenNode).
-// FSR1Node itself cannot be imported yet: build.sh's import scanner trips on a doc comment inside it (see STATUS).
+// spatial Super Résolution: AMD FSR 1 (FSR1Node: EASU edge-adaptive upscale + RCAS sharpening) on the anti-aliased,
+// graded low-resolution image. FSR1Node is loaded with a dynamic import (build.sh's static import scanner trips on a
+// doc comment inside that file); until it has arrived (or if it fails) the same recipe runs with a Catmull-Rom
+// reconstruction (5 bilinear taps, the EASU stand-in) + RCAS (SharpenNode), and the graphs built that way are rebuilt
+// with FSR1 as soon as it is there.
+let fsr1Fn = null;
+try {
+  import('three/addons/tsl/display/FSR1Node.js').then(m => {
+    if (!m || typeof m.fsr1 !== 'function') return;
+    fsr1Fn = m.fsr1;
+    // drop the graphs that used the stand-in (the live one is rebuilt at once)
+    for (const k of Object.keys(S.graphs)) {
+      const E = S.graphs[k];
+      if (!E.G.standIn) continue;
+      if (E.G === S.G) { S.pipe = null; S.built = ''; }
+      sleepGraph(E.G); disposeGraph(E.G);
+      try { E.pipe.dispose(); } catch (e) { /* older pipelines */ }
+      delete S.graphs[k];
+    }
+    if (S.active && !S.pipe) buildPipeline();
+  }).catch(e => console.warn('Kit Rush 3D: FSR1 unavailable, Catmull-Rom + RCAS upscale', e));
+} catch (e) { /* no dynamic import: stand-in */ }
 function spatialUp(G, src) {
+  if (fsr1Fn) {
+    const f = track(G, fsr1Fn(src, LOOK.fsrSharp), 'fsr1');
+    G.passes.push('fsr1(easu+rcas)');
+    G.cost.push(['easu', 1, 1.5], ['rcas', 1, 0.6]);
+    return f.getTextureNode();
+  }
+  G.standIn = true;
   const cr = Fn(() => {
     const size = vec2(src.size());
     const sp = uv().mul(size);
@@ -425,13 +451,11 @@ function buildGraph(cfg, sr) {
     G.passes.push('dof(cinematic,x0.5,gather+fill)');
     G.cost.push(['dof', 0, N / 8 + 1]);
   }
-  let src = hdr;
-  let upNote = '';
-  if (!upTAAU && s < 1) upNote = 'spatial';
-  // --- finish ---
+  const src = hdr;
+  const spatial = !upTAAU && s < 1;
+  // --- finish: every HDR effect composited on the TAA result (inside a Fn) ---
   const mbN = cfg.mb, useCA = cfg.ca > 0;
-  const finish = Fn(() => {
-    const u = uv().toVar();
+  const compose = (u, sharpen) => {
     const d = u.sub(0.5).toVar();
     const r2 = radius2(u).toVar();
     const col3 = vec3(0).toVar();
@@ -439,9 +463,9 @@ function buildGraph(cfg, sr) {
       const co = d.mul(U.ca.mul(r2)).toVar();
       col3.assign(vec3(src.sample(u.sub(co)).r, src.sample(u).g, src.sample(u.add(co)).b));
     } else col3.assign(src.sample(u).rgb);
-    {
+    if (sharpen) {
       // post-TAA sharpen (the temporal resolve softens texture detail): unsharp mask on the 4 neighbours, limited to
-      // the local min/max so bright HDR edges never ring
+      // the local min/max so bright HDR edges never ring (the spatial path leaves this to RCAS)
       const tx = vec2(U.texel.x, 0), ty = vec2(0, U.texel.y);
       const a = src.sample(u.sub(tx)).rgb, b = src.sample(u.add(tx)).rgb, c = src.sample(u.sub(ty)).rgb, e = src.sample(u.add(ty)).rgb;
       const lo = tmin(tmin(tmin(a, b), tmin(c, e)), col3), hi = tmax(tmax(tmax(a, b), tmax(c, e)), col3);
@@ -484,22 +508,24 @@ function buildGraph(cfg, sr) {
     }
     if (LOOK.debug === 'hdrRaw') col3.assign(hdrRaw.sample(u).rgb);
     else if (LOOK.debug === 'dof' && dofTex) col3.assign(dofTex.sample(u).rgb);
-    const c = gradeLDR(toneMap(col3), r2);
-    return overlays(c, u);
-  });
-  if (upNote) {
-    // spatial Super Résolution on a temporal preset (K.post.setUpscaler('fsr')): grade at the internal resolution,
-    // then the spatial upscaler (Catmull-Rom + RCAS) to the screen and the overlays
-    const fin = Fn(() => { const u = uv(); const r2 = radius2(u); return vec4(gradeLDR(toneMap(src.sample(u).rgb), r2), 1); })();
+    return gradeLDR(toneMap(col3), r2);
+  };
+  const fx = (useCA ? 'ca+' : '') + (mbN ? 'motionblur+streaks+' : '') + 'aces-grade+vignette';
+  if (spatial) {
+    // spatial Super Résolution on a temporal preset (K.post.setUpscaler('fsr')): the whole HDR composite and grade at
+    // the internal resolution, FSR1 (EASU + RCAS) to the screen, then grain, letterbox and flash at full resolution
+    const fin = Fn(() => vec4(compose(uv().toVar(), false), 1))();
     const ldr = track(G, rtt(fin, null, null, { resolutionScale: s, depthBuffer: false }), 'gradeLow');
-    G.passes.push('aces-grade');
-    G.cost.push(['grade', s, 1]);
+    G.passes.push('finish(' + fx + ',x' + s + ')');
+    G.cost.push(['finish', s, 2 + (mbN ? 0.5 : 0)]);
     const ft = spatialUp(G, ldr);
     G.out = Fn(() => { const u = uv(); return overlays(ft.sample(u).rgb, u); })();
+    G.passes.push('overlays(grain+letterbox+flash)');
+    G.cost.push(['overlays', 1, 0.5]);
     return G;
   }
-  G.out = finish();
-  G.passes.push('finish(' + (useCA ? 'ca+' : '') + (mbN ? 'motionblur+streaks+' : '') + 'aces-grade+vignette+grain+letterbox+flash)');
+  G.out = Fn(() => { const u = uv().toVar(); return overlays(compose(u, true), u); })();
+  G.passes.push('finish(' + fx + '+grain+letterbox+flash)');
   G.cost.push(['finish', 1, 2 + (mbN ? 0.5 : 0)]);
   return G;
 }
@@ -910,6 +936,7 @@ post.stats = function () {
     output: out,
     aa: c.aa === 'fxaa' ? 'fxaa' : G && G.named.taau ? 'taau' : 'traa', ao: G ? (G.named.ssgi ? 'ssgi' : G.named.gtao ? 'gtao' : '') : '',
     ssrOn: !!(G && G.named.ssr), builds: S.builds,
+    upscale: !G || S.scale >= 1 ? 'none' : G.named.taau ? 'taau' : G.named.fsr1 ? 'fsr1' : 'catmull-rom+rcas',
     passes: S.passes.slice(), cost: +mp.toFixed(2),
     gfx: { preset: gfx.preset, furShells: gfx.furShells, grass: gfx.grass, texRes: gfx.texRes, shadows: gfx.shadows, ssr: gfx.ssr },
     calls: st ? st.calls : 0, tris: st ? st.tris : 0, sceneCalls: st ? st.sceneCalls : 0, sceneTris: st ? st.sceneTris : 0,

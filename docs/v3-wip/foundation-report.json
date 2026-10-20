@@ -1,0 +1,69 @@
+{
+ "summary": "Foundation work for Kit Rush 3D v3 is complete; nothing was committed (the lead commits). The game now runs on three.js 0.186.1 WebGPURenderer, on both the WebGL 2 backend (forced with ?gl, and used automatically when the browser has no WebGPU) and WebGPU. Both acts play start to finish. Every v2 gameplay check passes, and the six builders can now work in parallel. Visually v3 is a near copy of v2 (I compared the screenshots side by side): it is not yet \"better than v2\". That part is the builders' job.\n\nWhat was done:\n1. **legacy/** holds the frozen v2 build (legacy/index.html and legacy/kit-rush-3d.html, three r128 from cdnjs/jsDelivr). A test checks it loads and draws its title screen. The stale root kit-rush-3d.html was deleted.\n2. **lib/three/**: three@0.186.1 from npm. The three main builds are minified with esbuild (3.7 MB down to 1.1 MB, licence header kept). A curated set of addons is copied unchanged with its folder layout. lib/three/VENDOR.txt records one local patch: without it, WebGPU rendering broke in Playwright's Chromium (it rejects a texture-view field three now sets).\n3. **build.sh** writes index.html (full French document, import map, one module script) and test.html. It refuses: a part that does not parse, any leftover GLSL or r128 API in src/, an import not vendored under lib/, or an external URL other than Google Fonts. A part may import its own addons at its top. src/00-shell.html now has head and body markup split by a marker line, plus a French error overlay that links to legacy/.\n4. **Renderer start-up** (10-core.js, 90-main.js): K.view.init() is async; K.view.backend says 'webgpu' or 'webgl2'; a lost GPU device shows the French overlay. Boot shows a loading screen with a progress bar, then precompiles shaders. The rAF loop is unchanged. The pause menu gained a \"Version classique\" row and a \"Rendu : WebGPU / WebGL 2\" label. K.view.stats counts draw calls per frame (three r186 no longer resets them for us). Shared TSL helpers live in K.tsl, plus K.util.spinY.\n5. **Migration of every part**: all GLSL hacks became TSL node materials, and most v2 shaders were ported almost line for line (ground and checker cliffs, sky, sea, city surfaces, city sky and water, lamp glows, steam, fog banks, flags, gulls, Kit's material, shield, entity materials, all particle effects). Old point sprites became instanced sprites. Each placeholder carries a `// PORT(<role>)` comment. Colours use r186 colour management; light intensities were multiplied by π for the new light units. K.post is a RenderPipeline with the scene pass, bloom (off on Économie) and v2's colour grade rewritten in TSL (ACES, tints, saturation, vignette, S-curve), plus flash and letterbox. Super Résolution is plain resolution scaling for now. The whole K.post API stays callable, ?nopost turns the pipeline off, and K.gfx carries each preset's knobs with an onChange hook.\n6. **26-vehicles.js** (K.vehicles: VT, vehicleTop, build, material, paint, parkedPaint, addTo, update) was moved out of 25-city.js. VT and vehicleTop are unchanged and traffic still uses the same instancing, so the vehicle collision checks still pass.\n7. **Textures**: K.tex (12-tex.js) merges one manifest per role (assets/tex/<role>/manifest.json, all seven exist). It hands out a 1×1 neutral texture at once and swaps in the real one when loaded, with full and half sets following K.gfx. tools/tex/texlib.py provides tiling noises, height-to-normal, ORM packing, WebP output and a per-role manifest writer. A small generated cobble sample proves the chain end to end, and tools/tex/make.sh regenerates everything.\n8. **Tests**: test/serve.js serves the repo on a free port; test/e2e.js was adapted (async boot, ?gl by default, a --webgpu suite, new v3 checks). Builder-dependent targets are reported as PEND and never fail a run.\n9. **docs/SPEC3.md** now ends with a \"Foundation notes\" section: the APIs, the placeholder list per file and role, how to run the game and tests (with durations), and 16 r186/TSL pitfalls I hit.\n\nRun it with `./build.sh && node test/serve.js 8080`, then http://127.0.0.1:8080/ (add ?gl or ?nopost). Tests: `node test/e2e.js` and `node test/e2e.js --webgpu`.",
+ "tests": [
+  {
+   "name": "Full WebGL 2 suite (node test/e2e.js): desktop, v3, act2, post, fullrun, regress, present, regress2, phone",
+   "pass": true,
+   "notes": "80/80 checks pass, 1 builder target pending, 649 s, on the final build. This includes the v2 gameplay checks. Visual checks were re-targeted to v3: RenderPipeline with bloom and grade; presets plus K.gfx knobs; ?nopost fallback; the error overlay when three cannot load; draw-call budget. Log: dev/foundation/e2e-all.log"
+  },
+  {
+   "name": "WebGPU suite (node test/e2e.js --webgpu): boot, Act 1, Act 2, presets + Super Résolution, K.tex upload, no errors",
+   "pass": true,
+   "notes": "6/6 pass in 44 s with the shader cache warm. The first cold boot on SwiftShader Vulkan took about 3 min. Act 2 shows the city, skateboard and traffic correctly."
+  },
+  {
+   "name": "v3 checks: backend ?gl, automatic WebGL 2 fallback, pause rows, K.tex sample (sRGB/linear, 1x1 fallback, half/full swap), assets budget, no GLSL, legacy page",
+   "pass": true,
+   "notes": "6/6 pass"
+  },
+  {
+   "name": "Performance budget Moyen <= 220 draw calls (reported as pending for world+city+entities)",
+   "pass": false,
+   "notes": "Act 1 worst view has 243 draw calls on every preset, because the placeholder scene is the same everywhere; Act 2 has 107. Ultra, Élevé and Économie are within 350 calls and 2.5 M triangles. Reported as PEND, so it does not fail the run."
+  },
+  {
+   "name": "index.html (no test hooks) boots on WebGL 2 to the title",
+   "pass": true,
+   "notes": "no __K, error overlay hidden, HUD drawn, no console errors (dev/foundation/indexcheck.js)"
+  },
+  {
+   "name": "Lib smoke: vendored three on both backends",
+   "pass": true,
+   "notes": "dev/foundation/smoke.js, same image on both backends"
+  }
+ ],
+ "remaining_issues": [
+  "Visuals are a faithful copy of v2, not yet better than v2; the art upgrade is the builders' job. Placeholders are marked // PORT(role) and listed in SPEC3 Foundation notes. Known small differences from v2: sunflower heads no longer spin; city surfaces lost their small per-kind bumps; particle effects are not fogged; some shaded cliffs look a little greener and darker.",
+  "post: Super Résolution is plain bilinear resolution scaling, so the phone (Moyen) image looks soft/pixelated; TAAU or FSR1 + sharpen is still to do. K.post.speed() and cinematic() only track values: motion blur, depth of field, chromatic aberration, godrays, lens flare, film grain and AO are not done. The env map is not dimmed for bright skies as v2 did (only an intensity factor). The PresetS' K.gfx.shadows setting is not used yet: one PCF shadow map on every preset, no CSM.",
+  "Moyen draw-call budget (220) is pending: about 243 calls in Act 1. world, city and entities need lighter Moyen content (decor density, shadow casters, LOD) driven by K.gfx.onChange.",
+  "Every builder must read the TSL pitfalls in SPEC3, especially #4 and #7. #7: inside Fn + If, any value used by more than one branch must be .toVar()'d before the If, or it is read uninitialised (this hid the VFX rings until fixed). #4: on InstancedMesh, positionNode receives positions already instance-transformed, so per-instance local animation needs instanceIndex phases, a CPU spin (K.util.spinY) or custom instanced attributes. Also: THREE.Points are 1 px wide on WebGPU, light units changed (×π), and colour management is on (new THREE.Color('#hex') is already linear).",
+  "Addon names are global to the single module: prefix your import aliases with your role. Addons not yet vendored must be copied from three@0.186.1 examples/jsm into lib/three/addons/ with their own imports; build.sh refuses unresolved imports.",
+  "lib/three/three.webgpu.js has one local patch (texture-view swizzle; see VENDOR.txt). Re-apply it if three is ever upgraded.",
+  "Boot waits for compileAsync of every shader. It is fast on real GPUs; on SwiftShader the first cold boot takes 40 s (WebGL 2) to about 3 min (WebGPU). The e2e boot timeouts are 5 / 15 min.",
+  "Entering Act 2 loads textures and compiles shaders in the background behind the loading card, which waits at most 4 s. Tests' synchronous tick loops always hit that 4 s cap, which is fine.",
+  "Integrator: README.md still describes v2 (r128, kit-rush-3d.html). vendor/ (r128) is kept only so tests can serve legacy/. .gitignore now covers dev/ and test/e2e-report-webgpu.json. Requests are also listed in dev/foundation/STATUS.md.",
+  "Headless warnings to expect, harmless and not errors: WebGL backend 'GL Driver Message … Running out of reserved outsideRenderPass queueSerial', WebGPU 'Draw with an index count of 0'."
+ ],
+ "fixed": [
+  "Renderer moved from r128 WebGLRenderer to r186 WebGPURenderer (async init, ?gl, automatic WebGL 2 fallback, device-lost handling, French error overlay linking legacy/)",
+  "All GLSL (shader injection, ShaderMaterial, EffectComposer) replaced by TSL node materials",
+  "Removed or renamed APIs fixed: encoding to colorSpace, updateRange to addUpdateRange, compile to compileAsync, PCFSoftShadowMap, Points sizes, info resets",
+  "Vehicles extracted to 26-vehicles.js with VT and vehicleTop unchanged",
+  "TSL branch-variable bug that hid the VFX shockwave rings",
+  "Draw-call double counting from shadow passes rendered inside the scene pass"
+ ],
+ "screenshots": [
+  "/home/user/pat3d/shots/01-title.png",
+  "/home/user/pat3d/shots/03-start.png",
+  "/home/user/pat3d/shots/09-boss-fight.png",
+  "/home/user/pat3d/shots/24-a2-traffic.png",
+  "/home/user/pat3d/shots/12-phone-play.png",
+  "/home/user/pat3d/shots/13-no-threejs.png",
+  "/home/user/pat3d/shots/36-pause-renderer.png",
+  "/home/user/pat3d/shots/37-legacy.png",
+  "/home/user/pat3d/shots/gpu-01-title.png",
+  "/home/user/pat3d/shots/gpu-03-act2.png",
+  "/home/user/pat3d/dev/foundation/shots/grade.png",
+  "/home/user/pat3d/dev/foundation/shots/ring.png"
+ ]
+}

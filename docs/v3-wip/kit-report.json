@@ -1,0 +1,85 @@
+{
+ "role": "kit",
+ "summary": "Kit's v3 work is done, on top of my earlier session that the lead committed as 4f4f98d / 241a844. The build passes, the Act 1 and Act 2 e2e suites pass on WebGL 2, and Kit renders on WebGPU at Élevé. The WebGPU e2e suite gets 4 of 6: the 2 failures are a bug in the post pipeline's Ultra preset, not in Kit. Nothing was committed.\n\nAlready in place from the earlier session (src/30-player.js):\n- A smooth sculpted body: one skinned mesh on the v2 rig, so pivots, poses and sizes are unchanged.\n- Shell fur whose layer count follows K.gfx.furShells (16 / 10 / 6 / 0), with motion and wind lag.\n- Generated fur and knit textures (tools/tex/kit_tex.py, written to assets/tex/kit/).\n- Fluffy tail and cheek tufts, white chest and tail tip.\n- Eyes with iris, cornea highlight, blinking lids and gaze; a glossy nose; a knitted scarf.\n- Translucency (subsurface-style) lighting and a rim light.\n- A detailed skateboard: deck graphics, grip tape, maple plies, trucks, rolling wheels.\n- No PORT(kit) markers are left.\n\nChanged this session (src/30-player.js only):\n- **Wrap lighting.** Kit now follows the scene's sun and lets light reach a little past the lit/shadow boundary on the fur. The fur layers now use the same lighting as the body. This fixes a hard shading line across the head and a dark jagged fringe on the shadow side, which were very visible in the city at sunset and in the flight close-up (before/after: dev/kit/shots/cmp_fl.png).\n- **Shield.** Now an iridescent bubble that is clear in the middle, so Kit stays readable inside it.\n- **Speed-shoes afterimages.** Now glowing cyan silhouettes, brighter at the edges.\n- **Économie preset (no fur layers).** The fur bump is softer, so the coat reads as velvet instead of speckled noise.\n\nVerified, by reading the screenshots:\n- Turntable and face close-ups, run, jump/ball, spin dash, hurt, victory wink, star + shoes, Act 2 skate, close-up, kickflip sequence and flight.\n- Presets: Ultra, Élevé and Économie on desktop, Moyen on phone, Élevé on WebGPU.\n- Fur flicker under the temporal anti-aliasing (Ultra, still camera): the fur layers add no visible flicker (average frame-to-frame variation about 0.7 on a 0–255 scale, with or without fur).\n- Kit's own cost (draw calls / triangles; extra calls in the game view are shadows):\n\n| Preset | Fur layers | Draw calls | Triangles |\n|---|---|---|---|\n| Ultra | 16 | 7 (12 in game view) | 310k |\n| Élevé | 10 | 7 (12 in game view) | about 230k |\n| Moyen (phone) | 6 | 8 to 12 | 106k (125k with the board) |\n| Économie | 0 | 7 to 11 | 99k |\n\nTwo harness bugs were fixed in dev/kit/shot.js: star/shoes were set before a teleport that reset them, and Act 2 close-ups were taken before the board textures had arrived. I also added a private build script, dev/kit/mkbuild.sh, so I can compare against a baseline without the post role's unfinished edits. dev/kit/STATUS.md has the resume notes, the numbers, notes for the other roles and requests for you.",
+ "files": [
+  "/home/user/pat3d/src/30-player.js",
+  "/home/user/pat3d/dev/kit/STATUS.md",
+  "/home/user/pat3d/dev/kit/shot.js",
+  "/home/user/pat3d/dev/kit/mkbuild.sh",
+  "/home/user/pat3d/dev/kit/e2e-desktop.log",
+  "/home/user/pat3d/dev/kit/e2e-act2phone.log",
+  "/home/user/pat3d/dev/kit/e2e-webgpu.log",
+  "/home/user/pat3d/tools/tex/kit_tex.py",
+  "/home/user/pat3d/assets/tex/kit/manifest.json"
+ ],
+ "tests": [
+  {
+   "name": "./build.sh",
+   "pass": true,
+   "notes": "index.html 917 KB, 16 vendored module files, no GLSL; 0 PORT markers left in 30-player.js / 35-board.js"
+  },
+  {
+   "name": "e2e WebGL 2 --only=desktop,valley,boss (Act 1 movement, loops, springs, boss, game over)",
+   "pass": true,
+   "notes": "30/30 in 139 s (dev/kit/e2e-desktop.log)"
+  },
+  {
+   "name": "e2e WebGL 2 --only=act2,phone (Act 2 board, ollie, tricks, flight; phone touch)",
+   "pass": true,
+   "notes": "16/16 in 174 s (dev/kit/e2e-act2phone.log)"
+  },
+  {
+   "name": "e2e --webgpu",
+   "pass": false,
+   "notes": "4/6. Boot, Act 1, Act 2 and K.tex pass. The 2 failures are the post pipeline's Ultra preset on WebGPU: 'Total color attachment bytes per sample (40) exceeds maximum (32)', so every material fails and the frame is black. That is the post role's file (dev/kit/e2e-webgpu.log)."
+  },
+  {
+   "name": "Kit close-ups on WebGPU (Élevé): turntable, face, skate, flight",
+   "pass": true,
+   "notes": "No console errors; same look as WebGL 2 (dev/kit/shots/cmp_gpu2.png)"
+  },
+  {
+   "name": "Fur flicker under TRAA (Ultra, still camera, 12 frames)",
+   "pass": true,
+   "notes": "Average frame-to-frame change on Kit, 0–255 luma: close-up 0.72 with fur / 0.65 without; play distance 0.72 / 0.60"
+  },
+  {
+   "name": "Presets and phone screenshots (Ultra, Élevé, Moyen phone, Économie)",
+   "pass": true,
+   "notes": "Fur layers 16/10/6/0 applied; shots c1-*, e1-*, ph1-*, ph2-*, lo1-*, u1-* in dev/kit/shots"
+  },
+  {
+   "name": "Kit budget per preset",
+   "pass": true,
+   "notes": "Kit alone: 7 to 12 draw calls; 310k (Ultra) / about 230k (Élevé) / 106k (Moyen phone) / 99k (Économie) triangles. Act 1 frame totals: Ultra 213 calls / 864k triangles; phone Moyen 204 / 481k."
+  }
+ ],
+ "known_issues": [
+  "Ultra preset on WebGPU renders black: the post pipeline's 5 colour attachments exceed WebGPU's 32-byte limit (post role); Kit could not be shot at Ultra on WebGPU.",
+  "Kit's mesh resolution (LOOK.res: 1.15 Ultra / 1.35 Élevé / 1.6 Moyen and Économie) is chosen from the preset at load only; changing preset later updates the fur layer count but not the body mesh density.",
+  "Spin-dash dust draws a hard-edged rectangle at ground level behind the ball (VFX, post role; dev/kit/shots/e1-spin.png).",
+  "A large see-through city fog billboard over the bay can cut a hard vertical edge through Kit in the flight cinematic when the camera is close (city role; also visible with ?nopost).",
+  "The e2e 'game over path' check fails when --only=desktop runs without boss (that test assumes the boss block returned to the title first); --only=desktop,valley,boss passes."
+ ],
+ "integration_todo": [
+  "Commit src/30-player.js (the working-tree diff is this session's Kit changes only).",
+  "K.tex (12-tex.js): swapping a texture in place after it was uploaded as the 1x1 fallback triggers GL_INVALID_VALUE glTexSubImage2D on WebGL 2. Suggested fix: call t.dispose() before needsUpdate when the image size changes. Kit works around it by keeping its own placeholder until the texture's preload resolves.",
+  "Boot preloads only the 'act1' textures; consider also preloading 'common'.",
+  "Post role: the WebGPU Ultra pipeline exceeds 32 bytes per sample (5 colour attachments); pack the extra outputs or drop one on WebGPU.",
+  "Tests: the game-over check depends on the boss block when using --only; consider making it go to the title explicitly."
+ ],
+ "screenshots": [
+  "/home/user/pat3d/dev/kit/shots/cmp_fl.png",
+  "/home/user/pat3d/dev/kit/shots/cmp_np.png",
+  "/home/user/pat3d/dev/kit/shots/cmp_e1.png",
+  "/home/user/pat3d/dev/kit/shots/cmp_gpu2.png",
+  "/home/user/pat3d/dev/kit/shots/cmp_ph2.png",
+  "/home/user/pat3d/dev/kit/shots/w3-turn30.png",
+  "/home/user/pat3d/dev/kit/shots/w3-face1.png",
+  "/home/user/pat3d/dev/kit/shots/w3-skateclose.png",
+  "/home/user/pat3d/dev/kit/shots/ph1-turn30.png",
+  "/home/user/pat3d/dev/kit/shots/c1-shield.png",
+  "/home/user/pat3d/dev/kit/shots/lo1-starshoes.png",
+  "/home/user/pat3d/dev/kit/shots/cmp_t1.png"
+ ]
+}
