@@ -1186,7 +1186,7 @@ const post = K.post = {
 };
 
 const S = {
-  inited: false, active: false, why: '', cfg: PRESETS.high, pipe: null, G: null, built: '', builds: 0,
+  inited: false, active: false, why: '', cfg: PRESETS.high, pipe: null, G: null, graphs: {}, built: '', builds: 0,
   scale: 1, frameId: -1, time: 0, clk: -1, dt: 1 / 60, rawDt: 1 / 60, fresh: 0,
   spd: 0, spdTarget: 0, spdAt: -1,
   flashT: 0, flashDur: 0, flashCol: new THREE.Color(1, 1, 1),
@@ -1359,7 +1359,14 @@ function buildGraph(cfg, sr) {
     n.sliceCount.value = 2; n.stepCount.value = 8; n.radius.value = 5; n.giIntensity.value = 2; n.aoIntensity.value = 1;
     n.thickness.value = 1; n.useTemporalFiltering = true;
     const aoT = n.getAONode(), giT = n.getGINode(), alb = sp.getTextureNode('diffuse');
-    lit = select(sky, lit, lit.mul(mix(float(1), aoT.r, U.ao)).add(alb.rgb.mul(giT.rgb).mul(U.gi)));
+    if (LOOK.debug === 'ssgi-ao') lit = lit.mul(mix(float(1), aoT.r, U.ao));
+    else if (LOOK.debug === 'ssgi-gi') lit = lit.add(alb.rgb.mul(giT.rgb).mul(U.gi));
+    else if (LOOK.debug === 'alb') lit = alb.rgb;
+    else {
+      // (a vec3 select() on this condition compiled to black on the WebGL 2 backend: float factors only)
+      const ground = select(sky, float(0), float(1));
+      lit = lit.mul(mix(float(1), aoT.r, U.ao.mul(ground))).add(alb.rgb.mul(giT.rgb).mul(U.gi.mul(ground)));
+    }
     G.passes.push('ssgi(ao+gi)');
     G.cost.push(['ssgi', 1, 6]);
   }
@@ -1591,31 +1598,52 @@ function disposeGraph(G) {
   for (const n of G.nodes) { try { if (n && typeof n.dispose === 'function') n.dispose(); } catch (e) { console.warn('Kit Rush 3D: post dispose', e); } }
   G.nodes.length = 0;
 }
+// One RenderPipeline per graph (preset x Super Résolution x upscaler), built on first use and kept: switching back
+// to a graph reuses its nodes, materials and the scene pass's MRT render contexts, so the renderer's caches (render
+// objects, programs) stop growing once every combination has been seen. A graph that is switched away from frees
+// its render targets (GPU memory); they are re-created on its next frame (sized 1x1 first so the temporal nodes
+// re-seed their history instead of fading in from black).
+function graphKey() {
+  const c = S.cfg, s = post.superRes ? c.sr : 1;
+  const up = c.aa !== 'traa' ? 'fxaa' : s >= 1 ? 'traa' : (post.upscaler === 'taau' || (post.upscaler === 'auto' && c.up === 'taau')) ? 'taau' : 'traa+spatial';
+  return post.quality + ':' + s + ':' + up;
+}
+function sleepGraph(G) {
+  if (!G) return;
+  for (const n of G.nodes) {
+    for (const k of Object.keys(n)) {
+      const v = n[k];
+      if (v && v.isRenderTarget) { try { v.setSize(1, 1); v.dispose(); } catch (e) { /* already gone */ } }
+    }
+  }
+}
 function buildPipeline() {
   const V = K.view, r = V.renderer;
-  const c = S.cfg;
-  const key = post.quality + (post.superRes ? ':sr' : '') + ':' + post.upscaler;
+  const key = graphKey();
   if (S.pipe && S.built === key) return;
-  if (!S.pipe) S.pipe = new THREE.RenderPipeline(r);
   const old = S.G;
-  let G = null;
-  try { G = buildGraph(c, post.superRes); }
-  catch (e) {
-    console.warn('Kit Rush 3D: post graph failed, simple pipeline', e);
-    if (G) disposeGraph(G);
-    G = buildGraph(PRESETS.low, false);
+  let E = S.graphs[key];
+  if (!E) {
+    let G = null;
+    try { G = buildGraph(S.cfg, post.superRes); }
+    catch (e) {
+      console.warn('Kit Rush 3D: post graph failed, simple pipeline', e);
+      G = buildGraph(PRESETS.low, false);
+    }
+    const pipe = new THREE.RenderPipeline(r);
+    pipe.outputNode = G.out;
+    pipe.outputColorTransform = false; // the finish does tone mapping and sRGB itself
+    E = S.graphs[key] = { G, pipe };
+    S.builds++;
   }
-  S.G = G;
-  S.scale = G.s;
-  S.pipe.outputNode = G.out;
-  S.pipe.outputColorTransform = false; // the finish does tone mapping and sRGB itself
-  S.pipe.needsUpdate = true;
-  S.passes = G.passes;
-  S.cost = G.cost;
+  S.G = E.G;
+  S.pipe = E.pipe;
+  S.scale = E.G.s;
+  S.passes = E.G.passes;
+  S.cost = E.G.cost;
   S.built = key;
-  S.builds++;
   S.fresh = 2;
-  disposeGraph(old);
+  if (old && old !== E.G) sleepGraph(old);
 }
 function applyConfig() {
   S.cfg = PRESETS[post.quality] || PRESETS.high;
@@ -10045,16 +10073,27 @@ function sparkleTex() {
   });
 }
 
-// shield bubble: Fresnel rim (HDR, so it blooms) + travelling bands + swirl
+// shield bubble: Fresnel rim (HDR, so it blooms), thin-film iridescence drifting with the view angle, travelling bands
+// and a swirl; nearly clear in the middle so Kit stays readable inside it
 function shieldMaterial(U) {
   const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
   const p = positionGeometry, t = U.uT;
   const f = float(1).sub(tabs(tdot(tnormalize(normalView), tnormalize(positionView.negate()))));
-  const rim = tpow(f, 2.4);
+  const rim = tpow(f, 2.8);
   const band = tpow(tsin(p.y.mul(10).sub(t.mul(4)).add(tsin(p.x.mul(6).add(t)).mul(1.5))).mul(0.5).add(0.5), 10);
   const swirl = tpow(tsin(tatan(p.z, p.x).mul(3).add(p.y.mul(4)).add(t.mul(3))).mul(0.5).add(0.5), 16);
-  m.colorNode = tmix(vec3(0.42, 0.78, 1.0), vec3(0.92, 0.99, 1.0), rim).mul(band.mul(0.6).add(swirl.mul(0.5)).add(1)).mul(rim.mul(0.8).add(1));
-  m.opacityNode = tclamp(rim.mul(0.75).add(0.07).add(band.mul(0.18)).add(swirl.mul(0.22)).mul(U.uA), 0, 0.95);
+  const ph = f.mul(6).add(t.mul(0.7)).add(p.y.mul(2.2));
+  const irid = vec3(tsin(ph), tsin(ph.add(2.1)), tsin(ph.add(4.2))).mul(0.5).add(0.5);
+  const base = tmix(vec3(0.42, 0.78, 1.0), vec3(0.92, 0.99, 1.0), rim);
+  m.colorNode = tmix(base, irid.mul(0.9).add(0.3), f.mul(0.45)).mul(band.mul(0.6).add(swirl.mul(0.5)).add(1)).mul(rim.mul(1.4).add(1));
+  m.opacityNode = tclamp(rim.mul(0.8).add(0.025).add(band.mul(0.12)).add(swirl.mul(0.16)).add(f.mul(0.06)).mul(U.uA), 0, 0.95);
+  return m;
+}
+// speed-shoes afterimage: additive cyan silhouette, brighter on its rim (HDR, blooms), fading per ghost
+function ghostMaterial(uA) {
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const f = float(1).sub(tabs(tdot(tnormalize(normalView), tnormalize(positionView.negate()))));
+  m.colorNode = vec3(0.32, 0.86, 1.0).mul(tpow(f, 2).mul(2.2).add(0.35)).mul(uA);
   return m;
 }
 // scarf ribbons: knitted fabric (bump + cavity tone), sheen, two light stripes near the ends
@@ -10112,6 +10151,10 @@ function create(scene) {
 
   // sculpted body, fur shells, face details
   const surf = kitSurfaces();
+  // mesh density from the preset at load (Ultra finer, Moyen / Économie coarser: phones build faster, fewer triangles)
+  const pre = K.gfx && K.gfx.preset;
+  LOOK.res = pre === 'ultra' ? 1.15 : pre === 'medium' || pre === 'low' ? 1.6 : 1.35;
+  LOOK.shellRes = pre === 'medium' || pre === 'low' ? 2.0 : 1.7;
   const tq0 = performance.now();
   const parts = surf.map(s => sculpt(s, s.h * LOOK.res));
   const tq1 = performance.now();
@@ -10152,7 +10195,7 @@ function create(scene) {
   R.mat = R.body.material;
   furShells(K.gfx && K.gfx.furShells);
   if (K.gfx && typeof K.gfx.onChange === 'function') K.gfx.onChange(g => furShells(g.furShells));
-  R.stats = { bodyTris: R.bodyGeo.index.count / 3, bodyVerts: R.bodyGeo.attributes.position.count, shellTris: R.shellGeo.userData.perCopy / 3, detailTris: R.details.geometry.index.count / 3,
+  R.stats = { res: LOOK.res, bodyTris: R.bodyGeo.index.count / 3, bodyVerts: R.bodyGeo.attributes.position.count, shellTris: R.shellGeo.userData.perCopy / 3, detailTris: R.details.geometry.index.count / 3,
     sculptMs: Math.round(tq1 - tq0), sct: Object.assign({}, SCT), shellSculptMs: Math.round(tq2 - tq1), parts: surf.map((s, i) => s.name + ':' + parts[i].n) };
 
   // peel-out leg wheel
@@ -10297,7 +10340,9 @@ function create(scene) {
     FX.ghostGeo = [bakePose(R.body), (() => { const g = new THREE.SphereGeometry(0.5, 20, 14); g.translate(0, 0.5, 0); return g; })()];
     FX.ghosts = [];
     for (let i = 0; i < 4; i++) {
-      const gm = new THREE.Mesh(FX.ghostGeo[0], new THREE.MeshBasicMaterial({ color: lin('#6fe9ff'), transparent: true, opacity: 0.3, depthWrite: false }));
+      const uA = uniform(0.3);
+      const gm = new THREE.Mesh(FX.ghostGeo[0], ghostMaterial(uA));
+      gm.userData.uA = uA;
       gm.name = 'kit-ghost';
       gm.userData.noEnv = true;
       gm.visible = false; gm.renderOrder = 1;
@@ -10341,9 +10386,10 @@ const FL = { v: new V3(), x: new V3(), q: new THREE.Quaternion(), t: new V3() };
 function furLag(dt) {
   if (!R.fur || !R.fur.visible || !(dt > 0)) return;
   const v = P.vel, w = S.t;
-  FL.t.set(-v.x * 0.0011, -v.y * 0.0011 - 0.006, -v.z * 0.0011);
-  const l = FL.t.length(); if (l > 0.03) FL.t.multiplyScalar(0.03 / l);
-  FL.t.x += Math.sin(w * 2.3) * 0.0016; FL.t.z += Math.cos(w * 1.7) * 0.0016;
+  FL.t.set(-v.x * 0.0007, -v.y * 0.0007, -v.z * 0.0007);
+  const l = FL.t.length(); if (l > 0.012) FL.t.multiplyScalar(0.012 / l);
+  FL.t.y -= 0.0035;
+  FL.t.x += Math.sin(w * 2.3) * 0.0012; FL.t.z += Math.cos(w * 1.7) * 0.0012;
   // critically damped-ish spring with a little overshoot
   FL.v.addScaledVector(FL.t.sub(FL.x), 260 * dt).multiplyScalar(Math.exp(-22 * dt));
   FL.x.addScaledVector(FL.v, dt);
@@ -12157,7 +12203,7 @@ function updatePowerFx(dt, ballOn) {
     gm.visible = true;
     gm.geometry = FX.ghostGeo[s.ball ? 1 : 0];
     gm.position.copy(s.pos); gm.quaternion.copy(s.q);
-    gm.material.opacity = 0.34 * (1 - i / FX.ghosts.length) * (P.shoes < 2 ? 0.5 : 1);
+    gm.userData.uA.value = 0.42 * (1 - i / FX.ghosts.length) * (P.shoes < 2 ? 0.5 : 1);
   }
 }
 

@@ -1064,16 +1064,27 @@ function sparkleTex() {
   });
 }
 
-// shield bubble: Fresnel rim (HDR, so it blooms) + travelling bands + swirl
+// shield bubble: Fresnel rim (HDR, so it blooms), thin-film iridescence drifting with the view angle, travelling bands
+// and a swirl; nearly clear in the middle so Kit stays readable inside it
 function shieldMaterial(U) {
   const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
   const p = positionGeometry, t = U.uT;
   const f = float(1).sub(tabs(tdot(tnormalize(normalView), tnormalize(positionView.negate()))));
-  const rim = tpow(f, 2.4);
+  const rim = tpow(f, 2.8);
   const band = tpow(tsin(p.y.mul(10).sub(t.mul(4)).add(tsin(p.x.mul(6).add(t)).mul(1.5))).mul(0.5).add(0.5), 10);
   const swirl = tpow(tsin(tatan(p.z, p.x).mul(3).add(p.y.mul(4)).add(t.mul(3))).mul(0.5).add(0.5), 16);
-  m.colorNode = tmix(vec3(0.42, 0.78, 1.0), vec3(0.92, 0.99, 1.0), rim).mul(band.mul(0.6).add(swirl.mul(0.5)).add(1)).mul(rim.mul(0.8).add(1));
-  m.opacityNode = tclamp(rim.mul(0.75).add(0.07).add(band.mul(0.18)).add(swirl.mul(0.22)).mul(U.uA), 0, 0.95);
+  const ph = f.mul(6).add(t.mul(0.7)).add(p.y.mul(2.2));
+  const irid = vec3(tsin(ph), tsin(ph.add(2.1)), tsin(ph.add(4.2))).mul(0.5).add(0.5);
+  const base = tmix(vec3(0.42, 0.78, 1.0), vec3(0.92, 0.99, 1.0), rim);
+  m.colorNode = tmix(base, irid.mul(0.9).add(0.3), f.mul(0.45)).mul(band.mul(0.6).add(swirl.mul(0.5)).add(1)).mul(rim.mul(1.4).add(1));
+  m.opacityNode = tclamp(rim.mul(0.8).add(0.025).add(band.mul(0.12)).add(swirl.mul(0.16)).add(f.mul(0.06)).mul(U.uA), 0, 0.95);
+  return m;
+}
+// speed-shoes afterimage: additive cyan silhouette, brighter on its rim (HDR, blooms), fading per ghost
+function ghostMaterial(uA) {
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const f = float(1).sub(tabs(tdot(tnormalize(normalView), tnormalize(positionView.negate()))));
+  m.colorNode = vec3(0.32, 0.86, 1.0).mul(tpow(f, 2).mul(2.2).add(0.35)).mul(uA);
   return m;
 }
 // scarf ribbons: knitted fabric (bump + cavity tone), sheen, two light stripes near the ends
@@ -1320,7 +1331,9 @@ function create(scene) {
     FX.ghostGeo = [bakePose(R.body), (() => { const g = new THREE.SphereGeometry(0.5, 20, 14); g.translate(0, 0.5, 0); return g; })()];
     FX.ghosts = [];
     for (let i = 0; i < 4; i++) {
-      const gm = new THREE.Mesh(FX.ghostGeo[0], new THREE.MeshBasicMaterial({ color: lin('#6fe9ff'), transparent: true, opacity: 0.3, depthWrite: false }));
+      const uA = uniform(0.3);
+      const gm = new THREE.Mesh(FX.ghostGeo[0], ghostMaterial(uA));
+      gm.userData.uA = uA;
       gm.name = 'kit-ghost';
       gm.userData.noEnv = true;
       gm.visible = false; gm.renderOrder = 1;
@@ -3181,7 +3194,7 @@ function updatePowerFx(dt, ballOn) {
     gm.visible = true;
     gm.geometry = FX.ghostGeo[s.ball ? 1 : 0];
     gm.position.copy(s.pos); gm.quaternion.copy(s.q);
-    gm.material.opacity = 0.34 * (1 - i / FX.ghosts.length) * (P.shoes < 2 ? 0.5 : 1);
+    gm.userData.uA.value = 0.42 * (1 - i / FX.ghosts.length) * (P.shoes < 2 ? 0.5 : 1);
   }
 }
 
