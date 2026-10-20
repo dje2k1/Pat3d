@@ -2,7 +2,11 @@
 // Two instanced particle pools (soft = smoke/dust/confetti, glow = sparks/stars/fire) whose motion is evaluated in the
 // vertex shader from spawn data (one buffer write per spawn, nothing per particle per frame), premultiplied blending
 // with a per-particle additive/alpha mix, ribbon trails, lit debris chunks and camera-space wind streaks.
-// Colours are linear HDR (> 1) so a bloom pass makes them glow; tone mapping/encoding follow the renderer settings.
+// Colours are linear HDR (> 1) so the post pipeline's bloom makes them glow. v3 (TSL): instanced quads whose motion
+// is evaluated in the vertex stage (vertexNode), shapes + premultiplied output in the fragment stage (outputNode, so
+// the scene pass MRT outputs still apply: the effects never overwrite the normal / velocity buffers), scene fog
+// (additive share fades out, alpha share mixes toward the fog colour) and soft particles (billboards fade where they
+// meet opaque geometry, from a copy of the scene pass depth) while the render pipeline runs.
 (() => {
 const TAU = Math.PI * 2;
 // xorshift32: inlines into the emitters (no boxed doubles from the Math.random builtin in the hot path)
@@ -58,18 +62,28 @@ const ST = {
 };
 
 // ---------------------------------------------------------------- shaders (TSL)
-// The v2 GLSL particle / ribbon / speed-line programs ported to TSL node materials: the motion is still evaluated in
-// the vertex stage from the spawn data (vertexNode), the shapes in the fragment stage (fragmentNode, premultiplied
-// output: the `add` share is pure light, the rest alpha-blended).
-// PORT(vfx->post): v2 also fogged the effects (additive share fading out, alpha share mixing toward the fog colour) and
-// switched light effects to "screen" blending on the direct (non-HDR) path; v3 (post+vfx builder): soft particles
-// against the depth buffer, fog, HDR bloom-friendly intensities, maybe instancedArray / compute.
+// The v2 GLSL particle / ribbon / speed-line programs as TSL node materials: the motion is evaluated in the vertex
+// stage from the spawn data (vertexNode), the shapes in the fragment stage (outputNode, premultiplied output: the `add`
+// share is pure light, the rest alpha-blended; outputNode rather than fragmentNode keeps the scene pass MRT working).
+// Fog follows scene.fog (THREE.Fog / FogExp2, uniforms refreshed every update); soft particles read the scene pass depth
+// (K.post.sceneDepth(): one shared depth copy per scene pass, only while the render pipeline runs).
 const { Fn, If, Discard, uniform, attribute, varyingProperty, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp,
   abs: tabs, max: tmax, min: tmin, fract: tfract, floor: tfloor, mod: tmod, sin: tsin, cos: tcos, pow: tpow, exp: texp,
   dot: tdot, normalize: tnormalize, cross: tcross, length: tlength, sqrt: tsqrt, select, texture: ttexture,
-  modelViewMatrix, cameraProjectionMatrix } = TSL;
+  modelViewMatrix, cameraProjectionMatrix, viewportDepthTexture, perspectiveDepthToViewZ, cameraNear, cameraFar } = TSL;
 const fu = v => uniform(v);
 const max3 = c => tmax(c.x, tmax(c.y, c.z));
+// scene fog, shared by every effect material (refreshed from scene.fog in update): mode 0 none, 1 range, 2 density
+const FOG = { col: uniform(new THREE.Vector3(1, 1, 1)), near: uniform(100), far: uniform(600), den: uniform(0), mode: uniform(0) };
+const fogFactor = d => select(FOG.mode.greaterThan(1.5), float(1).sub(texp(FOG.den.mul(d).mul(FOG.den.mul(d)).negate())),
+  smoothstep(FOG.near, FOG.far, d)).mul(select(FOG.mode.greaterThan(0.5), float(1), float(0)));
+function syncFog(scene) {
+  const f = scene && scene.fog;
+  if (f && f.isFog) { FOG.mode.value = 1; FOG.near.value = f.near; FOG.far.value = Math.max(f.near + 1e-3, f.far); }
+  else if (f && f.isFogExp2) { FOG.mode.value = 2; FOG.den.value = f.density; }
+  else { FOG.mode.value = 0; return; }
+  FOG.col.value.set(f.color.r, f.color.g, f.color.b);
+}
 function blendMat(params) {
   const m = new THREE.MeshBasicNodeMaterial(Object.assign({
     transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, fog: false,
@@ -79,23 +93,34 @@ function blendMat(params) {
   }, params || {}));
   return m;
 }
-// premultiplied output of a colour col with alpha a and additive share add
-const premul = (col, a, add) => {
+// premultiplied output of a colour col with alpha a and additive share add, fogged by f (0..1): the light share
+// fades out, the alpha-blended share takes the fog colour
+const premul = (col, a, add, f) => {
   const aa = a.mul(float(1).sub(add));
-  const rgb = select(add.greaterThan(0.004), col.mul(a.mul(add)), vec3(0)).add(col.mul(aa));
-  return vec4(rgb, aa);
+  const lit = select(add.greaterThan(0.004), col.mul(a.mul(add)), vec3(0));
+  if (!f) return vec4(lit.add(col.mul(aa)), aa);
+  return vec4(lit.mul(float(1).sub(f)).add(mix(col, FOG.col, f).mul(aa)), aa);
 };
+// soft particles: 0..1 visibility of a fragment at view distance `dist` in front of the opaque scene, over `range`
+// (range 0 = hard). Sampled at the top of the fragment program (uniform control flow).
+const softFade = (dist, range) => {
+  const dn = K.post && typeof K.post.sceneDepth === 'function' ? K.post.sceneDepth() : null;
+  const sceneDist = perspectiveDepthToViewZ((dn || viewportDepthTexture()).x, cameraNear, cameraFar).negate();
+  return select(range.greaterThan(0.001), tclamp(sceneDist.sub(dist).div(tmax(range, 0.001)), 0, 1), float(1));
+};
+const softOn = () => !!(K.post && K.post.ok && K.post.hdr);
 function particleMaterial(U) {
   const m = blendMat();
+  const soft = softOn();
   const vUv = varyingProperty('vec2', 'vfxUv'), vCol = varyingProperty('vec4', 'vfxCol'), vInfo = varyingProperty('vec4', 'vfxInfo');
-  const vMisc = varyingProperty('vec3', 'vfxMisc');
+  const vMisc = varyingProperty('vec3', 'vfxMisc'), vFog = varyingProperty('vec2', 'vfxFog');
   const sizeCurve = (c, t) => select(c.lessThan(0.5), float(1).sub(float(1).sub(t).mul(float(1).sub(t))),
     select(c.lessThan(1.5), t, select(c.lessThan(2.5), smoothstep(0.0, 0.14, t).mul(float(1).sub(t.mul(t))), float(1).sub(tpow(float(1).sub(t), 4)))));
   m.vertexNode = Fn(() => {
     const i0 = attribute('i0', 'vec4'), i1 = attribute('i1', 'vec4'), i2 = attribute('i2', 'vec4'), i3 = attribute('i3', 'vec4');
     const i4 = attribute('i4', 'vec4'), i5 = attribute('i5', 'vec4'), i6 = attribute('i6', 'vec4'), i7 = attribute('i7', 'vec4');
     const aCorner = attribute('aCorner', 'vec2');
-    vUv.assign(aCorner); vCol.assign(vec4(0)); vInfo.assign(vec4(0)); vMisc.assign(vec3(0));
+    vUv.assign(aCorner); vCol.assign(vec4(0)); vInfo.assign(vec4(0)); vMisc.assign(vec3(0)); vFog.assign(vec2(0));
     const out = vec4(0, 0, 2, 1).toVar();
     const age = U.uTime.sub(i0.w).toVar();
     If(age.greaterThanEqual(0).and(age.lessThan(i1.w)), () => {
@@ -180,6 +205,9 @@ function particleMaterial(U) {
       vCol.assign(vec4(col, a));
       vInfo.assign(vec4(shp, i6.z, i6.w, t));
       vMisc.assign(vec3(i6.x, light, flip));
+      // view distance (fog, soft fade) and the soft-fade range: billboards fade over ~half their size where they meet
+      // opaque geometry; ground-aligned (planar) effects stay hard (they lie on the surface on purpose)
+      vFog.assign(vec2(mv.z.negate(), select(planar, float(0), tclamp(size.mul(0.6), 0.06, 1.6))));
       out.assign(cameraProjectionMatrix.mul(mv));
     });
     return out;
@@ -192,6 +220,7 @@ function particleMaterial(U) {
     const cell = tfloor(tfract(vMisc.x.mul(7.13)).mul(3.999));
     const poff = vec2(tmod(cell, 2), tfloor(cell.mul(0.5))).mul(0.5);
     const puffA = ttexture(U.uPuff, poff.add(0.25).add(p.mul(0.24))).a.toVar();
+    const vis = (soft ? softFade(vFog.x, vFog.y) : float(1)).toVar();
     const col = vec3(vCol.xyz).toVar(), add = float(vInfo.y).toVar(), m0 = float(0).toVar();
     If(shape.lessThan(0.5), () => {
       If(r2.greaterThanEqual(1), () => { Discard(); });
@@ -234,9 +263,9 @@ function particleMaterial(U) {
       const ax = tabs(p.x);
       m0.assign(texp(p.y.mul(p.y).mul(-18)).mul(tpow(float(1).sub(ax), 2.4)).add(texp(p.x.mul(p.x).mul(50).add(p.y.mul(p.y).mul(3)).negate()).mul(0.7)));
     });
-    const a = vCol.w.mul(m0);
+    const a = vCol.w.mul(m0).mul(vis);
     If(a.lessThan(0.002), () => { Discard(); });
-    return premul(col, a, add);
+    return premul(col, a, add, fogFactor(vFog.x));
   })();
   return m;
 }
@@ -250,6 +279,7 @@ function ribbonMaterial(U) {
   const mv = vec4(mv0.xyz.add(s.mul(aSide.x.mul(aSide.y))), 1);
   m.vertexNode = cameraProjectionMatrix.mul(mv);
   const fade = smoothstep(1.2, 4.0, mv.z.negate()).toVarying('vfxRibFade');
+  const dist = mv.z.negate().toVarying('vfxRibDist');
   m.outputNode = Fn(() => {
     const v = aSide.x;
     const core = texp(v.mul(v).mul(-14));
@@ -258,7 +288,7 @@ function ribbonMaterial(U) {
     const col = mix(aCol.xyz, vec3(max3(aCol.xyz)), core.mul(0.45)).mul(energy);
     const a = aCol.w.mul(fade).mul(mm);
     If(a.lessThan(0.002), () => { Discard(); });
-    return premul(col, a, aSide.w);
+    return premul(col, a, aSide.w, fogFactor(dist));
   })();
   return m;
 }
@@ -629,7 +659,7 @@ function chunkGeometry() {
   return g;
 }
 function makeChunks(cap) {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.3, flatShading: true });
+  const mat = new THREE.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.3, flatShading: true });
   const mesh = new THREE.InstancedMesh(chunkGeometry(), mat, cap);
   mesh.name = 'vfx-debris';
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -765,7 +795,8 @@ function build(scene) {
 }
 function attach(scene) {
   const list = [ST.soft.mesh, ST.glow.mesh, ST.rib.mesh, ST.chkMesh, ST.sl.mesh];
-  for (let i = 0; i < list.length; i++) { if (list[i].parent) list[i].parent.remove(list[i]); scene.add(list[i]); list[i].visible = true; }
+  // userData.noEnv: hidden while K.post captures the environment cube
+  for (let i = 0; i < list.length; i++) { if (list[i].parent) list[i].parent.remove(list[i]); scene.add(list[i]); list[i].visible = true; list[i].userData.noEnv = true; }
   ST.scene = scene;
 }
 function init(scene) {
@@ -868,6 +899,7 @@ function update(dt, camera) {
   ST.T += dt; ST.clock += dt;
   ST.dt = dt;
   readCamera(camera || (K.view && K.view.camera));
+  syncFog(ST.scene);
   ST.D = quality();
   const S = ST.soft, G = ST.glow;
   S.n = 0; G.n = 0;

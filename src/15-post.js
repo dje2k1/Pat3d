@@ -38,7 +38,7 @@ import { lensflare as postLensflare } from 'three/addons/tsl/display/LensflareNo
 const { Fn, If, Loop, pass, mrt, texture: ttexture, perspectiveDepthToViewZ, sin: tsin, sqrt: tsqrt, output, normalView, velocity, diffuseColor, roughness, rtt, uniform,
   vec2, vec3, vec4, float, uv, mix, step, max: tmax, min: tmin, clamp: tclamp, dot, smoothstep, exp: texp, pow: tpow,
   length: tlength, abs: tabs, fract: tfract, floor: tfloor, cos: tcos, atan: tatan, select, acesFilmicToneMapping, agxToneMapping,
-  sRGBTransferOETF } = TSL;
+  neutralToneMapping, sRGBTransferOETF, viewportDepthTexture } = TSL;
 const NOOP = () => {};
 const QUALITIES = ['ultra', 'high', 'medium', 'low'];
 // depth of the sky dome (drawn at clip w * 0.99999): anything deeper is sky; the farthest scenery (≈ 2 km) stays below
@@ -62,11 +62,11 @@ const PRESETS = {
 };
 // the look (linear HDR in, display out); every number is a live uniform (K.post.look) except tone
 const LOOK = {
-  tone: 'aces', exposure: 1.0, directExposure: 1.05,
+  tone: 'aces', exposure: 0.96, directExposure: 1.05,
   bloomStrength: 0.42, bloomRadius: 0.55, bloomThreshold: 0.95,
-  sat: 1.14, curve: 0.18, vignette: 0.34, grain: 0.022,
+  sat: 1.1, curve: 0.26, gamut: 0.22, vignette: 0.34, grain: 0.022,
   shadowTint: [0.94, 0.985, 1.08], highTint: [1.05, 1.0, 0.92],
-  ao: 0.85, gi: 0.6, ssr: 1.0, dofScale: 1, dofRange: 0.08, shafts: 0.5, flare: 0.08, glare: 0.35, ca: 0.0022, caSpeed: 0.018, sharp: 0.25
+  ao: 0.85, gi: 0.6, ssr: 1.0, dofScale: 1, dofRange: 0.08, shafts: 0.5, flare: 0.08, glare: 0.35, ca: 0.0022, caSpeed: 0.018, sharp: 0.25, taaSharp: 0.35
 };
 
 // ---------- K.gfx: the active preset's content knobs (other parts rebuild what depends on them in onChange) ----------
@@ -110,14 +110,14 @@ const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _fw = new THREE.Vector
 const U = {
   exposure: uniform(LOOK.exposure), aspect: uniform(16 / 9), flash: uniform(new THREE.Vector4(0, 0, 0, 0)), bars: uniform(0),
   time: uniform(0), res: uniform(new THREE.Vector2(1280, 720)),
-  sat: uniform(LOOK.sat), curve: uniform(LOOK.curve), vig: uniform(LOOK.vignette), grain: uniform(LOOK.grain),
+  sat: uniform(LOOK.sat), curve: uniform(LOOK.curve), gamut: uniform(LOOK.gamut), vig: uniform(LOOK.vignette), grain: uniform(LOOK.grain),
   shadowTint: uniform(new THREE.Vector3(...LOOK.shadowTint)), highTint: uniform(new THREE.Vector3(...LOOK.highTint)),
   ao: uniform(LOOK.ao), gi: uniform(LOOK.gi), ssr: uniform(LOOK.ssr),
   sunUV: uniform(new THREE.Vector2(0.5, 0.2)), sunVis: uniform(0), sunCol: uniform(new THREE.Vector3(1, 0.94, 0.82)),
   shafts: uniform(LOOK.shafts), flare: uniform(LOOK.flare), glare: uniform(LOOK.glare),
   ca: uniform(LOOK.ca), mb: uniform(0), mbVel: uniform(1), speed: uniform(0),
   dof: uniform(0), focus: uniform(8), focal: uniform(1), dofMax: uniform(8), near: uniform(0.1), far: uniform(900),
-  texel: uniform(new THREE.Vector2(1 / 1280, 1 / 720))
+  texel: uniform(new THREE.Vector2(1 / 1280, 1 / 720)), taaSharp: uniform(LOOK.taaSharp)
 };
 post.look = LOOK;
 post.uniforms = U;
@@ -167,7 +167,17 @@ const hashUV = Fn(([p]) => {
   p3.addAssign(dot(p3, p3.yzx.add(33.33)));
   return tfract(p3.x.add(p3.y).mul(p3.z));
 }).setLayout({ name: 'kPostHash', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
-const toneMap = c => (LOOK.tone === 'agx' ? agxToneMapping(c, U.exposure) : acesFilmicToneMapping(c, U.exposure));
+// gamut compression before the tone curve: the most saturated (near-primary) colours lose a little chroma so ACES does
+// not push them to neon (pure green grass, saturated paint); moderate colours are untouched
+function gamutIn(c) {
+  const mx = tmax(c.r, tmax(c.g, c.b)), mn = tmin(c.r, tmin(c.g, c.b));
+  const sv = mx.sub(mn).div(tmax(mx, 1e-4));
+  return mix(c, vec3(dot(c, W3)), smoothstep(0.62, 1.0, sv).mul(U.gamut));
+}
+const toneMap = c0 => {
+  const c = gamutIn(c0);
+  return LOOK.tone === 'agx' ? agxToneMapping(c, U.exposure) : LOOK.tone === 'neutral' ? neutralToneMapping(c, U.exposure) : acesFilmicToneMapping(c, U.exposure);
+};
 // linear display-referred colour -> the grade (luma-split tint, saturation, vignette) -> sRGB + contrast curve
 function gradeLDR(c, r2) {
   let g = c.mul(mix(U.shadowTint, U.highTint, smoothstep(0.0, 0.65, dot(c, W3))));
@@ -386,10 +396,13 @@ function buildGraph(cfg, sr) {
       const zc = viewDist(depth.sample(u).x).toVar();
       const cc = cocPx(zc).toVar();
       const acc = hdrRaw.sample(u).rgb.toVar(), ws = float(1).toVar();
+      // the spiral is rotated per pixel (hash): the sparse taps turn into fine noise, which the fill pass smooths
+      const rot = hashUV(u.mul(U.res).floor()).mul(6.2831853).toVar();
+      const cr = tcos(rot).toVar(), sr = tsin(rot).toVar();
       for (let i = 1; i < N; i++) {
-        const rr = Math.sqrt(i / N), a = i * 2.39996323;
+        const rr = Math.sqrt(i / N), a = i * 2.39996323, ca = Math.cos(a), sa = Math.sin(a);
         const r = U.dofMax.mul(rr);
-        const q = u.add(vec2(Math.cos(a), Math.sin(a)).mul(r).mul(U.texel));
+        const q = u.add(vec2(cr.mul(ca).sub(sr.mul(sa)), sr.mul(ca).add(cr.mul(sa))).mul(r).mul(U.texel));
         const zs = viewDist(depth.sample(q).x);
         const cs = cocPx(zs);
         const w = smoothstep(r.sub(1), r.add(0.5), select(zs.lessThan(zc), cs, tmin(cs, cc)));
@@ -398,10 +411,19 @@ function buildGraph(cfg, sr) {
       return vec4(acc.div(ws), 1);
     })();
     const d = track(G, rtt(g, null, null, { resolutionScale: 0.5, depthBuffer: false }), 'dof');
-    G.dyn.dof = [d];
-    dofTex = d;
-    G.passes.push('dof(cinematic,x0.5)');
-    G.cost.push(['dof', 0, N / 8]);
+    // fill: a 3x3 tent over the gathered bokeh, spaced by the tap spacing of the spiral (Unreal's "bokeh fill" idea)
+    const fill = Fn(() => {
+      const u = uv().toVar();
+      const t = U.texel.mul(tmax(U.dofMax.mul(1.2 / Math.sqrt(N)), 1.0)).toVar();
+      const acc = d.sample(u).rgb.mul(4).toVar();
+      for (const [x, y, w] of [[-1, 0, 2], [1, 0, 2], [0, -1, 2], [0, 1, 2], [-1, -1, 1], [1, -1, 1], [-1, 1, 1], [1, 1, 1]]) acc.addAssign(d.sample(u.add(t.mul(vec2(x, y)))).rgb.mul(w));
+      return vec4(acc.div(16), 1);
+    })();
+    const df = track(G, rtt(fill, null, null, { resolutionScale: 0.5, depthBuffer: false }), 'dofFill');
+    G.dyn.dof = [d, df];
+    dofTex = df;
+    G.passes.push('dof(cinematic,x0.5,gather+fill)');
+    G.cost.push(['dof', 0, N / 8 + 1]);
   }
   let src = hdr;
   let upNote = '';
@@ -417,6 +439,14 @@ function buildGraph(cfg, sr) {
       const co = d.mul(U.ca.mul(r2)).toVar();
       col3.assign(vec3(src.sample(u.sub(co)).r, src.sample(u).g, src.sample(u.add(co)).b));
     } else col3.assign(src.sample(u).rgb);
+    {
+      // post-TAA sharpen (the temporal resolve softens texture detail): unsharp mask on the 4 neighbours, limited to
+      // the local min/max so bright HDR edges never ring
+      const tx = vec2(U.texel.x, 0), ty = vec2(0, U.texel.y);
+      const a = src.sample(u.sub(tx)).rgb, b = src.sample(u.add(tx)).rgb, c = src.sample(u.sub(ty)).rgb, e = src.sample(u.add(ty)).rgb;
+      const lo = tmin(tmin(tmin(a, b), tmin(c, e)), col3), hi = tmax(tmax(tmax(a, b), tmax(c, e)), col3);
+      col3.assign(tclamp(col3.add(col3.sub(a.add(b).add(c).add(e).mul(0.25)).mul(U.taaSharp)), lo, hi));
+    }
     if (mbN > 0) {
       If(U.mb.greaterThan(0.002), () => {
         const v = vel.sample(u).xy.mul(vec2(0.5, -0.5)).mul(U.mbVel);
@@ -518,6 +548,9 @@ function graphKey() {
 }
 function sleepGraph(G) {
   if (!G) return;
+  // the scene depth copy that transparent materials read (K.post.sceneDepth) keeps one texture per scene pass target
+  const rt = G.named.scene && G.named.scene.renderTarget, cache = sceneDepthN && sceneDepthN._cacheTextures;
+  if (rt && cache && cache.has(rt)) { try { cache.get(rt).dispose(); } catch (e) { /* gone */ } cache.delete(rt); }
   for (const n of G.nodes) {
     for (const k of Object.keys(n)) {
       const v = n[k];
@@ -840,6 +873,29 @@ post.ssr = function (material, strength, rough) {
   return sn;
 };
 post.refreshEnvironment = refreshEnvironment;
+// the opaque scene depth for transparent materials (soft particles, water depth tint/foam): ONE shared
+// viewportDepthTexture node, so the scene pass copies its depth buffer once per frame whoever reads it, and the copy
+// follows the graphs (freed when a graph sleeps). Use .x (or .sample(uv).x) -> perspective depth 0..1; view distance:
+// perspectiveDepthToViewZ(d, cameraNear, cameraFar).negate(). Only meaningful while K.post.ok (else null).
+let sceneDepthN = null;
+post.sceneDepth = function () {
+  if (!post.ok) return null;
+  if (!sceneDepthN) sceneDepthN = viewportDepthTexture();
+  return sceneDepthN;
+};
+// drops every cached graph and rebuilds the current one (after editing graph-time settings such as K.post.look.tone)
+post.rebuild = function () {
+  if (!S.active) return false;
+  for (const k of Object.keys(S.graphs)) {
+    const E = S.graphs[k];
+    sleepGraph(E.G);
+    disposeGraph(E.G);
+    try { E.pipe.dispose(); } catch (e) { /* older pipelines */ }
+  }
+  S.graphs = {}; S.pipe = null; S.G = null; S.built = '';
+  buildPipeline();
+  return true;
+};
 post._state = S; // dev probes (dev/post): the live graph, its nodes and frame state
 post.stats = function () {
   const V = K.view, st = V && V.stats, c = S.cfg, G = S.G;

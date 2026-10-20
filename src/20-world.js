@@ -173,7 +173,7 @@
   }
 
   // ======================= terrain =======================
-  const T = { XMIN: 0, ZMIN: 0, NX: 0, NZ: 0, H: null, AO: null, RS: null, RD: null, RM: null };
+  const T = { XMIN: 0, ZMIN: 0, NX: 0, NZ: 0, H: null, AO: null, RS: null, RD: null, RM: null, MT: null };
   const RF = { X0: 0, Z0: 0, NX: 0, NZ: 0, C: 16, V: null };
   function buildRef() {
     const C = RF.C;
@@ -258,6 +258,7 @@
     T.NX = (XMAX - T.XMIN) / CELL + 1; T.NZ = (ZMAX - T.ZMIN) / CELL + 1;
     const N = T.NX * T.NZ;
     T.H = new Float32Array(N); T.RS = new Float32Array(N); T.RD = new Float32Array(N); T.RM = new Float32Array(N); T.AO = new Float32Array(N);
+    T.MT = new Float32Array(N * 4); // shading only: path weight, sand weight, mowing direction (x, z)
     buildRef();
     const nr = {};
     for (let iz = 0; iz < T.NZ; iz++) {
@@ -270,8 +271,23 @@
         T.H[i] = h;
         const hw = nr.hw;
         const ra = Math.sqrt((x - ARENA.x) * (x - ARENA.x) + (z - ARENA.z) * (z - ARENA.z));
-        if (ra < ARENA.r - 1.5) { T.RS[i] = ra * 1.75 + 3.5; T.RD[i] = 0; T.RM[i] = 1.4 * (1 - sstep(ARENA.r - 4, ARENA.r - 2, ra)); }
-        else { T.RS[i] = nr.s; T.RD[i] = nr.d; T.RM[i] = (1 - sstep(hw - 1.5, hw + 0.5, nr.dist)) * sstep(ARENA.r - 2, ARENA.r + 1, ra); }
+        const i4 = i * 4;
+        if (ra < ARENA.r - 1.5) {
+          // the arena lawn is mown in rings around its centre
+          T.RS[i] = ra * 1.75 + 3.5; T.RD[i] = ra + 2.75; T.RM[i] = 1.4 * (1 - sstep(ARENA.r - 4, ARENA.r - 2, ra));
+          const ia = ra > 1e-3 ? 1 / ra : 0;
+          T.MT[i4 + 2] = -(z - ARENA.z) * ia; T.MT[i4 + 3] = (x - ARENA.x) * ia;
+        } else {
+          T.RS[i] = nr.s; T.RD[i] = nr.d; T.RM[i] = (1 - sstep(hw - 1.5, hw + 0.5, nr.dist)) * sstep(ARENA.r - 2, ARENA.r + 1, ra);
+          T.MT[i4 + 2] = nr.dx; T.MT[i4 + 3] = nr.dz;
+          // a worn dirt path meandering along the valley floor, in stretches
+          const s = nr.s, lim = Math.max(0, hw - 3.4);
+          const pc = clamp(3.6 * Math.sin(s * 0.019 + 1.1) + 1.6 * Math.sin(s * 0.047 + 0.3), -lim, lim);
+          const pw = 1.2 + 0.35 * Math.sin(s * 0.061 + 2);
+          const pres = sstep(-0.1, 0.25, vnoise(s * 0.012, 0.5, 71)) * sstep(ARENA.flat, ARENA.flat + 6, ra);
+          T.MT[i4] = pres * (1 - sstep(pw - 0.9, pw + 1.1, Math.abs(nr.d - pc))) * (1 - sstep(hw - 1.5, hw + 0.5, nr.dist));
+        }
+        T.MT[i4 + 1] = h > -6 ? 1 - sstep(0.9, 2.7, h) : 0;
       }
     }
     // cavity darkening (cheap ambient occlusion): the surroundings' mean height above the point at 2 m and 6 m
@@ -313,94 +329,172 @@
 
   // ======================= shared shader bits (TSL) =======================
   const { Fn, uniform, attribute, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp, abs: tabs, max: tmax, min: tmin, fract: tfract,
-    sin: tsin, cos: tcos, pow: tpow, exp: texp, dot: tdot, normalize: tnormalize, cross: tcross, reflect: treflect, length: tlength,
-    atan: tatan, select, dFdx, dFdy, positionWorld, positionLocal, positionGeometry, normalWorld, normalViewGeometry, cameraPosition,
-    cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix, instanceIndex, texture: ttexture, step: tstep } = TSL;
+    floor: tfloor, sin: tsin, cos: tcos, pow: tpow, exp: texp, dot: tdot, normalize: tnormalize, cross: tcross, reflect: treflect, length: tlength,
+    atan: tatan, select, dFdx, dFdy, positionWorld, positionLocal, positionGeometry, normalWorld, normalViewGeometry, normalGeometry, cameraPosition,
+    cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix, instanceIndex, texture: ttexture, step: tstep, sqrt: tsqrt, uv: tuv } = TSL;
   const TL = K.tsl;
   const TIME = uniform(0);
   const CAMXZ = uniform(new THREE.Vector2());
   const GM_UNI = {
-    gmGrassA: uniform(lin('#34b846')), gmGrassB: uniform(lin('#1f8f36')),
-    gmLip: uniform(lin('#16762f')), gmLipHi: uniform(lin('#8af078')),
-    gmChkA: uniform(lin('#dd8a3c')), gmChkB: uniform(lin('#a35522'))
+    gmGrassA: uniform(lin('#3cbd48')), gmGrassB: uniform(lin('#23933a')),
+    gmLip: uniform(lin('#1a7a30')), gmLipHi: uniform(lin('#8af078')),
+    gmChkA: uniform(lin('#e08c3e')), gmChkB: uniform(lin('#9c5222')),
+    gmPath: uniform(lin('#b88a5c')), gmSand: uniform(lin('#f0dcae')), gmStripe: uniform(0.075)
   };
+  // ---- generated PBR textures (tools/tex/world_tex.py, group 'act1': preloaded before the island is built)
+  const WT = {};
+  // mean linear albedo of each tiling texture: the shaders tint by (texture / mean) so the level keeps its palette
+  const TEX_MEAN = { grass: [0.0964, 0.283, 0.0344], soil: [0.2437, 0.1275, 0.0593], rock: [0.5936, 0.4743, 0.3299],
+    sand: [0.6886, 0.5469, 0.3079], bark: [0.1592, 0.109, 0.0688], leaves: [0.0684, 0.3933, 0.0467], wood: [0.3492, 0.1436, 0.0443] };
+  function wtex(name, opts) {
+    if (WT[name]) return WT[name];
+    let t = null;
+    try { t = K.tex && K.tex.load ? K.tex.load('world/' + name, opts) : null; } catch (e) { t = null; }
+    if (!t) { t = new THREE.Texture(); t.wrapS = t.wrapT = THREE.RepeatWrapping; }
+    WT[name] = t;
+    return t;
+  }
+  const meanInv = k => vec3(1 / TEX_MEAN[k][0], 1 / TEX_MEAN[k][1], 1 / TEX_MEAN[k][2]);
+  // tangent-space normal texel (0..1) -> -1..1 xy (OpenGL +Y), scaled
+  const nXY = (t, k) => t.xy.mul(2).sub(1).mul(k);
+  const rot2 = (p, a) => vec2(p.x.mul(Math.cos(a)).sub(p.y.mul(Math.sin(a))), p.x.mul(Math.sin(a)).add(p.y.mul(Math.cos(a))));
   // checkerboard tile colour with bevelled edges (faded out where a square is a few pixels wide)
-  const gmCheckerCol = (p, w) => {
-    const c = TL.checker(p, w);
+  const gmCheckerShade = (p, w) => {
     const f = tfract(p), w2 = w.mul(1.5).add(1e-4);
     const fade = tclamp(float(1).sub(tmax(w2.x, w2.y).mul(3.5)), 0, 1);
     const hi = tmax(smoothstep(float(0.92).sub(w2.y), float(0.92).add(w2.y), f.y), float(1).sub(smoothstep(float(0.06).sub(w2.x), float(0.06).add(w2.x), f.x)));
     const lo = tmax(float(1).sub(smoothstep(float(0.06).sub(w2.y), float(0.06).add(w2.y), f.y)), smoothstep(float(0.94).sub(w2.x), float(0.94).add(w2.x), f.x));
-    return mix(GM_UNI.gmChkA, GM_UNI.gmChkB, c)
-      .mul(float(1).add(fade.mul(hi.mul(0.2).sub(lo.mul(0.26)))))
-      .mul(float(0.95).add(TL.vnoise(p.mul(6)).mul(0.1)));
+    return float(1).add(fade.mul(hi.mul(0.16).sub(lo.mul(0.22))));
   };
-  // Emerald grass / lip / checkerboard ground (v2 GM shader, colour + bevel/tuft bump, ported to TSL).
-  // mode: 'terrain' (heightfield: route lawn stripes, baked cavity AO), 'prop' / 'local' (aLip blend; local = checker in
-  // object space), 'checker' (plain checkerboard).
-  // PORT(world): v2 GLSL = this same recipe injected into MeshStandardMaterial's shader; v3 should replace it with
-  // textured PBR grass/rock/soil (K.tex), grass blades and real normal detail.
+  // Emerald grass / lip / checkerboard ground, textured PBR (grass, sandstone, soil path, beach sand).
+  // mode: 'terrain' (heightfield: lawn stripes, path / sand weights and baked cavity AO from vertex attributes),
+  // 'prop' / 'local' (aLip skirt blend; local = checker in object space), 'checker' (plain checkerboard: loop shells).
+  // The checkered cliffs stay the level's identity: each 2.5 m square is a sandstone face (its own offset into the rock
+  // texture, light orange / dark brown tint, bevelled edges); grass covers whatever is flat enough, with a darker lip.
   function groundMaterial(mode) {
     const m = new THREE.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
     const terrain = mode === 'terrain', local = mode === 'local', propLip = mode === 'prop' || mode === 'local', chkOnly = mode === 'checker';
-    // (pure expressions: no assign outside Fn; derivatives are taken at the top level, outside any select)
+    const tGA = wtex('grass_albedo'), tGN = wtex('grass_normal'), tGO = wtex('grass_orm');
+    const tRA = wtex('rock_albedo'), tRN = wtex('rock_normal'), tRO = wtex('rock_orm');
+    // (pure expressions: no assign outside Fn; derivatives and texture fetches are taken at the top level)
     const gN = tnormalize(normalWorld);
     const gP = local ? positionGeometry : positionWorld;
     const gA = tabs(gN);
     const gqY = gP.xz.mul(0.4), gqX = gP.zy.mul(0.4), gqZ = gP.xy.mul(0.4);
     const gwY = TL.fw(gqY), gwX = TL.fw(gqX), gwZ = TL.fw(gqZ);
+    const dxY = dFdx(gqY), dyY = dFdy(gqY), dxX = dFdx(gqX), dyX = dFdy(gqX), dxZ = dFdx(gqZ), dyZ = dFdy(gqZ);
     const gUY = gA.y.greaterThan(gA.x).and(gA.y.greaterThan(gA.z)), gUX = gA.x.greaterThan(gA.z);
     const gq = select(gUY, gqY, select(gUX, gqX, gqZ));
     const gw = select(gUY, gwY, select(gUX, gwX, gwZ));
-    const gChk = gmCheckerCol(gq, gw);
+    const gdx = select(gUY, dxY, select(gUX, dxX, dxZ)), gdy = select(gUY, dyY, select(gUX, dyX, dyZ));
+    // ---- checker squares: sandstone, one texture repeat per square at a per-square offset (no visible tiling)
+    const tile = tfloor(gq);
+    const tileH = TL.hash21(tile.add(vec2(3.7, 1.3)));
+    const rUV = gq.add(vec2(tileH.mul(7.31), TL.hash21(tile.add(vec2(9.1, 4.2))).mul(5.17)));
+    const rA = ttexture(tRA, rUV).grad(gdx, gdy), rN = ttexture(tRN, rUV).grad(gdx, gdy), rO = ttexture(tRO, rUV).grad(gdx, gdy);
+    const chkC = TL.checker(gq, gw);
+    const gChk = mix(GM_UNI.gmChkA, GM_UNI.gmChkB, chkC).mul(rA.rgb.mul(meanInv('rock')))
+      .mul(gmCheckerShade(gq, gw)).mul(float(0.9).add(tileH.mul(0.2)));
     const gTf = tfract(gq);
-    const gBv = vec2(smoothstep(0.9, 1.0, gTf.x).sub(smoothstep(0.1, 0.0, gTf.x)), smoothstep(0.9, 1.0, gTf.y).sub(smoothstep(0.1, 0.0, gTf.y)))
-      .mul(tclamp(float(1).sub(tmax(gw.x, gw.y).mul(5)), 0, 1).mul(0.6));
-    let gBump = select(gUY, vec3(gBv.x, 0, gBv.y), select(gUX, vec3(0, gBv.y, gBv.x), vec3(gBv.x, gBv.y, 0)));
-    let colorNode;
-    if (chkOnly) colorNode = gChk;
-    else {
-      const gn1 = TL.vnoise(gP.xz.mul(0.045)), gn2 = TL.vnoise(gP.xz.mul(0.55).add(7));
-      let gGrass = mix(GM_UNI.gmGrassA, GM_UNI.gmGrassB, smoothstep(0.25, 0.8, gn1)).mul(float(0.92).add(gn2.mul(0.14)));
-      let gSt = float(1).sub(gN.y);
-      if (terrain) {
-        // mowing stripes: a stripe is centred on the route (no edge down the middle of the screen behind Kit)
-        const R = attribute('aRoute', 'vec3');
-        const gLq = vec2(R.x.div(7), R.y.div(5.5).add(0.5));
-        const lawn = TL.checker(gLq, tmin(TL.fw(gLq), vec2(0.5)));
-        gGrass = gGrass.mul(float(1).add(lawn.sub(0.5).mul(0.09).mul(tclamp(R.z, 0, 1))));
-        const gFN = tnormalize(tcross(dFdx(positionWorld), dFdy(positionWorld)));
-        gSt = mix(gSt, float(1).sub(tabs(gFN.y)), 0.72);
-      }
-      gSt = gSt.add(TL.vnoise(gP.xz.mul(0.8).add(gP.y.mul(0.7))).sub(0.5).mul(0.07));
-      const gMask = float(1).sub(smoothstep(0.31, 0.34, gSt));
-      const gLipM = float(1).sub(smoothstep(0.39, 0.42, gSt));
-      let gCol = mix(gChk, GM_UNI.gmLip.mul(float(0.92).add(TL.vnoise(gP.xz.mul(2).add(gP.y)).mul(0.12))), gLipM);
-      gCol = mix(gCol, gGrass, gMask);
-      gCol = mix(gCol, GM_UNI.gmLipHi, gMask.mul(smoothstep(0.235, 0.3, gSt)).mul(0.5));
-      if (propLip) gCol = mix(gCol, GM_UNI.gmLip.mul(float(0.8).add(TL.vnoise(gP.xz.mul(3).add(gP.y.mul(2))).mul(0.35))), tclamp(attribute('aLip', 'float'), 0, 1));
-      // grass detail: tufts and soft mounds (their gradient tilts the normal), sun-dried and lush patches
-      const gFoot = TL.fw(gP.xz), gFoo = tmax(gFoot.x, gFoot.y);
-      const gFine = float(1).sub(smoothstep(0.025, 0.11, gFoo)), gMidF = float(1).sub(smoothstep(0.1, 0.45, gFoo));
-      const gTq = gP.xz.mul(vec2(7.3, 8.9));
-      const gT0 = TL.vnoise(gTq), gTx = TL.vnoise(gTq.add(vec2(0.2, 0))), gTz = TL.vnoise(gTq.add(vec2(0, 0.2)));
-      const gUq = gP.xz.mul(vec2(2.9, 3.4)).add(5.3);
-      const gU0 = TL.vnoise(gUq), gUx = TL.vnoise(gUq.add(vec2(0.2, 0))), gUz = TL.vnoise(gUq.add(vec2(0, 0.2)));
-      const gGb = vec2(gTx.sub(gT0), gTz.sub(gT0)).mul(gFine.mul(0.9)).add(vec2(gUx.sub(gU0), gUz.sub(gU0)).mul(gMidF.mul(0.45)));
-      gBump = mix(gBump, vec3(gGb.x.negate(), 0, gGb.y.negate()), gMask);
-      gCol = gCol.mul(mix(float(1), float(0.86).add(gT0.mul(0.16)).add(gU0.mul(0.1)), gMidF.mul(gMask)));
-      const gPatch = TL.vnoise(gP.xz.mul(0.075).add(13));
-      gCol = mix(gCol, gCol.mul(vec3(1.16, 1.06, 0.66)), smoothstep(0.6, 0.88, gPatch).mul(gMask).mul(0.5));
-      gCol = mix(gCol, gCol.mul(vec3(0.78, 0.92, 0.86)), smoothstep(0.62, 0.9, float(1).sub(gPatch)).mul(gMask).mul(0.45));
-      if (terrain) {
-        const ao = attribute('aAO', 'float');
-        gCol = gCol.mul(mix(float(1), ao, 0.65));
-        m.aoNode = ao.mul(ao); // the baked cavity term also shades the sky light and reflections
-      }
-      colorNode = gCol;
+    const bevel = tclamp(float(1).sub(tmax(gw.x, gw.y).mul(5)), 0, 1).mul(0.6);
+    const gBv = vec2(smoothstep(0.9, 1.0, gTf.x).sub(smoothstep(0.1, 0.0, gTf.x)), smoothstep(0.9, 1.0, gTf.y).sub(smoothstep(0.1, 0.0, gTf.y))).mul(bevel)
+      .add(nXY(rN, 0.85));
+    const chkBump = select(gUY, vec3(gBv.x, 0, gBv.y), select(gUX, vec3(0, gBv.y, gBv.x), vec3(gBv.x, gBv.y, 0)));
+    const chkRough = rO.g, chkAO = rO.r;
+    if (chkOnly) {
+      m.colorNode = gChk.mul(mix(float(1), chkAO, 0.7));
+      m.roughnessNode = chkRough;
+      m.normalNode = tnormalize(normalViewGeometry.add(cameraViewMatrix.mul(vec4(chkBump, 0)).xyz));
+      return m;
     }
-    m.colorNode = colorNode;
-    m.normalNode = tnormalize(normalViewGeometry.add(cameraViewMatrix.mul(vec4(gBump, 0)).xyz));
+    // ---- grass: two lookups (rotated, offset) blended by a slow noise so the 2.6 m tile never repeats visibly
+    const gx = gP.xz;
+    const uv1 = gx.mul(1 / 2.6), uv2 = rot2(gx, 1.13).mul(1 / 2.9).add(vec2(0.37, 0.61));
+    const bw = smoothstep(0.32, 0.68, TL.vnoise(gx.mul(0.09).add(2.3)));
+    const gA1 = ttexture(tGA, uv1), gA2 = ttexture(tGA, uv2);
+    const gN1 = ttexture(tGN, uv1), gN2 = ttexture(tGN, uv2);
+    const gO = ttexture(tGO, uv1);
+    const gAlb = mix(gA1.rgb, gA2.rgb, bw).mul(meanInv('grass'));
+    const gnA = nXY(gN1, 1), gnB = nXY(gN2, 1);
+    const gnB2 = rot2(gnB, -1.13); // undo the lookup rotation (tangent frame of the second lookup)
+    const grassN = mix(gnA, gnB2, bw).mul(0.8);
+    // macro colour: lush / dry patches over tens of metres (v2 palette)
+    const gn1 = TL.vnoise(gx.mul(0.045));
+    let gTint = mix(GM_UNI.gmGrassA, GM_UNI.gmGrassB, smoothstep(0.25, 0.8, gn1));
+    const gPatch = TL.vnoise(gx.mul(0.075).add(13));
+    gTint = mix(gTint, gTint.mul(vec3(1.16, 1.06, 0.66)), smoothstep(0.6, 0.88, gPatch).mul(0.5));
+    gTint = mix(gTint, gTint.mul(vec3(0.78, 0.92, 0.86)), smoothstep(0.62, 0.9, float(1).sub(gPatch)).mul(0.45));
+    let gGrass = gTint.mul(gAlb);
+    let gSt = float(1).sub(gN.y);
+    let pathW = float(0), sandW = float(0), stripe = float(0);
+    if (terrain) {
+      // mowing stripes: bands parallel to the route, one centred on it (no edge down the middle of the screen behind
+      // Kit); like a real lawn their shade depends on the view direction (blades bent along / against the mower)
+      const R = attribute('aRoute', 'vec3'), MT = attribute('aMat', 'vec4');
+      const band = smoothstep(-0.3, 0.3, tcos(R.y.mul(Math.PI / 5.5))).mul(2).sub(1);
+      const vxz = tnormalize(cameraPosition.xz.sub(positionWorld.xz).add(vec2(1e-4, 0)));
+      stripe = band.mul(tdot(vxz, MT.zw).mul(0.75).add(0.25)).mul(tclamp(R.z, 0, 1));
+      const gFN = tnormalize(tcross(dFdx(positionWorld), dFdy(positionWorld)));
+      gSt = mix(gSt, float(1).sub(tabs(gFN.y)), 0.72);
+      const nE = TL.vnoise(gx.mul(1.3)).sub(0.5).mul(0.34).add(TL.vnoise(gx.mul(4.1).add(9)).sub(0.5).mul(0.14));
+      pathW = smoothstep(0.42, 0.62, MT.x.add(nE));
+      sandW = smoothstep(0.35, 0.65, MT.y.add(nE.mul(1.4)));
+    }
+    gSt = gSt.add(TL.vnoise(gP.xz.mul(0.8).add(gP.y.mul(0.7))).sub(0.5).mul(0.07));
+    const gMask = float(1).sub(smoothstep(0.31, 0.34, gSt));
+    const gLipM = float(1).sub(smoothstep(0.39, 0.42, gSt));
+    gGrass = gGrass.mul(float(1).add(stripe.mul(GM_UNI.gmStripe)));
+    // ---- path (soil) and beach sand
+    let col = gChk, bump = chkBump, rough = chkRough, ao = chkAO;
+    const lipCol = GM_UNI.gmLip.mul(gAlb).mul(0.95);
+    col = mix(col, lipCol, gLipM);
+    bump = mix(bump, vec3(grassN.x, 0, grassN.y).mul(0.6), gLipM);
+    rough = mix(rough, float(0.85), gLipM);
+    ao = mix(ao, float(0.85), gLipM);
+    let grassCol = gGrass, grassBump = vec3(grassN.x, 0, grassN.y), grassRough = gO.g, grassAO = gO.r;
+    if (terrain) {
+      const tSA = wtex('soil_albedo'), tSN = wtex('soil_normal'), tDA = wtex('sand_albedo'), tDN = wtex('sand_normal');
+      const sUV = gx.mul(1 / 1.9), dUV = gx.mul(1 / 1.6);
+      const sA = ttexture(tSA, sUV), sN = ttexture(tSN, sUV), dA = ttexture(tDA, dUV), dN = ttexture(tDN, dUV);
+      // worn grass around the path: yellower, flattened
+      const worn = smoothstep(0.2, 0.46, attribute('aMat', 'vec4').x).mul(float(1).sub(pathW));
+      grassCol = mix(grassCol, grassCol.mul(vec3(1.25, 1.02, 0.7)), worn.mul(0.8));
+      const soil = GM_UNI.gmPath.mul(sA.rgb.mul(meanInv('soil')));
+      const sn2 = nXY(sN, 1.1);
+      grassCol = mix(grassCol, soil, pathW);
+      grassBump = mix(grassBump, vec3(sn2.x, 0, sn2.y), pathW);
+      grassRough = mix(grassRough, float(0.93), pathW);
+      grassAO = mix(grassAO, float(1), pathW);
+      // beach sand, wet and darker toward the water line
+      const wet = smoothstep(0.7, -0.3, positionWorld.y);
+      const sand = GM_UNI.gmSand.mul(dA.rgb.mul(meanInv('sand'))).mul(mix(float(1), float(0.62), wet));
+      const dn2 = nXY(dN, 0.9);
+      grassCol = mix(grassCol, sand, sandW);
+      grassBump = mix(grassBump, vec3(dn2.x, 0, dn2.y), sandW);
+      grassRough = mix(grassRough, mix(float(0.9), float(0.38), wet), sandW);
+      grassAO = mix(grassAO, float(1), sandW);
+      // sand also creeps over the low checker faces near the beach
+      col = mix(col, sand.mul(0.92), sandW.mul(0.85));
+    }
+    col = mix(col, grassCol, gMask);
+    col = mix(col, GM_UNI.gmLipHi.mul(gAlb), gMask.mul(smoothstep(0.235, 0.3, gSt)).mul(0.35).mul(float(1).sub(pathW)).mul(float(1).sub(sandW)));
+    bump = mix(bump, grassBump, gMask);
+    rough = mix(rough, grassRough, gMask);
+    ao = mix(ao, grassAO, gMask);
+    if (propLip) {
+      const lipA = tclamp(attribute('aLip', 'float'), 0, 1);
+      col = mix(col, GM_UNI.gmLip.mul(gAlb).mul(0.85), lipA);
+      bump = mix(bump, vec3(grassN.x, 0, grassN.y), lipA);
+      ao = mix(ao, float(0.8), lipA);
+    }
+    if (terrain) {
+      const bao = attribute('aAO', 'float');
+      col = col.mul(mix(float(1), bao, 0.55));
+      m.aoNode = ao.mul(bao).mul(bao); // the baked cavity term also shades the sky light and reflections
+    } else m.aoNode = ao;
+    m.colorNode = col;
+    m.roughnessNode = rough;
+    m.normalNode = tnormalize(normalViewGeometry.add(cameraViewMatrix.mul(vec4(bump, 0)).xyz));
     return m;
   }
   // Swaying palms / flowers / flapping birds (vertex animation weighted by the aAnim attribute).
@@ -883,6 +977,7 @@
       const lods = [1, 2, 4].map(st => terrainIndex(cx, cz, ix1, iz1, w, st));
       if (!lods[0].length) continue;
       const pos = new Float32Array(w * hh * 3), nor = new Float32Array(w * hh * 3), rte = new Float32Array(w * hh * 3), ao = new Float32Array(w * hh);
+      const mt = new Float32Array(w * hh * 4);
       const RS = T.RS, RD = T.RD, RM = T.RM, AO = T.AO, X0 = T.XMIN, Z0 = T.ZMIN;
       for (let iz = cz; iz <= iz1; iz++) {
         const za = iz > 0 ? iz - 1 : 0, zb = iz < NZ - 1 ? iz + 1 : NZ - 1, dz = (zb - za) * CELL;
@@ -895,9 +990,10 @@
           nor[v3] = -gx * il; nor[v3 + 1] = il; nor[v3 + 2] = -gz * il;
           rte[v3] = RS[i]; rte[v3 + 1] = RD[i]; rte[v3 + 2] = RM[i];
           ao[v] = AO[i];
+          for (let c = 0; c < 4; c++) mt[v * 4 + c] = T.MT[i * 4 + c];
         }
       }
-      const attrs = { position: new THREE.BufferAttribute(pos, 3), normal: new THREE.BufferAttribute(nor, 3), aRoute: new THREE.BufferAttribute(rte, 3), aAO: new THREE.BufferAttribute(ao, 1) };
+      const attrs = { position: new THREE.BufferAttribute(pos, 3), normal: new THREE.BufferAttribute(nor, 3), aRoute: new THREE.BufferAttribute(rte, 3), aAO: new THREE.BufferAttribute(ao, 1), aMat: new THREE.BufferAttribute(mt, 4) };
       const ch = { meshes: [], lod: 0, x0: X0 + cx * CELL, x1: X0 + ix1 * CELL, z0: Z0 + cz * CELL, z1: Z0 + iz1 * CELL };
       let sphere = null;
       for (let k = 0; k < 3; k++) {

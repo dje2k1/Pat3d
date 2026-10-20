@@ -1130,7 +1130,7 @@ import { lensflare as postLensflare } from 'three/addons/tsl/display/LensflareNo
 const { Fn, If, Loop, pass, mrt, texture: ttexture, perspectiveDepthToViewZ, sin: tsin, sqrt: tsqrt, output, normalView, velocity, diffuseColor, roughness, rtt, uniform,
   vec2, vec3, vec4, float, uv, mix, step, max: tmax, min: tmin, clamp: tclamp, dot, smoothstep, exp: texp, pow: tpow,
   length: tlength, abs: tabs, fract: tfract, floor: tfloor, cos: tcos, atan: tatan, select, acesFilmicToneMapping, agxToneMapping,
-  sRGBTransferOETF } = TSL;
+  neutralToneMapping, sRGBTransferOETF, viewportDepthTexture } = TSL;
 const NOOP = () => {};
 const QUALITIES = ['ultra', 'high', 'medium', 'low'];
 // depth of the sky dome (drawn at clip w * 0.99999): anything deeper is sky; the farthest scenery (≈ 2 km) stays below
@@ -1154,11 +1154,11 @@ const PRESETS = {
 };
 // the look (linear HDR in, display out); every number is a live uniform (K.post.look) except tone
 const LOOK = {
-  tone: 'aces', exposure: 1.0, directExposure: 1.05,
+  tone: 'aces', exposure: 0.96, directExposure: 1.05,
   bloomStrength: 0.42, bloomRadius: 0.55, bloomThreshold: 0.95,
-  sat: 1.14, curve: 0.18, vignette: 0.34, grain: 0.022,
+  sat: 1.1, curve: 0.26, gamut: 0.22, vignette: 0.34, grain: 0.022,
   shadowTint: [0.94, 0.985, 1.08], highTint: [1.05, 1.0, 0.92],
-  ao: 0.85, gi: 0.6, ssr: 1.0, dofScale: 1, dofRange: 0.08, shafts: 0.5, flare: 0.08, glare: 0.35, ca: 0.0022, caSpeed: 0.018, sharp: 0.25
+  ao: 0.85, gi: 0.6, ssr: 1.0, dofScale: 1, dofRange: 0.08, shafts: 0.5, flare: 0.08, glare: 0.35, ca: 0.0022, caSpeed: 0.018, sharp: 0.25, taaSharp: 0.35
 };
 
 // ---------- K.gfx: the active preset's content knobs (other parts rebuild what depends on them in onChange) ----------
@@ -1202,14 +1202,14 @@ const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _fw = new THREE.Vector
 const U = {
   exposure: uniform(LOOK.exposure), aspect: uniform(16 / 9), flash: uniform(new THREE.Vector4(0, 0, 0, 0)), bars: uniform(0),
   time: uniform(0), res: uniform(new THREE.Vector2(1280, 720)),
-  sat: uniform(LOOK.sat), curve: uniform(LOOK.curve), vig: uniform(LOOK.vignette), grain: uniform(LOOK.grain),
+  sat: uniform(LOOK.sat), curve: uniform(LOOK.curve), gamut: uniform(LOOK.gamut), vig: uniform(LOOK.vignette), grain: uniform(LOOK.grain),
   shadowTint: uniform(new THREE.Vector3(...LOOK.shadowTint)), highTint: uniform(new THREE.Vector3(...LOOK.highTint)),
   ao: uniform(LOOK.ao), gi: uniform(LOOK.gi), ssr: uniform(LOOK.ssr),
   sunUV: uniform(new THREE.Vector2(0.5, 0.2)), sunVis: uniform(0), sunCol: uniform(new THREE.Vector3(1, 0.94, 0.82)),
   shafts: uniform(LOOK.shafts), flare: uniform(LOOK.flare), glare: uniform(LOOK.glare),
   ca: uniform(LOOK.ca), mb: uniform(0), mbVel: uniform(1), speed: uniform(0),
   dof: uniform(0), focus: uniform(8), focal: uniform(1), dofMax: uniform(8), near: uniform(0.1), far: uniform(900),
-  texel: uniform(new THREE.Vector2(1 / 1280, 1 / 720))
+  texel: uniform(new THREE.Vector2(1 / 1280, 1 / 720)), taaSharp: uniform(LOOK.taaSharp)
 };
 post.look = LOOK;
 post.uniforms = U;
@@ -1259,7 +1259,17 @@ const hashUV = Fn(([p]) => {
   p3.addAssign(dot(p3, p3.yzx.add(33.33)));
   return tfract(p3.x.add(p3.y).mul(p3.z));
 }).setLayout({ name: 'kPostHash', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
-const toneMap = c => (LOOK.tone === 'agx' ? agxToneMapping(c, U.exposure) : acesFilmicToneMapping(c, U.exposure));
+// gamut compression before the tone curve: the most saturated (near-primary) colours lose a little chroma so ACES does
+// not push them to neon (pure green grass, saturated paint); moderate colours are untouched
+function gamutIn(c) {
+  const mx = tmax(c.r, tmax(c.g, c.b)), mn = tmin(c.r, tmin(c.g, c.b));
+  const sv = mx.sub(mn).div(tmax(mx, 1e-4));
+  return mix(c, vec3(dot(c, W3)), smoothstep(0.62, 1.0, sv).mul(U.gamut));
+}
+const toneMap = c0 => {
+  const c = gamutIn(c0);
+  return LOOK.tone === 'agx' ? agxToneMapping(c, U.exposure) : LOOK.tone === 'neutral' ? neutralToneMapping(c, U.exposure) : acesFilmicToneMapping(c, U.exposure);
+};
 // linear display-referred colour -> the grade (luma-split tint, saturation, vignette) -> sRGB + contrast curve
 function gradeLDR(c, r2) {
   let g = c.mul(mix(U.shadowTint, U.highTint, smoothstep(0.0, 0.65, dot(c, W3))));
@@ -1478,10 +1488,13 @@ function buildGraph(cfg, sr) {
       const zc = viewDist(depth.sample(u).x).toVar();
       const cc = cocPx(zc).toVar();
       const acc = hdrRaw.sample(u).rgb.toVar(), ws = float(1).toVar();
+      // the spiral is rotated per pixel (hash): the sparse taps turn into fine noise, which the fill pass smooths
+      const rot = hashUV(u.mul(U.res).floor()).mul(6.2831853).toVar();
+      const cr = tcos(rot).toVar(), sr = tsin(rot).toVar();
       for (let i = 1; i < N; i++) {
-        const rr = Math.sqrt(i / N), a = i * 2.39996323;
+        const rr = Math.sqrt(i / N), a = i * 2.39996323, ca = Math.cos(a), sa = Math.sin(a);
         const r = U.dofMax.mul(rr);
-        const q = u.add(vec2(Math.cos(a), Math.sin(a)).mul(r).mul(U.texel));
+        const q = u.add(vec2(cr.mul(ca).sub(sr.mul(sa)), sr.mul(ca).add(cr.mul(sa))).mul(r).mul(U.texel));
         const zs = viewDist(depth.sample(q).x);
         const cs = cocPx(zs);
         const w = smoothstep(r.sub(1), r.add(0.5), select(zs.lessThan(zc), cs, tmin(cs, cc)));
@@ -1490,10 +1503,19 @@ function buildGraph(cfg, sr) {
       return vec4(acc.div(ws), 1);
     })();
     const d = track(G, rtt(g, null, null, { resolutionScale: 0.5, depthBuffer: false }), 'dof');
-    G.dyn.dof = [d];
-    dofTex = d;
-    G.passes.push('dof(cinematic,x0.5)');
-    G.cost.push(['dof', 0, N / 8]);
+    // fill: a 3x3 tent over the gathered bokeh, spaced by the tap spacing of the spiral (Unreal's "bokeh fill" idea)
+    const fill = Fn(() => {
+      const u = uv().toVar();
+      const t = U.texel.mul(tmax(U.dofMax.mul(1.2 / Math.sqrt(N)), 1.0)).toVar();
+      const acc = d.sample(u).rgb.mul(4).toVar();
+      for (const [x, y, w] of [[-1, 0, 2], [1, 0, 2], [0, -1, 2], [0, 1, 2], [-1, -1, 1], [1, -1, 1], [-1, 1, 1], [1, 1, 1]]) acc.addAssign(d.sample(u.add(t.mul(vec2(x, y)))).rgb.mul(w));
+      return vec4(acc.div(16), 1);
+    })();
+    const df = track(G, rtt(fill, null, null, { resolutionScale: 0.5, depthBuffer: false }), 'dofFill');
+    G.dyn.dof = [d, df];
+    dofTex = df;
+    G.passes.push('dof(cinematic,x0.5,gather+fill)');
+    G.cost.push(['dof', 0, N / 8 + 1]);
   }
   let src = hdr;
   let upNote = '';
@@ -1509,6 +1531,14 @@ function buildGraph(cfg, sr) {
       const co = d.mul(U.ca.mul(r2)).toVar();
       col3.assign(vec3(src.sample(u.sub(co)).r, src.sample(u).g, src.sample(u.add(co)).b));
     } else col3.assign(src.sample(u).rgb);
+    {
+      // post-TAA sharpen (the temporal resolve softens texture detail): unsharp mask on the 4 neighbours, limited to
+      // the local min/max so bright HDR edges never ring
+      const tx = vec2(U.texel.x, 0), ty = vec2(0, U.texel.y);
+      const a = src.sample(u.sub(tx)).rgb, b = src.sample(u.add(tx)).rgb, c = src.sample(u.sub(ty)).rgb, e = src.sample(u.add(ty)).rgb;
+      const lo = tmin(tmin(tmin(a, b), tmin(c, e)), col3), hi = tmax(tmax(tmax(a, b), tmax(c, e)), col3);
+      col3.assign(tclamp(col3.add(col3.sub(a.add(b).add(c).add(e).mul(0.25)).mul(U.taaSharp)), lo, hi));
+    }
     if (mbN > 0) {
       If(U.mb.greaterThan(0.002), () => {
         const v = vel.sample(u).xy.mul(vec2(0.5, -0.5)).mul(U.mbVel);
@@ -1610,6 +1640,9 @@ function graphKey() {
 }
 function sleepGraph(G) {
   if (!G) return;
+  // the scene depth copy that transparent materials read (K.post.sceneDepth) keeps one texture per scene pass target
+  const rt = G.named.scene && G.named.scene.renderTarget, cache = sceneDepthN && sceneDepthN._cacheTextures;
+  if (rt && cache && cache.has(rt)) { try { cache.get(rt).dispose(); } catch (e) { /* gone */ } cache.delete(rt); }
   for (const n of G.nodes) {
     for (const k of Object.keys(n)) {
       const v = n[k];
@@ -1932,6 +1965,29 @@ post.ssr = function (material, strength, rough) {
   return sn;
 };
 post.refreshEnvironment = refreshEnvironment;
+// the opaque scene depth for transparent materials (soft particles, water depth tint/foam): ONE shared
+// viewportDepthTexture node, so the scene pass copies its depth buffer once per frame whoever reads it, and the copy
+// follows the graphs (freed when a graph sleeps). Use .x (or .sample(uv).x) -> perspective depth 0..1; view distance:
+// perspectiveDepthToViewZ(d, cameraNear, cameraFar).negate(). Only meaningful while K.post.ok (else null).
+let sceneDepthN = null;
+post.sceneDepth = function () {
+  if (!post.ok) return null;
+  if (!sceneDepthN) sceneDepthN = viewportDepthTexture();
+  return sceneDepthN;
+};
+// drops every cached graph and rebuilds the current one (after editing graph-time settings such as K.post.look.tone)
+post.rebuild = function () {
+  if (!S.active) return false;
+  for (const k of Object.keys(S.graphs)) {
+    const E = S.graphs[k];
+    sleepGraph(E.G);
+    disposeGraph(E.G);
+    try { E.pipe.dispose(); } catch (e) { /* older pipelines */ }
+  }
+  S.graphs = {}; S.pipe = null; S.G = null; S.built = '';
+  buildPipeline();
+  return true;
+};
 post._state = S; // dev probes (dev/post): the live graph, its nodes and frame state
 post.stats = function () {
   const V = K.view, st = V && V.stats, c = S.cfg, G = S.G;
@@ -1960,7 +2016,11 @@ post.stats = function () {
 // Two instanced particle pools (soft = smoke/dust/confetti, glow = sparks/stars/fire) whose motion is evaluated in the
 // vertex shader from spawn data (one buffer write per spawn, nothing per particle per frame), premultiplied blending
 // with a per-particle additive/alpha mix, ribbon trails, lit debris chunks and camera-space wind streaks.
-// Colours are linear HDR (> 1) so a bloom pass makes them glow; tone mapping/encoding follow the renderer settings.
+// Colours are linear HDR (> 1) so the post pipeline's bloom makes them glow. v3 (TSL): instanced quads whose motion
+// is evaluated in the vertex stage (vertexNode), shapes + premultiplied output in the fragment stage (outputNode, so
+// the scene pass MRT outputs still apply: the effects never overwrite the normal / velocity buffers), scene fog
+// (additive share fades out, alpha share mixes toward the fog colour) and soft particles (billboards fade where they
+// meet opaque geometry, from a copy of the scene pass depth) while the render pipeline runs.
 (() => {
 const TAU = Math.PI * 2;
 // xorshift32: inlines into the emitters (no boxed doubles from the Math.random builtin in the hot path)
@@ -2016,18 +2076,28 @@ const ST = {
 };
 
 // ---------------------------------------------------------------- shaders (TSL)
-// The v2 GLSL particle / ribbon / speed-line programs ported to TSL node materials: the motion is still evaluated in
-// the vertex stage from the spawn data (vertexNode), the shapes in the fragment stage (fragmentNode, premultiplied
-// output: the `add` share is pure light, the rest alpha-blended).
-// PORT(vfx->post): v2 also fogged the effects (additive share fading out, alpha share mixing toward the fog colour) and
-// switched light effects to "screen" blending on the direct (non-HDR) path; v3 (post+vfx builder): soft particles
-// against the depth buffer, fog, HDR bloom-friendly intensities, maybe instancedArray / compute.
+// The v2 GLSL particle / ribbon / speed-line programs as TSL node materials: the motion is evaluated in the vertex
+// stage from the spawn data (vertexNode), the shapes in the fragment stage (outputNode, premultiplied output: the `add`
+// share is pure light, the rest alpha-blended; outputNode rather than fragmentNode keeps the scene pass MRT working).
+// Fog follows scene.fog (THREE.Fog / FogExp2, uniforms refreshed every update); soft particles read the scene pass depth
+// (K.post.sceneDepth(): one shared depth copy per scene pass, only while the render pipeline runs).
 const { Fn, If, Discard, uniform, attribute, varyingProperty, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp,
   abs: tabs, max: tmax, min: tmin, fract: tfract, floor: tfloor, mod: tmod, sin: tsin, cos: tcos, pow: tpow, exp: texp,
   dot: tdot, normalize: tnormalize, cross: tcross, length: tlength, sqrt: tsqrt, select, texture: ttexture,
-  modelViewMatrix, cameraProjectionMatrix } = TSL;
+  modelViewMatrix, cameraProjectionMatrix, viewportDepthTexture, perspectiveDepthToViewZ, cameraNear, cameraFar } = TSL;
 const fu = v => uniform(v);
 const max3 = c => tmax(c.x, tmax(c.y, c.z));
+// scene fog, shared by every effect material (refreshed from scene.fog in update): mode 0 none, 1 range, 2 density
+const FOG = { col: uniform(new THREE.Vector3(1, 1, 1)), near: uniform(100), far: uniform(600), den: uniform(0), mode: uniform(0) };
+const fogFactor = d => select(FOG.mode.greaterThan(1.5), float(1).sub(texp(FOG.den.mul(d).mul(FOG.den.mul(d)).negate())),
+  smoothstep(FOG.near, FOG.far, d)).mul(select(FOG.mode.greaterThan(0.5), float(1), float(0)));
+function syncFog(scene) {
+  const f = scene && scene.fog;
+  if (f && f.isFog) { FOG.mode.value = 1; FOG.near.value = f.near; FOG.far.value = Math.max(f.near + 1e-3, f.far); }
+  else if (f && f.isFogExp2) { FOG.mode.value = 2; FOG.den.value = f.density; }
+  else { FOG.mode.value = 0; return; }
+  FOG.col.value.set(f.color.r, f.color.g, f.color.b);
+}
 function blendMat(params) {
   const m = new THREE.MeshBasicNodeMaterial(Object.assign({
     transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, fog: false,
@@ -2037,23 +2107,34 @@ function blendMat(params) {
   }, params || {}));
   return m;
 }
-// premultiplied output of a colour col with alpha a and additive share add
-const premul = (col, a, add) => {
+// premultiplied output of a colour col with alpha a and additive share add, fogged by f (0..1): the light share
+// fades out, the alpha-blended share takes the fog colour
+const premul = (col, a, add, f) => {
   const aa = a.mul(float(1).sub(add));
-  const rgb = select(add.greaterThan(0.004), col.mul(a.mul(add)), vec3(0)).add(col.mul(aa));
-  return vec4(rgb, aa);
+  const lit = select(add.greaterThan(0.004), col.mul(a.mul(add)), vec3(0));
+  if (!f) return vec4(lit.add(col.mul(aa)), aa);
+  return vec4(lit.mul(float(1).sub(f)).add(mix(col, FOG.col, f).mul(aa)), aa);
 };
+// soft particles: 0..1 visibility of a fragment at view distance `dist` in front of the opaque scene, over `range`
+// (range 0 = hard). Sampled at the top of the fragment program (uniform control flow).
+const softFade = (dist, range) => {
+  const dn = K.post && typeof K.post.sceneDepth === 'function' ? K.post.sceneDepth() : null;
+  const sceneDist = perspectiveDepthToViewZ((dn || viewportDepthTexture()).x, cameraNear, cameraFar).negate();
+  return select(range.greaterThan(0.001), tclamp(sceneDist.sub(dist).div(tmax(range, 0.001)), 0, 1), float(1));
+};
+const softOn = () => !!(K.post && K.post.ok && K.post.hdr);
 function particleMaterial(U) {
   const m = blendMat();
+  const soft = softOn();
   const vUv = varyingProperty('vec2', 'vfxUv'), vCol = varyingProperty('vec4', 'vfxCol'), vInfo = varyingProperty('vec4', 'vfxInfo');
-  const vMisc = varyingProperty('vec3', 'vfxMisc');
+  const vMisc = varyingProperty('vec3', 'vfxMisc'), vFog = varyingProperty('vec2', 'vfxFog');
   const sizeCurve = (c, t) => select(c.lessThan(0.5), float(1).sub(float(1).sub(t).mul(float(1).sub(t))),
     select(c.lessThan(1.5), t, select(c.lessThan(2.5), smoothstep(0.0, 0.14, t).mul(float(1).sub(t.mul(t))), float(1).sub(tpow(float(1).sub(t), 4)))));
   m.vertexNode = Fn(() => {
     const i0 = attribute('i0', 'vec4'), i1 = attribute('i1', 'vec4'), i2 = attribute('i2', 'vec4'), i3 = attribute('i3', 'vec4');
     const i4 = attribute('i4', 'vec4'), i5 = attribute('i5', 'vec4'), i6 = attribute('i6', 'vec4'), i7 = attribute('i7', 'vec4');
     const aCorner = attribute('aCorner', 'vec2');
-    vUv.assign(aCorner); vCol.assign(vec4(0)); vInfo.assign(vec4(0)); vMisc.assign(vec3(0));
+    vUv.assign(aCorner); vCol.assign(vec4(0)); vInfo.assign(vec4(0)); vMisc.assign(vec3(0)); vFog.assign(vec2(0));
     const out = vec4(0, 0, 2, 1).toVar();
     const age = U.uTime.sub(i0.w).toVar();
     If(age.greaterThanEqual(0).and(age.lessThan(i1.w)), () => {
@@ -2138,6 +2219,9 @@ function particleMaterial(U) {
       vCol.assign(vec4(col, a));
       vInfo.assign(vec4(shp, i6.z, i6.w, t));
       vMisc.assign(vec3(i6.x, light, flip));
+      // view distance (fog, soft fade) and the soft-fade range: billboards fade over ~half their size where they meet
+      // opaque geometry; ground-aligned (planar) effects stay hard (they lie on the surface on purpose)
+      vFog.assign(vec2(mv.z.negate(), select(planar, float(0), tclamp(size.mul(0.6), 0.06, 1.6))));
       out.assign(cameraProjectionMatrix.mul(mv));
     });
     return out;
@@ -2150,6 +2234,7 @@ function particleMaterial(U) {
     const cell = tfloor(tfract(vMisc.x.mul(7.13)).mul(3.999));
     const poff = vec2(tmod(cell, 2), tfloor(cell.mul(0.5))).mul(0.5);
     const puffA = ttexture(U.uPuff, poff.add(0.25).add(p.mul(0.24))).a.toVar();
+    const vis = (soft ? softFade(vFog.x, vFog.y) : float(1)).toVar();
     const col = vec3(vCol.xyz).toVar(), add = float(vInfo.y).toVar(), m0 = float(0).toVar();
     If(shape.lessThan(0.5), () => {
       If(r2.greaterThanEqual(1), () => { Discard(); });
@@ -2192,9 +2277,9 @@ function particleMaterial(U) {
       const ax = tabs(p.x);
       m0.assign(texp(p.y.mul(p.y).mul(-18)).mul(tpow(float(1).sub(ax), 2.4)).add(texp(p.x.mul(p.x).mul(50).add(p.y.mul(p.y).mul(3)).negate()).mul(0.7)));
     });
-    const a = vCol.w.mul(m0);
+    const a = vCol.w.mul(m0).mul(vis);
     If(a.lessThan(0.002), () => { Discard(); });
-    return premul(col, a, add);
+    return premul(col, a, add, fogFactor(vFog.x));
   })();
   return m;
 }
@@ -2208,6 +2293,7 @@ function ribbonMaterial(U) {
   const mv = vec4(mv0.xyz.add(s.mul(aSide.x.mul(aSide.y))), 1);
   m.vertexNode = cameraProjectionMatrix.mul(mv);
   const fade = smoothstep(1.2, 4.0, mv.z.negate()).toVarying('vfxRibFade');
+  const dist = mv.z.negate().toVarying('vfxRibDist');
   m.outputNode = Fn(() => {
     const v = aSide.x;
     const core = texp(v.mul(v).mul(-14));
@@ -2216,7 +2302,7 @@ function ribbonMaterial(U) {
     const col = mix(aCol.xyz, vec3(max3(aCol.xyz)), core.mul(0.45)).mul(energy);
     const a = aCol.w.mul(fade).mul(mm);
     If(a.lessThan(0.002), () => { Discard(); });
-    return premul(col, a, aSide.w);
+    return premul(col, a, aSide.w, fogFactor(dist));
   })();
   return m;
 }
@@ -2587,7 +2673,7 @@ function chunkGeometry() {
   return g;
 }
 function makeChunks(cap) {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.3, flatShading: true });
+  const mat = new THREE.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.3, flatShading: true });
   const mesh = new THREE.InstancedMesh(chunkGeometry(), mat, cap);
   mesh.name = 'vfx-debris';
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -2723,7 +2809,8 @@ function build(scene) {
 }
 function attach(scene) {
   const list = [ST.soft.mesh, ST.glow.mesh, ST.rib.mesh, ST.chkMesh, ST.sl.mesh];
-  for (let i = 0; i < list.length; i++) { if (list[i].parent) list[i].parent.remove(list[i]); scene.add(list[i]); list[i].visible = true; }
+  // userData.noEnv: hidden while K.post captures the environment cube
+  for (let i = 0; i < list.length; i++) { if (list[i].parent) list[i].parent.remove(list[i]); scene.add(list[i]); list[i].visible = true; list[i].userData.noEnv = true; }
   ST.scene = scene;
 }
 function init(scene) {
@@ -2826,6 +2913,7 @@ function update(dt, camera) {
   ST.T += dt; ST.clock += dt;
   ST.dt = dt;
   readCamera(camera || (K.view && K.view.camera));
+  syncFog(ST.scene);
   ST.D = quality();
   const S = ST.soft, G = ST.glow;
   S.n = 0; G.n = 0;
@@ -9625,13 +9713,15 @@ function skinGeometry(parts, opts) {
 const { Fn, uniform, attribute, texture: ttex, float, vec2, vec3, vec4, clamp: tclamp, abs: tabs, dot: tdot, normalize: tnormalize,
   pow: tpow, sin: tsin, atan: tatan, mix: tmix, max: tmax, min: tmin, smoothstep: tsmooth, select, length: tlen, fwidth,
   normalView, positionView, positionGeometry, normalGeometry, positionLocal, normalLocal, faceDirection, uv: tuv,
-  instancedBufferAttribute } = TSL;
+  instancedBufferAttribute, cameraViewMatrix } = TSL;
 // shared look uniforms (one Kit): rim light, fur shells, lids / gaze
 const KU = {
   rim: uniform(lin('#fff1d6').multiplyScalar(0.55)),
   furScale: uniform(5.5), furLen: uniform(0.013), shells: uniform(10), lag: uniform(new V3()), bump: uniform(0.9),
   sss: uniform(0.8),
-  lid: uniform(new THREE.Vector4(1.3, 1.3, -1.4, -1.4)), wheel: uniform(0), glow: uniform(0.75), curv: uniform(new THREE.Vector2(0.16, 0.16)), gaze: uniform(new THREE.Vector2()), xeyes: uniform(0)
+  lid: uniform(new THREE.Vector4(1.3, 1.3, -1.4, -1.4)), wheel: uniform(0), glow: uniform(0.75), curv: uniform(new THREE.Vector2(0.16, 0.16)), gaze: uniform(new THREE.Vector2()), xeyes: uniform(0),
+  // the scene's sun (world direction towards the light, colour x intensity): wrap lighting on fur
+  sunDir: uniform(new V3(0.4, 0.8, 0.45).normalize()), sunCol: uniform(new THREE.Color(0, 0, 0))
 };
 // Kit's generated textures (K.tex). The materials sample a private 1x1 placeholder until K.tex has the real image, then
 // every texture node switches to it: a K.tex texture is never uploaded before its WebP arrived (see STATUS: K.tex swap)
@@ -9679,6 +9769,16 @@ function rimTerm(k) {
   const r = float(1).sub(tclamp(tabs(tdot(tnormalize(normalView), tnormalize(positionView.negate()))), 0, 1));
   return KU.rim.mul(r.mul(r).mul(r)).mul(tclamp(normalView.y.mul(0.5).add(0.5), 0, 1).mul(0.65).add(0.35)).mul(k == null ? 1 : k);
 }
+// subsurface-like wrap lighting from the sun: light reaches past the terminator (fur scatters it), so the lit / shadow
+// boundary is soft instead of a hard line. Added as emission: wrap(n.l) - max(n.l, 0), albedo x sun / pi (three's
+// Lambert), k = strength.
+function wrapTerm(alb, k) {
+  const l = tnormalize(cameraViewMatrix.mul(vec4(KU.sunDir, 0)).xyz);
+  const ndl = tdot(tnormalize(normalView), l);
+  const w = 0.5;
+  const extra = tmax(tclamp(ndl.add(w).div(1 + w), 0, 1).sub(tmax(ndl, 0)), 0);
+  return alb.mul(KU.sunCol).mul(extra.mul(k).mul(1 / Math.PI)); // k: number or node
+}
 // Kit's skin and clothes: vertex albedo + per-vertex [roughness, fur, fabric, thin]; fur strands (bump, tone), knit,
 // sheen on fur and fabric, translucency (ears, tail) through MeshSSSNodeMaterial, warm rim light
 function bodyMaterial() {
@@ -9702,14 +9802,15 @@ function bodyMaterial() {
   m.thicknessAttenuationNode = float(0.75);
   m.thicknessPowerNode = float(3);
   m.thicknessScaleNode = float(3.2);
-  m.emissiveNode = rimTerm().mul(tmix(float(1), col.mul(1.4).add(0.3), fur.mul(0.6)));
+  m.emissiveNode = rimTerm().mul(tmix(float(1), col.mul(1.4).add(0.3), fur.mul(0.6))).add(wrapTerm(m.colorNode, fur.mul(0.45).add(fab.mul(0.25)).add(0.1)));
   return m;
 }
 // fur shells: layer h = (i + 1) / n pushed out along the skinned normal, bent by the lag vector (motion, gravity, wind);
 // a strand map decides where a layer is opaque (tapered, clumped strands), mip-mapped so it averages smoothly far away
+// lit like the body (sheen, translucency, wrap) so the coat does not darken the shadow side or the silhouette
 function shellMaterial() {
   kitTextures();
-  const m = new THREE.MeshStandardNodeMaterial({ transparent: true, depthWrite: false, roughness: 0.8, metalness: 0 });
+  const m = new THREE.MeshSSSNodeMaterial({ transparent: true, depthWrite: false, roughness: 0.8, metalness: 0 });
   m.alphaTest = 0.02;
   const col = attribute('kcol', 'vec3'), mt = attribute('kmat', 'vec4'), si = attribute('kshell', 'float');
   const h = si.add(1).div(KU.shells);
@@ -9722,7 +9823,17 @@ function shellMaterial() {
   const tone = float(1).add(f.z.sub(0.5).mul(0.12)).add(f.y.sub(0.5).mul(0.1));
   m.colorNode = col.mul(h.mul(0.22).add(0.88)).mul(tone);
   m.roughnessNode = float(0.78);
-  m.emissiveNode = rimTerm(h.mul(0.8).add(0.2)).mul(col.mul(1.2).add(0.35));
+  m.metalnessNode = float(0);
+  m.sheenNode = col.mul(0.35);
+  m.sheenRoughnessNode = float(0.45);
+  // strand tips are thin: they glow when back-lit
+  m.thicknessColorNode = col.mul(mt.w.mul(0.8).add(h.mul(0.2))).mul(KU.sss);
+  m.thicknessDistortionNode = float(0.3);
+  m.thicknessAmbientNode = float(0.14);
+  m.thicknessAttenuationNode = float(0.75);
+  m.thicknessPowerNode = float(3);
+  m.thicknessScaleNode = float(2.4);
+  m.emissiveNode = rimTerm(h.mul(0.8).add(0.2)).mul(col.mul(1.2).add(0.35)).add(wrapTerm(m.colorNode, 0.55));
   return m;
 }
 // face details: eyes (sclera, iris with fibres and limbal ring, pupil, catch-lights, cornea clear coat, upper / lower
@@ -10378,8 +10489,29 @@ function furShells(n) {
   KU.shells.value = Math.max(1, n);
   R.fur.geometry.setDrawRange(0, R.shellGeo.userData.perCopy * n);
   R.fur.visible = n > 0;
-  // fewer layers: thicker strands so the coat keeps its density
-  KU.bump.value = n > 0 ? 0.9 : 1.4;
+  // no shells (Économie, no temporal AA): a softer strand bump so the coat reads as velvet, not as speckles
+  KU.bump.value = n > 0 ? 0.9 : 0.55;
+}
+// the scene's sun for the wrap term: the brightest visible directional light (rescanned every 2 s or when the scene /
+// light changes), its direction (position - target) and colour x intensity
+const SUN = { light: null, scan: -9, scene: null, d: new V3(), w: new V3() };
+function trackSun() {
+  const sc = K.view && K.view.scene;
+  if (!sc) return;
+  const L0 = SUN.light;
+  if (S.t - SUN.scan > 2 || S.t < SUN.scan || SUN.scene !== sc || (L0 && (!L0.parent || !L0.visible))) {
+    SUN.scan = S.t; SUN.scene = sc;
+    let best = null, bi = 0;
+    sc.traverseVisible(o => { if (o.isDirectionalLight && o.intensity > bi) { best = o; bi = o.intensity; } });
+    SUN.light = best;
+  }
+  const L = SUN.light;
+  if (!L) { KU.sunCol.value.setRGB(0, 0, 0); return; }
+  L.getWorldPosition(SUN.d); SUN.w.set(0, 0, 0);
+  if (L.target) L.target.getWorldPosition(SUN.w);
+  SUN.d.sub(SUN.w);
+  if (SUN.d.lengthSq() > 1e-8) KU.sunDir.value.copy(SUN.d.normalize());
+  KU.sunCol.value.copy(L.color).multiplyScalar(L.intensity);
 }
 // fur lag: a damped spring on the body's velocity, plus gravity droop and a little wind, in the mesh's local frame
 const FL = { v: new V3(), x: new V3(), q: new THREE.Quaternion(), t: new V3() };
@@ -12063,6 +12195,7 @@ function finishFrame(dt) {
   root.updateMatrixWorld(true);
   scarfStep(dt > 0 ? dt : STEP, !ballOn && root.visible);
   furLag(dt);
+  trackSun();
 
   // invulnerability blink
   const blinkOff = P.invT > 0 && P.star <= 0 && !P.dead && (S.frame >> 2) % 2 === 1;

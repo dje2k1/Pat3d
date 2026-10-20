@@ -616,13 +616,15 @@ function skinGeometry(parts, opts) {
 const { Fn, uniform, attribute, texture: ttex, float, vec2, vec3, vec4, clamp: tclamp, abs: tabs, dot: tdot, normalize: tnormalize,
   pow: tpow, sin: tsin, atan: tatan, mix: tmix, max: tmax, min: tmin, smoothstep: tsmooth, select, length: tlen, fwidth,
   normalView, positionView, positionGeometry, normalGeometry, positionLocal, normalLocal, faceDirection, uv: tuv,
-  instancedBufferAttribute } = TSL;
+  instancedBufferAttribute, cameraViewMatrix } = TSL;
 // shared look uniforms (one Kit): rim light, fur shells, lids / gaze
 const KU = {
   rim: uniform(lin('#fff1d6').multiplyScalar(0.55)),
   furScale: uniform(5.5), furLen: uniform(0.013), shells: uniform(10), lag: uniform(new V3()), bump: uniform(0.9),
   sss: uniform(0.8),
-  lid: uniform(new THREE.Vector4(1.3, 1.3, -1.4, -1.4)), wheel: uniform(0), glow: uniform(0.75), curv: uniform(new THREE.Vector2(0.16, 0.16)), gaze: uniform(new THREE.Vector2()), xeyes: uniform(0)
+  lid: uniform(new THREE.Vector4(1.3, 1.3, -1.4, -1.4)), wheel: uniform(0), glow: uniform(0.75), curv: uniform(new THREE.Vector2(0.16, 0.16)), gaze: uniform(new THREE.Vector2()), xeyes: uniform(0),
+  // the scene's sun (world direction towards the light, colour x intensity): wrap lighting on fur
+  sunDir: uniform(new V3(0.4, 0.8, 0.45).normalize()), sunCol: uniform(new THREE.Color(0, 0, 0))
 };
 // Kit's generated textures (K.tex). The materials sample a private 1x1 placeholder until K.tex has the real image, then
 // every texture node switches to it: a K.tex texture is never uploaded before its WebP arrived (see STATUS: K.tex swap)
@@ -670,6 +672,16 @@ function rimTerm(k) {
   const r = float(1).sub(tclamp(tabs(tdot(tnormalize(normalView), tnormalize(positionView.negate()))), 0, 1));
   return KU.rim.mul(r.mul(r).mul(r)).mul(tclamp(normalView.y.mul(0.5).add(0.5), 0, 1).mul(0.65).add(0.35)).mul(k == null ? 1 : k);
 }
+// subsurface-like wrap lighting from the sun: light reaches past the terminator (fur scatters it), so the lit / shadow
+// boundary is soft instead of a hard line. Added as emission: wrap(n.l) - max(n.l, 0), albedo x sun / pi (three's
+// Lambert), k = strength.
+function wrapTerm(alb, k) {
+  const l = tnormalize(cameraViewMatrix.mul(vec4(KU.sunDir, 0)).xyz);
+  const ndl = tdot(tnormalize(normalView), l);
+  const w = 0.5;
+  const extra = tmax(tclamp(ndl.add(w).div(1 + w), 0, 1).sub(tmax(ndl, 0)), 0);
+  return alb.mul(KU.sunCol).mul(extra.mul(k).mul(1 / Math.PI)); // k: number or node
+}
 // Kit's skin and clothes: vertex albedo + per-vertex [roughness, fur, fabric, thin]; fur strands (bump, tone), knit,
 // sheen on fur and fabric, translucency (ears, tail) through MeshSSSNodeMaterial, warm rim light
 function bodyMaterial() {
@@ -693,14 +705,15 @@ function bodyMaterial() {
   m.thicknessAttenuationNode = float(0.75);
   m.thicknessPowerNode = float(3);
   m.thicknessScaleNode = float(3.2);
-  m.emissiveNode = rimTerm().mul(tmix(float(1), col.mul(1.4).add(0.3), fur.mul(0.6)));
+  m.emissiveNode = rimTerm().mul(tmix(float(1), col.mul(1.4).add(0.3), fur.mul(0.6))).add(wrapTerm(m.colorNode, fur.mul(0.45).add(fab.mul(0.25)).add(0.1)));
   return m;
 }
 // fur shells: layer h = (i + 1) / n pushed out along the skinned normal, bent by the lag vector (motion, gravity, wind);
 // a strand map decides where a layer is opaque (tapered, clumped strands), mip-mapped so it averages smoothly far away
+// lit like the body (sheen, translucency, wrap) so the coat does not darken the shadow side or the silhouette
 function shellMaterial() {
   kitTextures();
-  const m = new THREE.MeshStandardNodeMaterial({ transparent: true, depthWrite: false, roughness: 0.8, metalness: 0 });
+  const m = new THREE.MeshSSSNodeMaterial({ transparent: true, depthWrite: false, roughness: 0.8, metalness: 0 });
   m.alphaTest = 0.02;
   const col = attribute('kcol', 'vec3'), mt = attribute('kmat', 'vec4'), si = attribute('kshell', 'float');
   const h = si.add(1).div(KU.shells);
@@ -713,7 +726,17 @@ function shellMaterial() {
   const tone = float(1).add(f.z.sub(0.5).mul(0.12)).add(f.y.sub(0.5).mul(0.1));
   m.colorNode = col.mul(h.mul(0.22).add(0.88)).mul(tone);
   m.roughnessNode = float(0.78);
-  m.emissiveNode = rimTerm(h.mul(0.8).add(0.2)).mul(col.mul(1.2).add(0.35));
+  m.metalnessNode = float(0);
+  m.sheenNode = col.mul(0.35);
+  m.sheenRoughnessNode = float(0.45);
+  // strand tips are thin: they glow when back-lit
+  m.thicknessColorNode = col.mul(mt.w.mul(0.8).add(h.mul(0.2))).mul(KU.sss);
+  m.thicknessDistortionNode = float(0.3);
+  m.thicknessAmbientNode = float(0.14);
+  m.thicknessAttenuationNode = float(0.75);
+  m.thicknessPowerNode = float(3);
+  m.thicknessScaleNode = float(2.4);
+  m.emissiveNode = rimTerm(h.mul(0.8).add(0.2)).mul(col.mul(1.2).add(0.35)).add(wrapTerm(m.colorNode, 0.55));
   return m;
 }
 // face details: eyes (sclera, iris with fibres and limbal ring, pupil, catch-lights, cornea clear coat, upper / lower
@@ -1369,8 +1392,29 @@ function furShells(n) {
   KU.shells.value = Math.max(1, n);
   R.fur.geometry.setDrawRange(0, R.shellGeo.userData.perCopy * n);
   R.fur.visible = n > 0;
-  // fewer layers: thicker strands so the coat keeps its density
-  KU.bump.value = n > 0 ? 0.9 : 1.4;
+  // no shells (Économie, no temporal AA): a softer strand bump so the coat reads as velvet, not as speckles
+  KU.bump.value = n > 0 ? 0.9 : 0.55;
+}
+// the scene's sun for the wrap term: the brightest visible directional light (rescanned every 2 s or when the scene /
+// light changes), its direction (position - target) and colour x intensity
+const SUN = { light: null, scan: -9, scene: null, d: new V3(), w: new V3() };
+function trackSun() {
+  const sc = K.view && K.view.scene;
+  if (!sc) return;
+  const L0 = SUN.light;
+  if (S.t - SUN.scan > 2 || S.t < SUN.scan || SUN.scene !== sc || (L0 && (!L0.parent || !L0.visible))) {
+    SUN.scan = S.t; SUN.scene = sc;
+    let best = null, bi = 0;
+    sc.traverseVisible(o => { if (o.isDirectionalLight && o.intensity > bi) { best = o; bi = o.intensity; } });
+    SUN.light = best;
+  }
+  const L = SUN.light;
+  if (!L) { KU.sunCol.value.setRGB(0, 0, 0); return; }
+  L.getWorldPosition(SUN.d); SUN.w.set(0, 0, 0);
+  if (L.target) L.target.getWorldPosition(SUN.w);
+  SUN.d.sub(SUN.w);
+  if (SUN.d.lengthSq() > 1e-8) KU.sunDir.value.copy(SUN.d.normalize());
+  KU.sunCol.value.copy(L.color).multiplyScalar(L.intensity);
 }
 // fur lag: a damped spring on the body's velocity, plus gravity droop and a little wind, in the mesh's local frame
 const FL = { v: new V3(), x: new V3(), q: new THREE.Quaternion(), t: new V3() };
@@ -3054,6 +3098,7 @@ function finishFrame(dt) {
   root.updateMatrixWorld(true);
   scarfStep(dt > 0 ? dt : STEP, !ballOn && root.visible);
   furLag(dt);
+  trackSun();
 
   // invulnerability blink
   const blinkOff = P.invT > 0 && P.star <= 0 && !P.dead && (S.frame >> 2) % 2 === 1;

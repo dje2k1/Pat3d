@@ -1,4 +1,413 @@
 {
-  "role": "world",
-  "textures": {}
+ "role": "world",
+ "textures": {
+  "bark_albedo": {
+   "full": "bark_albedo.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "srgb",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 40830,
+   "half": "bark_albedo_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 16738
+  },
+  "bark_normal": {
+   "full": "bark_normal.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 100438,
+   "half": "bark_normal_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 30754
+  },
+  "bark_orm": {
+   "full": "bark_orm.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 107382,
+   "half": "bark_orm_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 35968
+  },
+  "frond_albedo": {
+   "full": "frond_albedo.webp",
+   "size": [
+    1024,
+    512
+   ],
+   "colorSpace": "srgb",
+   "group": "act1",
+   "wrap": "clamp",
+   "bytes": 96410,
+   "half": "frond_albedo_half.webp",
+   "halfSize": [
+    512,
+    256
+   ],
+   "halfBytes": 43206
+  },
+  "frond_normal": {
+   "full": "frond_normal.webp",
+   "size": [
+    1024,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "clamp",
+   "bytes": 54762,
+   "half": "frond_normal_half.webp",
+   "halfSize": [
+    512,
+    256
+   ],
+   "halfBytes": 23208
+  },
+  "grass_albedo": {
+   "full": "grass_albedo.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "srgb",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 606308,
+   "half": "grass_albedo_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 146346
+  },
+  "grass_normal": {
+   "full": "grass_normal.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 450830,
+   "half": "grass_normal_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 165976
+  },
+  "grass_orm": {
+   "full": "grass_orm.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 462668,
+   "half": "grass_orm_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 171196
+  },
+  "leaves_albedo": {
+   "full": "leaves_albedo.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "srgb",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 103908,
+   "half": "leaves_albedo_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 31118
+  },
+  "leaves_normal": {
+   "full": "leaves_normal.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 106408,
+   "half": "leaves_normal_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 36848
+  },
+  "rock_albedo": {
+   "full": "rock_albedo.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "srgb",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 63474,
+   "half": "rock_albedo_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 25614
+  },
+  "rock_normal": {
+   "full": "rock_normal.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 154616,
+   "half": "rock_normal_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 46274
+  },
+  "rock_orm": {
+   "full": "rock_orm.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 157060,
+   "half": "rock_orm_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 58798
+  },
+  "sand_albedo": {
+   "full": "sand_albedo.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "srgb",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 83236,
+   "half": "sand_albedo_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 18836
+  },
+  "sand_normal": {
+   "full": "sand_normal.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 122174,
+   "half": "sand_normal_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 32702
+  },
+  "sand_orm": {
+   "full": "sand_orm.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 116248,
+   "half": "sand_orm_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 28470
+  },
+  "soil_albedo": {
+   "full": "soil_albedo.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "srgb",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 165014,
+   "half": "soil_albedo_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 67430
+  },
+  "soil_normal": {
+   "full": "soil_normal.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 206096,
+   "half": "soil_normal_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 73842
+  },
+  "soil_orm": {
+   "full": "soil_orm.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 264794,
+   "half": "soil_orm_half.webp",
+   "halfSize": [
+    512,
+    512
+   ],
+   "halfBytes": 100096
+  },
+  "water_fx": {
+   "full": "water_fx.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 134234,
+   "half": "water_fx_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 45856
+  },
+  "water_n": {
+   "full": "water_n.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 49112,
+   "half": "water_n_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 18738
+  },
+  "wood_albedo": {
+   "full": "wood_albedo.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "srgb",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 21062,
+   "half": "wood_albedo_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 8606
+  },
+  "wood_normal": {
+   "full": "wood_normal.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 64400,
+   "half": "wood_normal_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 18850
+  },
+  "wood_orm": {
+   "full": "wood_orm.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 78024,
+   "half": "wood_orm_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 27374
+  }
+ }
 }
