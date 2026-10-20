@@ -184,7 +184,7 @@ function particleMaterial(U) {
     });
     return out;
   })();
-  m.fragmentNode = Fn(() => {
+  m.outputNode = Fn(() => {
     // every value shared by several If branches is a var set before the branches: TSL would otherwise emit it inside
     // the first branch that uses it and read it uninitialised in the others
     const p = vec2(vUv).toVar(), shape = float(vInfo.x).toVar(), r2 = tdot(p, p).toVar();
@@ -250,7 +250,7 @@ function ribbonMaterial(U) {
   const mv = vec4(mv0.xyz.add(s.mul(aSide.x.mul(aSide.y))), 1);
   m.vertexNode = cameraProjectionMatrix.mul(mv);
   const fade = smoothstep(1.2, 4.0, mv.z.negate()).toVarying('vfxRibFade');
-  m.fragmentNode = Fn(() => {
+  m.outputNode = Fn(() => {
     const v = aSide.x;
     const core = texp(v.mul(v).mul(-14));
     const mm = tmax(texp(v.mul(v).mul(-2.4)).sub(0.09), 0).add(core.mul(0.45));
@@ -285,7 +285,7 @@ function speedLineMaterial(u) {
     });
     return out;
   })();
-  m.fragmentNode = Fn(() => {
+  m.outputNode = Fn(() => {
     const x01 = aCorner.x.mul(0.5).add(0.5);
     const a = vA.mul(texp(aCorner.y.mul(aCorner.y).mul(-3))).mul(tsin(x01.mul(3.14159))).mul(float(1).sub(x01).mul(0.65).add(0.35));
     If(a.lessThan(0.003), () => { Discard(); });

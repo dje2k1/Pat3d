@@ -1,4 +1,90 @@
 {
-  "role": "kit",
-  "textures": {}
+ "role": "kit",
+ "textures": {
+  "board_deck": {
+   "full": "board_deck.webp",
+   "size": [
+    256,
+    1024
+   ],
+   "colorSpace": "srgb",
+   "group": "act2",
+   "wrap": "clamp",
+   "bytes": 48328,
+   "half": "board_deck_half.webp",
+   "halfSize": [
+    128,
+    512
+   ],
+   "halfBytes": 13348
+  },
+  "board_deck_n": {
+   "full": "board_deck_n.webp",
+   "size": [
+    256,
+    1024
+   ],
+   "colorSpace": "linear",
+   "group": "act2",
+   "wrap": "clamp",
+   "bytes": 88356,
+   "half": "board_deck_n_half.webp",
+   "halfSize": [
+    128,
+    512
+   ],
+   "halfBytes": 22866
+  },
+  "board_deck_orm": {
+   "full": "board_deck_orm.webp",
+   "size": [
+    256,
+    1024
+   ],
+   "colorSpace": "linear",
+   "group": "act2",
+   "wrap": "clamp",
+   "bytes": 92928,
+   "half": "board_deck_orm_half.webp",
+   "halfSize": [
+    128,
+    512
+   ],
+   "halfBytes": 22718
+  },
+  "fur": {
+   "full": "fur.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 158172,
+   "half": "fur_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 45696
+  },
+  "knit": {
+   "full": "knit.webp",
+   "size": [
+    256,
+    256
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 45480,
+   "half": "knit_half.webp",
+   "halfSize": [
+    128,
+    128
+   ],
+   "halfBytes": 13236
+  }
+ }
 }
