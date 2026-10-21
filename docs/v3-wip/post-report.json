@@ -1,0 +1,104 @@
+{
+ "role": "post+vfx (dev/post): src/15-post.js (K.post, K.gfx), src/16-vfx.js (K.vfx)",
+ "summary": "The post and VFX work is finished and verified, and the project is paused as the user asked. ./build.sh passes. The e2e suites for my area pass on both backends: 48/48 on WebGL 2 and 6/6 on WebGPU. Nothing is committed (the lead commits). The working-tree changes are src/15-post.js, the rebuilt index.html and dev/post/STATUS.md. 16-vfx.js is unchanged from HEAD f6ed8e5.\n\nThis session did three things:\n\n1. **Kit's \"flight darkening\" note: closed.** I ran the Kit role's exact probe (dev/post/steps-tr3.js) on all four presets. Économie has no temporal pass, yet it shows the same curve as the others. Brightness goes from 160 to 106, which the letterbox bars and the change of view account for, and the screenshot looks normal. The 130 → 15 drop came from an old build and no longer happens.\n\n2. **Fixed: Ultra drew a black screen on WebGPU.** Ultra's scene pass wrote 5 colour buffers (40 bytes per pixel), over WebGPU's 32-byte limit. The pipeline creation failed and the WebGPU suite showed 4/6. When SSR and velocity are both on (Ultra, Élevé), the SSR mask (strength and roughness) is now packed into the spare channel of the velocity buffer and decoded before the SSR pass. Ultra now uses 4 buffers (32 bytes) and Élevé 3. `K.post.ssr()` is unchanged for the other roles. After the fix the WebGPU suite passes 6/6, a WebGPU Ultra tour of both acts looks right, and an SSR test slab still shows reflections on WebGL 2.\n\n3. **Preset tuning: Super Résolution now uses FSR1 by default on every preset.** I measured TAAU (three's temporal upscaler) as clearly softer than the other path: anti-aliasing at the lower internal resolution, then FSR1 upscale and sharpening. Sharpness is the average edge contrast of the image centre, plus image similarity to native (PSNR, higher is closer):\n   - Élevé ×0.85: TAAU 7.2 / 32.2 dB, FSR1 19.7 / 36.8 dB, native 18.3.\n   - Moyen ×0.6: TAAU 6.0 / 31.3 dB, FSR1 12.1 / 34.5 dB.\n\n   More frames do not fix it (240 still frames), the camera jitter is applied correctly, and stronger sharpening only gains 3%. The softness is built into TAAU's reconstruction filter. FSR1 is also cheaper (Moyen + SR: 1066 vs 1906 ms per software-rendered frame). TAAU stays available with `K.post.setUpscaler('taau')`. The phone default is therefore Moyen + FSR1; the phone screenshots (844×390 landscape) look clean.\n\n**Verification:**\n- Preset switching stress (16 combinations of preset, Super Résolution and upscaler, 3 cycles): geometries, programs, render targets and textures stop growing after the first cycle (textures 163 → 164 → 164).\n- Ghosting (a bright box crossing at 14 px per frame): average trail difference of 0.8–0.9 out of 255 on the temporal presets, none on Économie. Nothing visible.\n- The cost per preset (passes, internal resolution, cost, draw calls) is a table in STATUS.md.\n\n**API for other roles (stable, documented in STATUS.md):**\n- `K.post.ssr(material, strength = 1, roughness?)` opts any material into SSR and returns a strength uniform. Strength and roughness can be numbers or TSL nodes, and transparent materials work too. SSR runs on Ultra (×0.75) and Élevé (×0.5); the values are stored at 32 and 64 levels.\n- Scene materials must use colorNode / outputNode, never fragmentNode.\n- `K.post.sceneDepth()` gives a shared depth node for transparent materials (null when the pipeline is off).\n- Other calls: uHDR, envMap, refreshEnvironment, setSun (also follows the brightest visible directional light), cinematic(on, {focus, letterbox, dof}), speed, flash, letterbox, quality / setQuality, superRes / setSuperRes, upscaler / setUpscaler('auto'|'taau'|'fsr'), compileAsync, stats() (passes, internal/output resolution, upscale, cost, calls…), look, uniforms, rebuild.\n- `K.gfx = {preset, furShells, grass, texRes, shadows, ssr, presets, onChange, offChange, sync}`.\n\ndev/post/STATUS.md has resume notes for next week, the verification tables, the API, the requests for the integrator, known issues and lessons. The older log is kept in dev/post/STATUS.prev.md.",
+ "files": [
+  "/home/user/pat3d/src/15-post.js",
+  "/home/user/pat3d/index.html",
+  "/home/user/pat3d/dev/post/STATUS.md",
+  "/home/user/pat3d/dev/post/STATUS.prev.md",
+  "/home/user/pat3d/dev/post/steps-tr3.js",
+  "/home/user/pat3d/dev/post/steps-ssr.js",
+  "/home/user/pat3d/dev/post/steps-taau.js",
+  "/home/user/pat3d/dev/post/steps-taau2.js",
+  "/home/user/pat3d/dev/post/steps-jit.js",
+  "/home/user/pat3d/dev/post/steps-jit2.js",
+  "/home/user/pat3d/dev/post/e2e-gl-final2.log",
+  "/home/user/pat3d/dev/post/e2e-gpu-final2.log",
+  "/home/user/pat3d/dev/post/e2e-gpu-p4.log",
+  "/home/user/pat3d/dev/post/e2e-gpu-p4b.log",
+  "/home/user/pat3d/dev/post/e2e-gl-p4b.log",
+  "/home/user/pat3d/dev/post/p4-verify-gl.json",
+  "/home/user/pat3d/dev/post/p4b-verify-gl.json"
+ ],
+ "tests": [
+  {
+   "name": "./build.sh",
+   "pass": true,
+   "notes": "index.html 925640 bytes, test.html 925678 bytes, no build errors"
+  },
+  {
+   "name": "e2e WebGL 2 (private build) desktop,valley,boss,post,fullrun,act2 on the final code",
+   "pass": true,
+   "notes": "48/48 in 384 s (dev/post/e2e-gl-final2.log). Includes VFX jump sparkles, VFX no leak (full run plus 2 min effect stress), post pipeline, preset switching from the pause menu with Super Résolution, settings kept after reload, ?nopost fallback, Act 2 bumper cinematic, game over path. Also 48/48 after the buffer fix alone (e2e-gl-p4b.log)."
+  },
+  {
+   "name": "e2e WebGPU (private build) on the final code",
+   "pass": true,
+   "notes": "6/6 in 121 s, no console errors (dev/post/e2e-gpu-final2.log). Before the buffer fix it was 4/6: Ultra was black because of the 40-byte limit error (dev/post/e2e-gpu-p4.log)."
+  },
+  {
+   "name": "Kit's flight darkening probe on ultra/high/medium/low",
+   "pass": true,
+   "notes": "Same brightness curve on every preset including Économie, which has no temporal pass: the drop comes from the letterbox bars and the change of view, not from post-processing. dev/post/steps-tr3.js, shots/tr3-tr3.png"
+  },
+  {
+   "name": "Preset switching stress, memory (16 combinations x 3 cycles)",
+   "pass": true,
+   "notes": "geometries 157/157/157, programs 902/903/903, render targets 122/122/122, textures 163/164/164: no growth after the first cycle (dev/post/p4-verify-gl.json)"
+  },
+  {
+   "name": "Super Résolution sharpness vs native",
+   "pass": true,
+   "notes": "Final run (auto = FSR1): Élevé x0.85 sharpness 16.1 vs native 14.5, PSNR 36.7 dB; Moyen x0.6 11.8, 33.4 dB; Économie x0.75 11.7 vs 11.6. TAAU before the change: 7.2 / 32.2 dB and 6.0 / 31.3 dB."
+  },
+  {
+   "name": "Ghosting during fast motion",
+   "pass": true,
+   "notes": "Average trail difference: Ultra 0.77, Élevé 0.82, Moyen + SR 0.93 out of 255; Économie 0. Nothing visible."
+  },
+  {
+   "name": "Cost per preset (passes, internal resolution, calls)",
+   "pass": true,
+   "notes": "Ultra 11 passes, cost 19.4; Ultra+SR 13 at 961x554, 17.4; Élevé 11, 10.8; Élevé+SR 13 at 1061x612, 10.6; Moyen 7, 9.0; Moyen+SR 9 at 749x432, 6.2; Économie 5, 2.9; Économie+SR 6 at 936x540, 3.6. 226-239 draw calls for the whole frame (dev/post/p4b-verify-gl.json)."
+  },
+  {
+   "name": "SSR opt-in after packing the mask into the velocity buffer (WebGL 2)",
+   "pass": true,
+   "notes": "Glossy test slab opted in with K.post.ssr: strength 1 vs 0 changes the slab by 4.1 levels on Ultra and 3.6 on Élevé on average; screenshots shots/ssr-gl-ssr-*.png"
+  },
+  {
+   "name": "Screenshots: WebGPU Ultra tour and phone Moyen + SR (FSR1) tour, both acts",
+   "pass": true,
+   "notes": "dev/post/p4-gpu-ultra-grid.png (SSGI, sun glare, motion blur, cinematic DOF and letterbox all draw); dev/post/p4-phone-medium-grid.png (844x390 touch). Per-preset WebGL 2 grids from session 3: g-r3-ultra/high/medlow.png."
+  }
+ ],
+ "known_issues": [
+  "No scene material opts into SSR yet; that belongs to the world, city and vehicle roles. SSR was verified only with a test slab.",
+  "Graphs for presets not in use keep about 60 MB of GPU textures after every preset x Super Résolution x upscaler combination has been visited. It is stable, not a leak. Follow-up: make sleepGraph() also free render targets stored in arrays (the bloom mip levels).",
+  "Phone Moyen + SR renders internally at 731x350 (the drawing buffer is capped, then scaled x0.6). It is clean but a little soft; sr 0.7 on touch is worth trying on a real phone.",
+  "All timings are software-rendered (SwiftShader) numbers and only useful for comparison; no real-GPU frame time was measured.",
+  "TAAU (three r186 TAAUNode) is still selectable but measured much softer, so 'auto' no longer uses it.",
+  "The per-preset WebGL 2 screenshot grids date from session 3. Later changes affect only the Super Résolution path (shown in the phone FSR1 tour) and the buffer layout (no visible change). Re-shoot once the world and city art lands."
+ ],
+ "integration_todo": [
+  "Copy the STATUS.md section \"API for other roles\" (K.post.ssr opt-in, K.post.sceneDepth, no fragmentNode on scene materials, Super Résolution = FSR1 by default) into docs/SPEC3.md Foundation notes.",
+  "90-main.js precompile(): after r.compileAsync(V.scene, V.camera), add `if (K.post && K.post.ok && K.post.compileAsync) await K.post.compileAsync();`. Do the same after the Act 2 build (behind the loading card).",
+  "90-main.js CINE_OPTS: set dof: true for the results screen, which SPEC3 §3 lists for depth of field.",
+  "Optional pause row \"Mise à l'échelle : Auto / TAAU / FSR\" calling K.post.setUpscaler(...); the choice is already persisted.",
+  "build.sh specs(): skip comment lines. FSR1Node.js has an @three_import doc comment with a wrong path, so a static import of it fails the build; 15-post.js uses a dynamic import() for now.",
+  "test/e2e.js postChecks: add the passes per preset (high: gtao/traa/ssr/godrays/bloom; ultra: ssgi and at most 4 scene-pass outputs; medium + SR: fsr1 and scale 0.6; low: fxaa and no traa) and the memory stress check from dev/post/steps-verify.js."
+ ],
+ "screenshots": [
+  "/home/user/pat3d/dev/post/p4-gpu-ultra-grid.png",
+  "/home/user/pat3d/dev/post/p4-phone-medium-grid.png",
+  "/home/user/pat3d/dev/post/p4-phone-valley-crop.png",
+  "/home/user/pat3d/dev/post/p4-sharp-crops.png",
+  "/home/user/pat3d/dev/post/shots/tr3-tr3.png",
+  "/home/user/pat3d/dev/post/shots/ssr-gl-ssr-high.png",
+  "/home/user/pat3d/dev/post/shots/ssr-gl-ssr-ultra.png",
+  "/home/user/pat3d/dev/post/g-r3-ultra.png",
+  "/home/user/pat3d/dev/post/g-r3-high.png",
+  "/home/user/pat3d/dev/post/g-r3-medlow.png",
+  "/home/user/pat3d/dev/post/g-r3-phone.png"
+ ]
+}

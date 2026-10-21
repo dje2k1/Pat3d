@@ -4,8 +4,10 @@
 //   scene pass (HDR, MRT: output + view normal + velocity + SSR mask [+ albedo on Ultra], internal resolution)
 //     -> lighting composite at the internal resolution: GTAO (Élevé/Moyen, half res) or SSGI (Ultra: AO + one bounce
 //        of screen-space GI), SSR on the materials that opted in (Ultra/Élevé, see K.post.ssr())
-//     -> temporal reconstruction: TRAA at native resolution, or TAAU ("Super Résolution", the DLSS-like path: internal
-//        resolution x0.6..0.85 reconstructed to the screen with jittered history)
+//     -> temporal reconstruction: TRAA (at the internal resolution with Super Résolution, then everything below at that
+//        resolution and FSR1 = EASU + RCAS to the screen), or TAAU (K.post.setUpscaler('taau'): the internal
+//        resolution x0.6..0.85 reconstructed to the screen with jittered history; measured softer than TRAA + FSR1
+//        here: sharpness 40-50 % of native vs ~100 %, PSNR vs native 31-32 dB vs 34-37 dB, so 'auto' picks FSR1)
 //     -> HDR bloom (mip chain), lens flare ghosts (from the bloom), screen-space sun shafts ("godrays": sky mask +
 //        two radial blurs at 1/4 or 1/2 res), analytic sun glare (halo + starburst, occlusion-tested), depth of field
 //        (cinematics only), velocity motion blur + radial speed streaks (at speed)
@@ -52,11 +54,11 @@ const SKY_D = 0.99996;
 // mb: motion blur taps (0 = off); ca: chromatic aberration; grain; up: upscaler with Super Résolution ('taau' | 'fsr')
 const PRESETS = {
   ultra: { sr: 0.77, furShells: 16, grass: 1, texRes: 'full', shadows: 'csm', ssr: true,
-    aa: 'traa', ao: 'ssgi', aoRes: 0.5, aoN: 16, ssrRes: 0.75, bloom: 1, bloomRes: 0.5, shafts: 0.5, shaftN: 36, flare: 1, dof: 3, mb: 12, ca: 1, grain: 1, up: 'taau' },
+    aa: 'traa', ao: 'ssgi', aoRes: 0.5, aoN: 16, ssrRes: 0.75, bloom: 1, bloomRes: 0.5, shafts: 0.5, shaftN: 36, flare: 1, dof: 3, mb: 12, ca: 1, grain: 1, up: 'fsr' },
   high: { sr: 0.85, furShells: 10, grass: 0.7, texRes: 'full', shadows: 'csm', ssr: true,
-    aa: 'traa', ao: 'gtao', aoRes: 0.5, aoN: 12, ssrRes: 0.5, bloom: 1, bloomRes: 0.5, shafts: 0.25, shaftN: 28, flare: 1, dof: 2.5, mb: 8, ca: 1, grain: 1, up: 'taau' },
+    aa: 'traa', ao: 'gtao', aoRes: 0.5, aoN: 12, ssrRes: 0.5, bloom: 1, bloomRes: 0.5, shafts: 0.25, shaftN: 28, flare: 1, dof: 2.5, mb: 8, ca: 1, grain: 1, up: 'fsr' },
   medium: { sr: 0.6, furShells: 6, grass: 0.4, texRes: 'half', shadows: 'single', ssr: false,
-    aa: 'traa', ao: 'gtao', aoRes: 0.5, aoN: 8, ssrRes: 0, bloom: 0.85, bloomRes: 0.5, shafts: 0, shaftN: 0, flare: 0, dof: 2, mb: 6, ca: 1, grain: 0.8, up: 'taau' },
+    aa: 'traa', ao: 'gtao', aoRes: 0.5, aoN: 8, ssrRes: 0, bloom: 0.85, bloomRes: 0.5, shafts: 0, shaftN: 0, flare: 0, dof: 2, mb: 6, ca: 1, grain: 0.8, up: 'fsr' },
   low: { sr: 0.75, furShells: 0, grass: 0, texRes: 'half', shadows: 'cheap', ssr: false,
     aa: 'fxaa', ao: '', aoRes: 0, aoN: 0, ssrRes: 0, bloom: 0.6, bloomRes: 0.25, shafts: 0, shaftN: 0, flare: 0, dof: 0, mb: 0, ca: 0, grain: 0, up: 'fsr' }
 };
@@ -145,19 +147,20 @@ class PostAuxNode extends THREE.Node {
     const sn = m && m.ssrNode && m.ssrNode.isNode ? m.ssrNode : null;
     const see = !!m && !sn && (m.transparent === true || m.depthWrite === false || (m.blending !== NORMAL_BLEND && m.blending !== NO_BLEND));
     if (!m || see) return vec4(0);
+    const ssrS = () => sn ? tclamp(float(sn), 0, 1) : float(0);
+    const ssrR = () => !sn ? float(1) : tclamp(float(m.ssrRoughnessNode && m.ssrRoughnessNode.isNode ? m.ssrRoughnessNode : m.isMeshStandardNodeMaterial ? roughness : float(0)), 0, 1);
     switch (this.kind) {
       case 'normal': return vec4(normalView, 1);
       case 'velocity': return vec4(velocity, 0, 1);
+      // velocity + the SSR mask packed in .z (strength 5 bits x 64 + roughness 6 bits: integers < 2048, exact in
+      // half float), so Ultra's MRT stays within WebGPU's 32 bytes per sample (4 attachments of 8)
+      case 'velssr': return vec4(velocity, tfloor(ssrS().mul(31).add(0.5)).mul(64).add(tfloor(ssrR().mul(63).add(0.5))), 1);
       case 'diffuse': return vec4(diffuseColor.rgb, 1);
-      default: {
-        if (!sn) return vec4(0, 1, 0, 1);
-        const rn = m.ssrRoughnessNode && m.ssrRoughnessNode.isNode ? m.ssrRoughnessNode : m.isMeshStandardNodeMaterial ? roughness : float(0);
-        return vec4(tclamp(float(sn), 0, 1), tclamp(float(rn), 0, 1), 0, 1);
-      }
+      default: return sn ? vec4(ssrS(), ssrR(), 0, 1) : vec4(0, 1, 0, 1);
     }
   }
 }
-const AUX = { normal: new PostAuxNode('normal'), velocity: new PostAuxNode('velocity'), ssr: new PostAuxNode('ssr'), diffuse: new PostAuxNode('diffuse') };
+const AUX = { normal: new PostAuxNode('normal'), velocity: new PostAuxNode('velocity'), velssr: new PostAuxNode('velssr'), ssr: new PostAuxNode('ssr'), diffuse: new PostAuxNode('diffuse') };
 
 // ---------- graph ----------
 // small TSL helpers
@@ -270,20 +273,21 @@ function buildGraph(cfg, sr) {
   sp.setResolutionScale(s);
   const outs = { output };
   if (needNormal) outs.normal = AUX.normal;
-  if (needVel) outs.velocity = AUX.velocity;
-  if (useSSR) outs.ssr = AUX.ssr;
+  const packSSR = useSSR && needVel;
+  if (needVel) outs.velocity = packSSR ? AUX.velssr : AUX.velocity;
+  if (useSSR && !packSSR) outs.ssr = AUX.ssr;
   if (needDiffuse) outs.diffuse = AUX.diffuse;
   const names = Object.keys(outs);
   if (names.length > 1) {
     const m = mrt(outs);
     for (const n of names) if (n !== 'output') m.setBlendMode(n, new THREE.BlendMode(THREE.MaterialBlending));
     sp.setMRT(m);
-    if (useSSR) sp.getTexture('ssr').type = THREE.UnsignedByteType;
+    if (useSSR && !packSSR) sp.getTexture('ssr').type = THREE.UnsignedByteType;
     if (needDiffuse) sp.getTexture('diffuse').type = THREE.UnsignedByteType;
   }
   const col = sp.getTextureNode('output'), depth = sp.getTextureNode('depth');
   const nrm = needNormal ? sp.getTextureNode('normal') : null, vel = needVel ? sp.getTextureNode('velocity') : null;
-  G.passes.push('scene(' + names.join('+') + (s < 1 ? ',x' + s : '') + ')');
+  G.passes.push('scene(' + names.join('+').replace('velocity', packSSR ? 'velocity/ssr' : 'velocity') + (s < 1 ? ',x' + s : '') + ')');
   G.cost.push(['scene', s, names.length]);
 
   // --- lighting composite at the internal resolution (AO / GI / SSR) ---
@@ -315,8 +319,12 @@ function buildGraph(cfg, sr) {
     G.cost.push(['ssgi', 1, 6]);
   }
   if (useSSR) {
-    const mask = sp.getTextureNode('ssr');
-    const n = track(G, postSSR(col, depth, nrm, { metalnessNode: mask.r, roughnessNode: mask.g, camera: cam }), 'ssr');
+    let ms, mr;
+    if (packSSR) {
+      const z = vel.z, hi = tfloor(z.mul(1 / 64).add(1 / 256));
+      ms = hi.mul(1 / 31); mr = tclamp(z.sub(hi.mul(64)).mul(1 / 63), 0, 1);
+    } else { const mask = sp.getTextureNode('ssr'); ms = mask.r; mr = mask.g; }
+    const n = track(G, postSSR(col, depth, nrm, { metalnessNode: ms, roughnessNode: mr, camera: cam }), 'ssr');
     n.resolutionScale = s * cfg.ssrRes;
     n.maxDistance.value = 60; n.thickness.value = 0.8; n.quality.value = 0.5; n.screenEdgeFade.value = 0.15;
     lit = lit.add(n.getTextureNode().rgb.mul(U.ssr));
@@ -853,8 +861,9 @@ post.setSuperRes = function (on) {
   applyConfig();
   return post.superRes;
 };
-// Super Résolution upscaler: 'auto' (TAAU on Ultra/Élevé/Moyen, FSR1 on Économie), 'taau' or 'fsr' (spatial FSR1 +
-// RCAS on every preset); persisted in K.store 'upscaler'
+// Super Résolution upscaler: 'auto' (= the preset's `up`: FSR1 on every preset since the sharpness measurements, see
+// the header), 'taau' (temporal upscale on the temporal presets) or 'fsr' (spatial FSR1 + RCAS); persisted in K.store
+// 'upscaler'
 post.setUpscaler = function (m) {
   post.upscaler = m === 'taau' || m === 'fsr' ? m : 'auto';
   K.store.set('upscaler', post.upscaler);
