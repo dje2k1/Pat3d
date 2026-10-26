@@ -273,6 +273,23 @@
    ],
    "halfBytes": 28470
   },
+  "sky_noise": {
+   "full": "sky_noise.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 39936,
+   "half": "sky_noise_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 17138
+  },
   "soil_albedo": {
    "full": "soil_albedo.webp",
    "size": [

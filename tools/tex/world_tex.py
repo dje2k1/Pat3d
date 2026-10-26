@@ -1,7 +1,7 @@
 """Act 1 island (Collines Émeraude) PBR textures — WORLD role (SPEC3 §4/§5).
 
 python3 tools/tex/world_tex.py [name ...]   -> assets/tex/world/*.webp + manifest entries (group 'act1')
-  (no argument = every set; names: grass soil rock sand bark frond leaves wood water)
+  (no argument = every set; names: grass soil rock sand bark frond leaves wood water sky)
 
 Every set tiles. Albedo sRGB, normal (tangent space, OpenGL +Y) and ORM (R = AO, G = roughness, B = metal) linear.
   grass   1024  lawn seen from above: layered tapered blades (dark base -> light tips), clover, specks
@@ -14,6 +14,7 @@ Every set tiles. Albedo sRGB, normal (tangent space, OpenGL +Y) and ORM (R = AO,
   leaves   512  dense leaf clusters for bushes (triplanar on the blobs)
   wood     512  bridge / totem wood grain
   water    512  water_n: tiling wave normals; water_fx: R = foam bubbles, G = caustics web, B = noise
+  sky      512  sky_noise: R = cloud masses, G = cauliflower cells, B = wisps (sky dome cloud layer)
 Original procedural art only (numpy + Pillow).
 """
 import math
@@ -469,8 +470,32 @@ def make_water():
     PREVIEW.append(('water_fx', fx))
 
 
+# ------------------------------------------------------------------------------------------------------------ sky
+def make_sky():
+    """sky_noise 512 linear RGB, tiling: R = billowy cloud masses (fbm, 3 periods), G = cauliflower cells
+    (inverted worley, 3 octaves), B = fine wisps (fbm, high frequency). Read by the sky dome's cloud layer."""
+    N = 512
+    base = fbm(N, 3, 5, seed=201, kind='gradient')
+    base = np.clip((base - base.mean()) / (base.std() * 3.2) + 0.5, 0, 1)
+    cells = np.zeros((N, N), np.float32)
+    amp, tot = 1.0, 0.0
+    for i, c in enumerate((6, 12, 24)):
+        f1, f2, _ = worley(N, c, seed=210 + i)
+        cells += (1 - np.clip(f1 / 0.75, 0, 1)) ** 1.5 * amp
+        tot += amp
+        amp *= 0.5
+    cells /= tot
+    cells = np.clip((cells - cells.min()) / (cells.max() - cells.min()), 0, 1)
+    wisp = fbm(N, 16, 4, seed=220)
+    wx, wy = fbm(N, 4, 3, seed=221), fbm(N, 4, 3, seed=222)
+    wisp = domain_warp(wisp, wx, wy, 18)
+    wisp = np.clip((wisp - wisp.mean()) / (wisp.std() * 3.5) + 0.5, 0, 1)
+    img = np.stack([base, cells, wisp], axis=-1)
+    add('sky_noise', img, 'linear')
+
+
 SETS = {'grass': make_grass, 'soil': make_soil, 'rock': make_rock, 'sand': make_sand, 'bark': make_bark,
-        'frond': make_frond, 'leaves': make_leaves, 'wood': make_wood, 'water': make_water}
+        'frond': make_frond, 'leaves': make_leaves, 'wood': make_wood, 'water': make_water, 'sky': make_sky}
 
 if __name__ == '__main__':
     names = sys.argv[1:] or list(SETS)

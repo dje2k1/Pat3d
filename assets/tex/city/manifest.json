@@ -1,4 +1,60 @@
 {
-  "role": "city",
-  "textures": {}
+ "role": "city",
+ "textures": {
+  "city_alb": {
+   "full": "city_alb.webp",
+   "size": [
+    512,
+    9216
+   ],
+   "colorSpace": "srgb",
+   "group": "act2",
+   "wrap": "repeat",
+   "bytes": 314824,
+   "half": "city_alb_half.webp",
+   "halfSize": [
+    256,
+    4608
+   ],
+   "halfBytes": 109166
+  },
+  "city_nrm": {
+   "full": "city_nrm.webp",
+   "size": [
+    512,
+    9216
+   ],
+   "colorSpace": "linear",
+   "group": "act2",
+   "wrap": "repeat",
+   "bytes": 2412422,
+   "half": "city_nrm_half.webp",
+   "halfSize": [
+    256,
+    4608
+   ],
+   "halfBytes": 718670
+  }
+ },
+ "layers": [
+  "paintwood",
+  "siding",
+  "shingle",
+  "asphalt",
+  "slab",
+  "brick",
+  "planks",
+  "metal",
+  "leaves",
+  "dentil",
+  "scales",
+  "ground",
+  "stone",
+  "canvas",
+  "tar",
+  "concrete",
+  "window",
+  "manhole"
+ ],
+ "tile": 512
 }

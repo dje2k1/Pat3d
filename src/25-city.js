@@ -1,3 +1,4 @@
+import { CSMShadowNode as CityCSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
 (() => {
 'use strict';
 // ===================== ACT 2: SAN FRANCISCO (K.city) =====================
@@ -410,144 +411,317 @@ function toBox(o, x, z) { const ex = x - o.x, ez = z - o.z; OL.x = ex * o.c - ez
 function boxTop(o, lz) { return o.ramp ? lerp(o.y0, o.y1, clamp((lz + o.hz) / (2 * o.hz), 0, 1)) : o.y + o.hy; }
 
 // ===================== materials =====================
-const { Fn, If, uniform, attribute, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp, abs: tabs, max: tmax, min: tmin,
+const { Fn, If, uniform, uniformArray, attribute, vec2, vec3, vec4, float, int, mix, smoothstep, clamp: tclamp, abs: tabs, max: tmax, min: tmin,
   fract: tfract, floor: tfloor, sin: tsin, cos: tcos, pow: tpow, exp: texp, dot: tdot, normalize: tnormalize, reflect: treflect,
   length: tlength, step: tstep, select, positionWorld, positionLocal, positionGeometry, normalGeometry, cameraPosition,
-  cameraViewMatrix, cameraProjectionMatrix, modelViewMatrix, modelWorldMatrix, varyingProperty, texture: ttexture, uv: tuv } = TSL;
+  cameraViewMatrix, cameraProjectionMatrix, modelViewMatrix, modelWorldMatrix, varyingProperty, texture: ttexture, uv: tuv,
+  positionView, normalView, dFdx, dFdy, cross: tcross, inverseSqrt, sqrt: tsqrt, sign: tsign, faceDirection } = TSL;
 const TL = K.tsl;
 const U = { time: uniform(0), hdr: K.post && K.post.uHDR && K.post.uHDR.isNode ? K.post.uHDR : uniform(1) };
-// city surfaces: vertex colour + a surface kind (procedural detail), uv in metres (or 0..1 for openings), emission
+// city surfaces: vertex colour + a surface kind, uv in metres (or 0..1 for openings), emission
 const KIND = {
   plain: 0, siding: 1, window: 2, shingle: 3, asphalt: 4, paint: 5, slab: 6, brick: 7, plank: 8, metal: 9, glow: 10,
-  leaf: 11, rail: 12, dentil: 13, scales: 14, facade: 15, ground: 16, seawall: 17, stone: 18, awning: 19, glass: 20, tar: 21
+  leaf: 11, rail: 12, dentil: 13, scales: 14, facade: 15, ground: 16, seawall: 17, stone: 18, awning: 19, glass: 20, tar: 21,
+  shop: 22, manhole: 23, concrete: 24
 };
-// The v2 city shader (per-kind procedural surfaces) ported to TSL: colour, roughness, metalness and emission per kind.
+// ---- the city's PBR material layers: two texture ARRAYS (tools/tex/city_tex.py, assets/tex/city/city_{alb,nrm}.webp)
+// alb: RGB albedo (sRGB), A = 0.5 + 0.5 * tint (1 = takes the vertex colour); nrm: RG normal xy, B roughness,
+// A = 0.5 + 0.5 * AO. The WebP strips are converted to THREE.DataArrayTexture once K.tex has them (and again when the
+// texture set switches full <-> half); until then 1x1 neutral layers.
+const LY = { paintwood: 0, siding: 1, shingle: 2, asphalt: 3, slab: 4, brick: 5, planks: 6, metal: 7, leaves: 8, dentil: 9,
+  scales: 10, ground: 11, stone: 12, canvas: 13, tar: 14, concrete: 15, window: 16, manhole: 17 };
+const NLAYER = 18;
+const CT = { names: ['city/city_alb', 'city/city_nrm'], tex: [null, null], src: [null, null], nodes: [[], []], loaded: 0, res: [0, 0] };
+function cityArray(data, w, srgb) {
+  const t = new THREE.DataArrayTexture(data, w, w, NLAYER);
+  t.format = THREE.RGBAFormat; t.type = THREE.UnsignedByteType;
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = w > 1; t.anisotropy = 8; t.flipY = false; t.unpackAlignment = 4;
+  t.needsUpdate = true;
+  return t;
+}
+function cityArrays() {
+  if (!CT.tex[0]) {
+    const a = new Uint8Array(4 * NLAYER), n = new Uint8Array(4 * NLAYER);
+    for (let i = 0; i < NLAYER; i++) { a.set([188, 188, 188, 255], i * 4); n.set([128, 128, 204, 255], i * 4); }
+    CT.tex[0] = cityArray(a, 1, true); CT.tex[1] = cityArray(n, 1, false);
+  }
+  return CT.tex;
+}
+// a sampling node of array i (0 alb, 1 nrm) at uv, layer (int node); registered so a swap updates every material
+function citySample(i, uvNode, layerNode) {
+  const n = ttexture(cityArrays()[i], uvNode);
+  n.depthNode = layerNode;
+  CT.nodes[i].push(n);
+  return n;
+}
+// K.tex hands the strips over as ImageBitmaps (flipped at decode: the rows are already the array's memory layout)
+function cityTexSync() {
+  if (!K.tex || typeof K.tex.load !== 'function') return;
+  for (let i = 0; i < 2; i++) {
+    const t = K.tex.load(CT.names[i]), img = t && t.image;
+    if (!img || img === CT.src[i] || !(img.width > 1) || img.height !== img.width * NLAYER) continue;
+    CT.src[i] = img;
+    let data = null;
+    try {
+      const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+      const g = cv.getContext('2d', { willReadFrequently: true });
+      g.drawImage(img, 0, 0);
+      data = new Uint8Array(g.getImageData(0, 0, img.width, img.height).data.buffer);
+      cv.width = cv.height = 1;
+    } catch (e) { console.warn('Kit Rush 3D: city texture ' + CT.names[i] + ' not converted', e); continue; }
+    const nt = cityArray(data, img.width, i === 0), old = CT.tex[i];
+    CT.tex[i] = nt; CT.res[i] = img.width;
+    for (const n of CT.nodes[i]) n.value = nt;
+    if (old) old.dispose();
+    // the bitmap is no longer needed (K.tex closes it when it switches sets)
+    try { if (typeof img.close === 'function') img.close(); } catch (e) { /* closed */ }
+    CT.loaded++;
+  }
+}
+// per kind: [layer, tiles per metre along u, along v, uv source (0 aUv, 1 local XZ, 2 local side), normal strength,
+// roughness = map * mul + add, metalness, chipped-paint metal (metal = 1 - tint), anti-tiling (2nd rotated sample), AO]
+const KDEF = [];
+const kd = (k, a) => { KDEF[k] = a; };
+kd(KIND.plain, [LY.paintwood, 1, 1, 0, 0.7, 1, 0, 0, 0, 0, 1]);
+kd(KIND.siding, [LY.siding, 0.92, 0.92, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.window, [LY.window, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.shingle, [LY.shingle, 0.667, 0.667, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.asphalt, [LY.asphalt, 0.42, 0.42, 1, 0.8, 1, 0, 0, 0, 1, 1]);
+kd(KIND.paint, [LY.asphalt, 0.42, 0.42, 1, 0.55, 1, 0, 0, 0, 1, 0.6]);
+kd(KIND.slab, [LY.slab, 0.333, 0.333, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.brick, [LY.brick, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.plank, [LY.planks, 0.5, 0.5, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.metal, [LY.metal, 2, 2, 0, 0.7, 1, 0, 0, 1, 0, 0.6]);
+kd(KIND.glow, [LY.paintwood, 1, 1, 0, 0, 0, 0.35, 0, 0, 0, 0]);
+kd(KIND.leaf, [LY.leaves, 1.1, 1.1, 2, 1, 1, 0, 0, 0, 1, 1]);
+kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.5, 0.0, 0.9, 0, 0, 0.3]);
+kd(KIND.dentil, [LY.dentil, 0.65, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.scales, [LY.scales, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.facade, [LY.siding, 0.92, 0.92, 0, 0.8, 1, 0, 0, 0, 0, 1]);
+kd(KIND.ground, [LY.ground, 0.25, 0.25, 1, 1, 1, 0, 0, 0, 1, 1]);
+kd(KIND.seawall, [LY.stone, 0.5, 0.5, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.stone, [LY.stone, 0.67, 0.67, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.awning, [LY.canvas, 2, 2, 0, 1, 1, 0, 0, 0, 0, 1]);
+kd(KIND.glass, [LY.paintwood, 1, 1, 0, 0, 0, 0.05, 0, 0, 0, 0]);
+kd(KIND.tar, [LY.tar, 0.5, 0.5, 0, 1, 1, 0, 0, 0, 1, 1]);
+kd(KIND.shop, [LY.paintwood, 1, 1, 0, 0, 0, 0.05, 0, 0, 0, 0]);
+kd(KIND.manhole, [LY.manhole, 1, 1, 0, 1, 1, 0, 0.35, 0, 0, 1]);
+kd(KIND.concrete, [LY.concrete, 0.5, 0.5, 0, 1, 1, 0, 0, 0, 1, 1]);
+kd(30, [LY.paintwood, 1, 1, 0, 0.12, 0, 0.28, 0.35, 0, 0, 0.5]);
+kd(31, [LY.paintwood, 1, 1, 0, 0, 0, 0.3, 0, 0, 0, 0]);
+function kindTables(over) {
+  const P0 = [], P1 = [], P2 = [];
+  for (let k = 0; k < 32; k++) {
+    const d = (over && over[k]) || KDEF[k] || KDEF[0];
+    P0.push(new THREE.Vector4(d[0], d[1], d[2], d[3]));
+    P1.push(new THREE.Vector4(d[4], d[5], d[6], d[7]));
+    P2.push(new THREE.Vector4(d[8], d[9], d[10], 0));
+  }
+  return [uniformArray(P0, 'vec4'), uniformArray(P1, 'vec4'), uniformArray(P2, 'vec4')];
+}
+const ASPH_LIN = new THREE.Color('#67666b');
+// hash of a vec3 (0..1)
+const h31 = p => tfract(tsin(tdot(p, vec3(12.9898, 78.233, 37.719))).mul(43758.5453));
+// The v2 city shader (per-kind procedural surfaces) rebuilt on PBR texture layers, branch-free (select / mix only:
+// every texture read happens in uniform control flow, see the TSL notes in docs/SPEC3.md):
+//  - albedo = layer albedo, tinted by the vertex colour where the layer says so; normal map through a cotangent frame
+//    built from screen-space derivatives (the city geometry has no tangents); roughness / AO from the layer;
+//  - asphalt: a second rotated sample against tiling, repair patches, worn paint for the markings, puddles on the flat
+//    parts (SSR opt-in through K.post.ssr);
+//  - windows (kind 2: sash frame from the WINDOW layer) and shop fronts (kind 22): interior mapping (a room behind the
+//    glass: walls, floor, ceiling, back-wall decor, curtains and blinds, lamp-lit or dark) under a reflective glass;
+//  - glow / blinkers / the far facades' lit windows as emission (HDR, bloom).
 // opts.position(p) -> displaced local position node (flags, gulls); opts.vehicle: kinds 30 (paint: takes the instance
-// colour, glossy) and 31 (blinkers).
-// PORT(city): v2 also bent the normal per kind (siding / shingle / brick / dentil / stone bumps, cBump) and the
-// vehicles' paint only took the instance colour (here: vertex colour / instance colour on non-paint kinds); v3 replaces
-// this with K.tex PBR sets (wood siding, shingles, asphalt with cracks and puddles, concrete), interior-mapped windows.
+// colour, glossy) and 31 (blinkers); opts.side: THREE side (double-sided cloth).
 function cityMaterial(opts) {
   opts = opts || {};
   const m = new THREE.MeshStandardNodeMaterial({ vertexColors: false, roughness: 0.8, metalness: 0 });
-  const aK = attribute('aKind', 'float'), u = attribute('aUv', 'vec2'), aE = attribute('aEmit', 'float');
-  const kk = tfloor(aK.add(0.5));
+  if (opts.side != null) m.side = opts.side;
+  // NOTE: no If / select() over computed values in here: TSL turns a select() whose branches hold expressions into an
+  // if / else and emits shared temporaries inside the first branch only (garbage in the other one), and texture reads
+  // must stay in uniform control flow. Everything is straight-line arithmetic; masks are 0 / 1 floats (mk) and every
+  // division / normalisation is guarded so the unused paths never produce NaN.
+  const mk = c => select(c, float(1), float(0));
+  const snorm = v => v.mul(inverseSqrt(tmax(tdot(v, v), 1e-12)));
+  const aK = attribute('aKind', 'float'), aUv = attribute('aUv', 'vec2'), aE = attribute('aEmit', 'float');
+  const kk = tfloor(aK.add(0.5)), ki = int(kk);
   const lp = positionGeometry;
-  const H = TL.hash21, N = TL.vnoise;
-  let vc = attribute('color', 'vec3');
   const hdr = U.hdr, uTime = U.time;
+  let vc = attribute('color', 'vec3');
   if (opts.vehicle) {
     // three multiplies the diffuse by the instance colour on every vertex; v2 only tinted the paint (kind 30)
     const ic = varyingProperty('vec3', 'vInstanceColor');
-    vc = select(aK.greaterThan(29.5), vc, vc.div(tmax(ic, vec3(1e-3))));
+    vc = mix(vc.div(tmax(ic, vec3(1e-3))), vc, mk(aK.greaterThan(29.5)));
   }
-  const isWin = kk.equal(2).or(kk.equal(20));
-  const fr = tstep(u.x, 0.08).add(tstep(0.92, u.x)).add(tstep(u.y, 0.06)).add(tstep(0.94, u.y)).add(tstep(tabs(u.y.sub(0.52)), 0.03))
-    .add(tstep(tabs(u.x.sub(0.5)), 0.022).mul(tstep(0.52, u.y)).mul(select(kk.equal(2), float(1), float(0))));
-  const glass = isWin.and(fr.lessThanEqual(0));
-  const lit = glass.and(aE.greaterThan(0));
-  const warm = mix(vec3(1.0, 0.56, 0.22), vec3(1.0, 0.78, 0.45), H(tfloor(lp.xz.mul(0.3)).add(tfloor(lp.y))));
-  // background facades (kind 15): window grid, some lit
-  const fq = u.div(vec2(2.7, 3.3)), ff = tfract(fq), fid = tfloor(fq);
-  const fw = tstep(0.3, ff.x).mul(tstep(ff.x, 0.7)).mul(tstep(0.25, ff.y)).mul(tstep(ff.y, 0.85)).mul(tstep(0.5, fq.y));
-  const flit = tstep(0.62, H(fid.add(tfloor(lp.xz.mul(0.05)))));
-  const asN = N(lp.xz.mul(0.45)).mul(0.55).add(N(lp.xz.mul(2.7)).mul(0.3)).add(H(tfloor(lp.xz.mul(9))).mul(0.15));
-  const wheel = texp(tpow(tabs(u.x).sub(3.1 + 0.85), 2).mul(-3)).add(texp(tpow(tabs(u.x).sub(3.1 - 0.85), 2).mul(-3)));
-  // (shared values are vars set before the If chains: see the TSL notes in docs/SPEC3.md)
-  m.colorNode = Fn(() => {
-    const c = vec3(vc).toVar();
-    const asNv = asN.toVar(), wheelv = wheel.toVar(), warmv = warm.toVar(), fwv = fw.toVar();
-    If(kk.equal(1), () => { const b = tfract(lp.y.mul(4.6).add(0.2)); c.mulAssign(smoothstep(0.0, 0.16, b).mul(0.16).add(0.84)); })
-      .ElseIf(glass, () => {
-        c.assign(mix(vec3(0.02, 0.025, 0.035), vec3(0.05, 0.06, 0.08), smoothstep(0.1, 1.0, u.y)));
-        If(lit, () => { c.assign(warmv.mul(0.12)); });
-      })
-      .ElseIf(kk.equal(3), () => {
-        const q0 = u.mul(vec2(2.4, 3.6)), q = vec2(q0.x.add(tfloor(q0.y).mul(0.5)), q0.y);
-        const e = tfract(q.y), t = H(tfloor(q));
-        c.mulAssign(smoothstep(0.0, 0.3, e).mul(0.3).add(0.7).mul(t.mul(0.24).add(0.88)));
-      })
-      .ElseIf(kk.equal(4), () => {
-        const pch = smoothstep(0.62, 0.66, N(lp.xz.mul(0.09).add(3.7)));
-        c.mulAssign(asNv.mul(0.34).add(0.78).mul(float(1).sub(pch.mul(0.18))).mul(float(1).sub(wheelv.mul(0.1))));
-      })
-      .ElseIf(kk.equal(5), () => { c.mulAssign(N(lp.xz.mul(1.9)).mul(0.28).add(0.78)); })
-      .ElseIf(kk.equal(6), () => {
-        const g = tfract(u.div(1.55)), j = tmin(tmin(g.x, float(1).sub(g.x)), tmin(g.y, float(1).sub(g.y)));
-        c.mulAssign(smoothstep(0.0, 0.035, j).mul(0.14).add(0.86).mul(N(lp.xz.mul(1.3)).mul(0.16).add(0.9)));
-      })
-      .ElseIf(kk.equal(7), () => {
-        const q0 = u.mul(vec2(4.2, 12.5)), q = vec2(q0.x.add(tfloor(q0.y).mul(0.5)), q0.y);
-        const f = tfract(q), mm = tstep(0.08, f.x).mul(tstep(0.12, f.y)), t = H(tfloor(q));
-        c.mulAssign(mix(vec3(0.78, 0.76, 0.72), vec3(t.mul(0.3).add(0.85), t.mul(0.15).add(0.9), 0.9), mm));
-      })
-      .ElseIf(kk.equal(8), () => {
-        const p = u.y.mul(3.6), f = tfract(p), t = H(vec2(tfloor(p), tfloor(u.x.mul(0.35).add(tfloor(p).mul(7)))));
-        const g = N(vec2(u.x.mul(0.6), p.mul(3)));
-        c.mulAssign(t.mul(0.18).add(0.78).add(g.mul(0.12)).mul(smoothstep(0.0, 0.08, f).mul(smoothstep(1.0, 0.92, f)).mul(0.38).add(0.62)));
-      })
-      .ElseIf(kk.equal(11), () => { c.mulAssign(N(lp.xz.mul(1.7).add(lp.y.mul(2))).mul(0.5).add(0.7)); })
-      .ElseIf(kk.equal(12), () => { c.mulAssign(N(lp.xz.mul(3)).mul(0.2).add(0.9)); })
-      .ElseIf(kk.equal(13), () => { const s = tstep(0.42, tfract(u.x.mul(2.6))); c.mulAssign(s.mul(0.28).add(0.72)); })
-      .ElseIf(kk.equal(14), () => {
-        const q0 = u.mul(vec2(5, 6)), q = vec2(q0.x.add(tfloor(q0.y).mul(0.5)), q0.y);
-        const f = tfract(q).sub(vec2(0.5, 0)), cc = tlength(f.mul(vec2(1, 1.25)));
-        c.mulAssign(smoothstep(0.62, 0.45, cc).mul(0.22).add(0.78));
-      })
-      .ElseIf(kk.equal(15), () => { c.assign(mix(c.mul(tfract(lp.y.mul(4.6)).mul(0.1).add(0.9)), vec3(0.05, 0.06, 0.08), fwv)); })
-      .ElseIf(kk.equal(16), () => { c.mulAssign(N(lp.xz.mul(0.05)).mul(0.6).add(N(lp.xz.mul(0.21)).mul(0.4)).mul(0.5).add(0.7)); })
-      .ElseIf(kk.equal(17), () => {
-        const f = tfract(u.mul(vec2(0.45, 1.2))), j = tmin(tmin(f.x, float(1).sub(f.x)), tmin(f.y, float(1).sub(f.y)));
-        const stain = smoothstep(0.0, 1.2, float(1.4).sub(lp.y));
-        c.mulAssign(smoothstep(0.0, 0.05, j).mul(0.18).add(0.82).mul(float(1).sub(stain.mul(0.35))).mul(N(lp.xz.mul(0.8).add(lp.y)).mul(0.2).add(0.9)));
-      })
-      .ElseIf(kk.equal(18), () => {
-        const q0 = u.mul(vec2(1.4, 2.6)), q = vec2(q0.x.add(tfloor(q0.y).mul(0.5)), q0.y);
-        const f = tfract(q), j = tmin(tmin(f.x, float(1).sub(f.x)), tmin(f.y, float(1).sub(f.y)));
-        c.mulAssign(smoothstep(0.0, 0.08, j).mul(0.3).add(0.7).mul(H(tfloor(q)).mul(0.2).add(0.9)));
-      })
-      .ElseIf(kk.equal(19), () => { c.assign(mix(c, vec3(0.92, 0.9, 0.85), tstep(0.5, tfract(u.x.mul(1.1))))); })
-      .ElseIf(kk.equal(21), () => { c.mulAssign(N(lp.xz.mul(0.9)).mul(0.3).add(0.8)); });
-    return c;
-  })();
-  m.roughnessNode = Fn(() => {
-    const r = float(0.82).toVar();
-    const asNv = asN.toVar(), wheelv = wheel.toVar(), fwv = fw.toVar();
-    If(kk.equal(1), () => { r.assign(0.74); })
-      .ElseIf(isWin, () => { r.assign(select(glass, select(lit, float(0.4), float(0.05)), float(0.55))); })
-      .ElseIf(kk.equal(3), () => { r.assign(0.86); })
-      .ElseIf(kk.equal(4), () => { r.assign(float(0.9).sub(wheelv.mul(0.25)).sub(asNv.mul(0.1))); })
-      .ElseIf(kk.equal(5), () => { r.assign(0.62); })
-      .ElseIf(kk.equal(6), () => { r.assign(0.88); })
-      .ElseIf(kk.equal(7), () => { r.assign(0.9); })
-      .ElseIf(kk.equal(8), () => { r.assign(0.8); })
-      .ElseIf(kk.equal(9), () => { r.assign(0.32); })
-      .ElseIf(kk.equal(10), () => { r.assign(0.3); })
-      .ElseIf(kk.equal(11), () => { r.assign(0.9); })
-      .ElseIf(kk.equal(12), () => { r.assign(0.18); })
-      .ElseIf(kk.equal(14), () => { r.assign(0.7); })
-      .ElseIf(kk.equal(15), () => { r.assign(mix(float(0.75), float(0.1), fwv)); })
-      .ElseIf(kk.equal(16).or(kk.equal(21)), () => { r.assign(0.95); })
-      .ElseIf(kk.equal(17), () => { r.assign(0.9); })
-      .ElseIf(kk.equal(18), () => { r.assign(0.85); })
-      .ElseIf(kk.equal(19), () => { r.assign(0.7); })
-      .ElseIf(kk.equal(30), () => { r.assign(0.28); })
-      .ElseIf(kk.equal(31), () => { r.assign(0.3); });
-    return r;
-  })();
-  m.metalnessNode = select(glass, float(0.15), select(kk.equal(9), float(0.75), select(kk.equal(12), float(0.9), select(kk.equal(30), float(0.35), float(0)))));
-  m.emissiveNode = Fn(() => {
-    const e = vec3(0).toVar();
-    const warmv = warm.toVar(), fwv = fw.toVar(), flitv = flit.toVar();
-    If(lit, () => {
-      const cur = smoothstep(0.0, 0.25, tabs(u.x.sub(0.5)).sub(0.16)).mul(0.55);
-      const lamp = N(lp.xz.mul(0.7).add(lp.y)).mul(0.25).add(0.75);
-      e.assign(warmv.mul(aE).mul(lamp).mul(float(1).sub(cur)).mul(mix(float(1.15), float(3.2), hdr)));
-    }).ElseIf(kk.equal(10), () => { e.assign(vc.mul(aE).mul(mix(float(1), float(2.6), hdr))); })
-      .ElseIf(kk.equal(15), () => { e.assign(vec3(1.0, 0.62, 0.3).mul(fwv.mul(flitv)).mul(mix(float(0.9), float(2.2), hdr)).mul(aE)); })
-      .ElseIf(kk.equal(31), () => { const bl = tstep(0.45, tfract(uTime.mul(1.4))); e.assign(vc.mul(aE).mul(mix(float(0.04), float(1), bl)).mul(mix(float(1), float(2.6), hdr))); });
-    return e;
-  })();
+  const [P0, P1, P2] = kindTables(opts.vehicle ? { 0: [LY.paintwood, 1, 1, 0, 0.15, 0.6, 0.1, 0, 0, 0, 0.5] } : null);
+  const p0 = P0.element(ki), p1 = P1.element(ki), p2 = P2.element(ki);
+  const isK = n => mk(kk.equal(n));
+  const mWin = isK(KIND.window), mShop = isK(KIND.shop), mGlass = isK(KIND.glass), mPaint = isK(KIND.paint);
+  const mRoad = tmax(isK(KIND.asphalt), mPaint), mFac = isK(KIND.facade), mWS = tmax(mWin, mShop);
+  // ---- uv per kind: 0 = aUv, 1 = local XZ (asphalt, ground), 2 = local "side" (foliage)
+  const mXZ = mk(p0.w.greaterThan(0.5).and(p0.w.lessThan(1.5))), mSide = mk(p0.w.greaterThan(1.5));
+  const uvSrc = aUv.mul(float(1).sub(mXZ).sub(mSide)).add(vec2(lp.x, lp.z.negate()).mul(mXZ)).add(vec2(lp.x.add(lp.z).mul(0.7071), lp.y).mul(mSide));
+  const uv = uvSrc.mul(p0.yz).toVar('cUv');
+  const layer = int(p0.x);
+  // anti-tiling: a second sample, rotated and scaled, blended by a large-scale noise
+  const RC = 0.8253, RS = 0.5646; // cos / sin 0.6 rad
+  const uv2 = vec2(uv.x.mul(RC).sub(uv.y.mul(RS)), uv.x.mul(RS).add(uv.y.mul(RC))).mul(0.437).add(vec2(0.37, 0.71)).toVar('cUv2');
+  const wb = smoothstep(0.3, 0.7, TL.vnoise(lp.xz.mul(0.045).add(lp.y.mul(0.03)))).mul(p2.y).toVar('cAnti');
+  const A1 = citySample(0, uv, layer).toVar('cA1'), N1 = citySample(1, uv, layer).toVar('cN1');
+  const A2 = citySample(0, uv2, layer).toVar('cA2'), N2 = citySample(1, uv2, layer).toVar('cN2');
+  const A = mix(A1, A2, wb).toVar('cA');
+  const n2xy = N2.xy.mul(2).sub(1);
+  const n2r = vec2(n2xy.x.mul(RC).add(n2xy.y.mul(RS)), n2xy.y.mul(RC).sub(n2xy.x.mul(RS)));
+  const nxy0 = mix(N1.xy.mul(2).sub(1), n2r, wb).toVar('cNxy');
+  const rgh0 = mix(N1.z, N2.z, wb), ao0 = mix(N1.w, N2.w, wb).mul(2).sub(1);
+  const tint = tclamp(A.w.mul(2).sub(1), 0, 1).toVar('cTint');
+  const texC = A.xyz;
+  // ---- base colour: the layer albedo, tinted by the vertex colour where the layer says so
+  let base = mix(texC, texC.mul(vc).mul(2), tint).toVar('cBase0');
+  // road markings: worn paint over the asphalt (chipped where the aggregate peaks)
+  const lumT = tdot(texC, vec3(0.2126, 0.7152, 0.0722)).toVar('cLum');
+  const wearN = TL.vnoise(lp.xz.mul(1.7)).mul(0.6).add(TL.vnoise(lp.xz.mul(6.3)).mul(0.4));
+  const paintCover = smoothstep(0.17, 0.25, wearN.sub(lumT.sub(0.5).mul(0.4))).toVar('cPaint');
+  const asphC = texC.mul(vec3(ASPH_LIN.r, ASPH_LIN.g, ASPH_LIN.b)).mul(2);
+  base = mix(base, mix(asphC, vc.mul(0.85), paintCover), mPaint);
+  // asphalt repair patches (darker, smoother, rectangular) on a 9 m grid
+  const pc = lp.xz.div(9), pid = tfloor(pc), pf = tfract(pc);
+  const ph = TL.hash21(pid), ph2 = TL.hash21(pid.add(7.31));
+  const pbox = tstep(ph.mul(0.3).add(0.1), pf.x).mul(tstep(pf.x, ph.mul(0.3).add(0.55))).mul(tstep(ph2.mul(0.3).add(0.1), pf.y)).mul(tstep(pf.y, ph2.mul(0.35).add(0.5)));
+  const patch = pbox.mul(tstep(0.62, TL.hash21(pid.add(3.1)))).mul(mRoad).toVar('cPatch');
+  base = base.mul(float(1).sub(patch.mul(0.28)));
+  // large-scale colour variation (asphalt stains, ground, roofs)
+  const macro = TL.vnoise(lp.xz.mul(0.021)).mul(0.6).add(TL.vnoise(lp.xz.mul(0.083)).mul(0.4));
+  base = base.mul(float(1).add(macro.sub(0.5).mul(mix(float(0.12), float(0.35), tmax(mRoad, isK(KIND.ground))))));
+  // awnings: v2's stripes over the canvas
+  base = mix(base, vec3(0.83, 0.8, 0.74).mul(texC.mul(2)), tstep(0.5, tfract(aUv.x.mul(1.1))).mul(isK(KIND.awning)));
+  // the sea wall darkens and greens toward the water line
+  const wetWall = float(1).sub(smoothstep(-0.4, 1.4, lp.y)).mul(isK(KIND.seawall));
+  base = base.mul(float(1).sub(wetWall.mul(0.45))).mul(mix(vec3(1), vec3(0.85, 0.95, 0.85), wetWall));
+  // ---- puddles on the flat parts of the streets (local noise, edges broken by the aggregate)
+  const flat = smoothstep(0.985, 0.997, normalGeometry.y);
+  const pn = TL.fbm(lp.xz.mul(0.075).add(vec2(13.1, 7.7)));
+  const wet = smoothstep(0.6, 0.7, pn.add(lumT.sub(0.5).mul(0.25))).mul(flat).mul(mRoad).toVar('cWet');
+  const pud = smoothstep(0.55, 0.85, wet).toVar('cPud');
+  base = base.mul(float(1).sub(wet.mul(0.42)).sub(pud.mul(0.2)));
+  // ---- normal: cotangent frame from derivatives of the sampling uv (view space)
+  const pV = positionView, Ng = snorm(normalView.mul(faceDirection)).toVar('cNg');
+  const dp1 = dFdx(pV).toVar('cDp1'), dp2 = dFdy(pV).toVar('cDp2'), du1 = dFdx(uv), du2 = dFdy(uv);
+  const dp2p = tcross(dp2, Ng), dp1p = tcross(Ng, dp1);
+  const Tv = dp2p.mul(du1.x).add(dp1p.mul(du2.x)).toVar('cTv'), Bv = dp2p.mul(du1.y).add(dp1p.mul(du2.y)).toVar('cBv');
+  const inv = inverseSqrt(tmax(tmax(tdot(Tv, Tv), tdot(Bv, Bv)), 1e-24)).toVar('cInv');
+  // ---- windows and shop fronts: interior mapping in world space (a room behind every pane)
+  const pW = positionWorld;
+  const dw1 = dFdx(aUv), dw2 = dFdy(aUv), dq1 = dFdx(pW), dq2 = dFdy(pW);
+  const det0 = dw1.x.mul(dw2.y).sub(dw1.y.mul(dw2.x));
+  const det = mix(tmax(det0, 1e-12), tmin(det0, -1e-12), mk(det0.lessThan(0))).toVar('cDet');
+  const dpdu = dq1.mul(dw2.y).sub(dq2.mul(dw1.y)).div(det).toVar('cDpdu'), dpdv = dq2.mul(dw1.x).sub(dq1.mul(dw2.x)).div(det).toVar('cDpdv');
+  const Ww = tclamp(tlength(dpdu), 0.05, 40).toVar('cWw'), Hh = tclamp(tlength(dpdv), 0.05, 40).toVar('cHh');
+  const Tw = dpdu.div(Ww), Bw = dpdv.div(Hh), Nw = snorm(tcross(Tw, Bw)).toVar('cNw');
+  const rd = snorm(pW.sub(cameraPosition)).toVar('cRd');
+  const sgnSafe = d => mix(tmax(d, 1e-3), tmin(d, -1e-3), mk(d.lessThan(0)));
+  const ddx = sgnSafe(tdot(rd, Tw)).toVar('cDdx'), ddy = sgnSafe(tdot(rd, Bw)).toVar('cDdy'), dz0 = tmin(tdot(rd, Nw), -0.02).toVar('cDz');
+  const ox = aUv.x.mul(Ww), oy = aUv.y.mul(Hh);
+  const rmx = mix(float(0.9), float(0.25), mShop), rlo = mix(float(-0.85), float(-0.45), mShop), rhi = Hh.add(mix(float(0.55), float(0.25), mShop));
+  const rD = mix(float(3.4), float(5.5), mShop);
+  const tX = mix(rmx.negate().sub(ox), Ww.add(rmx).sub(ox), mk(ddx.greaterThan(0))).div(ddx);
+  const tY = mix(rlo.sub(oy), rhi.sub(oy), mk(ddy.greaterThan(0))).div(ddy);
+  const tZ = rD.negate().div(dz0);
+  const tH = tmax(tmin(tmin(tX, tY), tZ), 0).toVar('cTh');
+  const hx = ox.add(ddx.mul(tH)), hy = oy.add(ddy.mul(tH)), hz = dz0.mul(tH); // hz in -rD..0
+  const mBack = mk(tZ.lessThanEqual(tmin(tX, tY))), mSideW = mk(tX.lessThanEqual(tY)).mul(float(1).sub(mBack));
+  const mFloor = float(1).sub(mBack).sub(mSideW).mul(mk(ddy.lessThan(0)));
+  const mCeil = float(1).sub(mBack).sub(mSideW).sub(mFloor);
+  const org = pW.sub(dpdu.mul(aUv.x)).sub(dpdv.mul(aUv.y));
+  const wid = tfloor(org.mul(1.7)).add(0.5);
+  const r1 = h31(wid).toVar('cR1'), r2 = h31(wid.add(3.7)).toVar('cR2'), r3 = h31(wid.add(9.1)).toVar('cR3'), r4 = h31(wid.add(5.3)).toVar('cR4');
+  const pal = (t, a, b, c, d) => mix(mix(a, b, mk(t.greaterThan(0.25))), mix(c, d, mk(t.greaterThan(0.75))), mk(t.greaterThan(0.5)));
+  const wallC = pal(r1, vec3(0.78, 0.68, 0.52), vec3(0.52, 0.6, 0.5), vec3(0.55, 0.6, 0.72), vec3(0.8, 0.58, 0.55)).toVar('cWall');
+  const fy = hy.sub(rlo); // height above the room floor
+  const plank = tstep(0.5, tfract(hx.mul(3.3))).mul(0.08).add(0.92);
+  const floorC = mix(vec3(0.32, 0.2, 0.12).mul(plank), vec3(0.42, 0.38, 0.34), mShop);
+  const ceilC = vec3(0.86, 0.84, 0.8);
+  // back wall decor: a picture (house) or shelves (shop), a dresser / counter at the bottom
+  const bx = hx.div(Ww);
+  const pic = tstep(0.28, bx).mul(tstep(bx, 0.72)).mul(tstep(1.25, fy)).mul(tstep(fy, 1.95)).mul(tstep(r2, 0.7));
+  const shelf = tstep(0.5, tfract(fy.mul(2.2))).mul(tstep(fy, 2.0)).mul(0.25);
+  const dresser = tstep(fy, mix(float(0.8), float(0.95), mShop)).mul(tstep(r3.mul(0.4).add(0.1), bx)).mul(tstep(bx, r3.mul(0.4).add(0.55)));
+  const backHouse = mix(wallC, vec3(0.25, 0.32, 0.4).mul(r4.add(0.6)), pic);
+  const backShop = wallC.mul(float(0.85).sub(shelf)).add(vec3(0.25, 0.15, 0.1).mul(shelf));
+  const backC = mix(mix(backHouse, backShop, mShop), vec3(0.3, 0.19, 0.12), dresser);
+  const roomC = backC.mul(mBack).add(wallC.mul(0.82).mul(mSideW)).add(floorC.mul(mFloor)).add(ceilC.mul(mCeil));
+  // lamp light: warm, brighter high in the room and near the window; dark rooms keep a dim cool ambient
+  const mLit = mk(aE.greaterThan(0.01));
+  const depthK = float(1).sub(hz.negate().div(rD).mul(0.45));
+  const lampK = mix(float(1), float(0.7), mFloor).mul(depthK).mul(float(0.75).add(fy.div(rhi.sub(rlo)).mul(0.35)));
+  const warm = mix(vec3(1.0, 0.62, 0.32), vec3(1.0, 0.82, 0.55), r4);
+  const roomL = mix(vec3(0.05, 0.055, 0.07).mul(depthK), warm.mul(lampK).mul(aE.mul(0.6).add(0.4)), mLit);
+  // curtains and blinds just behind the glass (house windows)
+  const cl = r2.mul(0.22).add(0.06), cr = r3.mul(0.22).add(0.06);
+  const curt = tstep(aUv.x, cl).add(tstep(float(1).sub(cr), aUv.x)).mul(tstep(0.25, r4)).mul(mWin);
+  const curtC = pal(r3, vec3(0.6, 0.18, 0.15), vec3(0.85, 0.8, 0.68), vec3(0.85, 0.8, 0.68), vec3(0.25, 0.4, 0.32)).mul(tsin(aUv.x.mul(Ww).mul(30)).mul(0.18).add(0.82));
+  const blind = tstep(r1.mul(0.5).add(0.5), aUv.y).mul(tstep(0.7, r2)).mul(mWin);
+  const blindC = vec3(0.86, 0.82, 0.72).mul(tstep(0.5, tfract(aUv.y.mul(Hh).mul(14))).mul(0.15).add(0.8));
+  const front = tclamp(curt.add(blind), 0, 1);
+  const frontL = mix(vec3(0.09, 0.09, 0.1), warm.mul(0.55), mLit);
+  const inC = mix(roomC.mul(roomL), mix(curtC, blindC, blind).mul(frontL), front);
+  // shop fronts: a thin frame round the glass (metres from the edge)
+  const sEdge = tmin(tmin(aUv.x.mul(Ww), Ww.sub(aUv.x.mul(Ww))), tmin(aUv.y.mul(Hh), Hh.sub(aUv.y.mul(Hh))));
+  const shopFrame = float(1).sub(smoothstep(0.05, 0.07, sEdge)).mul(mShop);
+  const glassM = float(1).sub(tint).mul(mWin).add(float(1).sub(shopFrame).mul(mShop)).toVar('cGlassM');
+  const NdV = tclamp(tdot(Nw, rd.negate()), 0, 1);
+  const transm = float(1).sub(tpow(float(1).sub(NdV), 5).mul(0.96).add(0.04));
+  const interior = inC.mul(transm).mul(glassM).mul(mix(float(0.9), float(2.4), hdr)).mul(mWS).toVar('cIn');
+  // frame colours: sash = vertex colour (trim), shop frame = dark bronze; the glass itself is near black (reflective)
+  base = mix(base, mix(vec3(0.015), vec3(0.06, 0.05, 0.04), shopFrame), mShop);
+  base = mix(base, vec3(0.012, 0.014, 0.018), glassM.mul(mWS));
+  // plain dark glass (vehicles, the mixer, the towers): v2's gradient
+  base = mix(base, mix(vec3(0.02, 0.025, 0.035), vec3(0.05, 0.06, 0.08), smoothstep(0.1, 1.0, aUv.y)), mGlass);
+  // ---- far facades (kind 15): a procedural window grid, some lit (v2), with frames
+  const fq = aUv.div(vec2(2.7, 3.3)), ff = tfract(fq), fid = tfloor(fq);
+  const fwin = tstep(0.3, ff.x).mul(tstep(ff.x, 0.7)).mul(tstep(0.25, ff.y)).mul(tstep(ff.y, 0.85)).mul(tstep(0.5, fq.y)).mul(mFac).toVar('cFwin');
+  const fframe = tstep(0.27, ff.x).mul(tstep(ff.x, 0.73)).mul(tstep(0.21, ff.y)).mul(tstep(ff.y, 0.88)).mul(tstep(0.5, fq.y)).mul(mFac).sub(fwin);
+  const flit = tstep(0.62, TL.hash21(fid.add(tfloor(lp.xz.mul(0.05)))));
+  base = mix(mix(base, vec3(0.85, 0.83, 0.78), fframe), vec3(0.03, 0.035, 0.05), fwin);
+  m.colorNode = vec4(base, 1);
+  // ---- roughness / metalness / AO
+  let rough = tclamp(rgh0.mul(p1.y).add(p1.z), 0.03, 1);
+  rough = mix(rough, mix(rough, float(0.58), paintCover), mPaint);
+  rough = mix(rough, rough.mul(0.75), patch);
+  rough = mix(rough, rough.mul(0.45), wet);
+  rough = mix(rough, float(0.04), pud);
+  rough = mix(rough, float(0.04), glassM.mul(mWS));
+  rough = mix(rough, float(0.12), fwin);
+  rough = mix(rough, float(0.3), wetWall.mul(0.6));
+  m.roughnessNode = rough;
+  m.metalnessNode = mix(tmax(p1.w, p2.x.mul(float(1).sub(tint))), float(0.15), mGlass);
+  m.aoNode = mix(float(1), tclamp(ao0, 0, 1), p2.z);
+  // ---- normal: the map (flat glass with a faint waviness of old panes)
+  const nStr = p1.x.mul(float(1).sub(pud)).mul(mix(float(1), mix(float(1), float(0.45), paintCover), mPaint));
+  const nxy = nxy0.mul(nStr);
+  const nz = tsqrt(tmax(float(1).sub(tdot(nxy, nxy)), 0.0));
+  const wav = vec2(TL.vnoise(aUv.mul(vec2(9, 13)).add(r1.mul(10))), TL.vnoise(aUv.mul(vec2(13, 9)).add(r2.mul(10)))).sub(0.5).mul(0.035);
+  const gW = glassM.mul(mWS);
+  const nxyF = mix(nxy, wav, gW), nzF = mix(nz, float(1), gW);
+  m.normalNode = snorm(Tv.mul(inv).mul(nxyF.x).add(Bv.mul(inv).mul(nxyF.y)).add(Ng.mul(nzF)));
+  // ---- emission: interiors, lamp globes, lit glass, the far facades' windows, blinkers
+  const hk = mix(float(1), float(2.6), hdr);
+  const warmG = mix(vec3(1.0, 0.56, 0.22), vec3(1.0, 0.78, 0.45), TL.hash21(tfloor(lp.xz.mul(0.3)).add(tfloor(lp.y))));
+  const bl = tstep(0.45, tfract(uTime.mul(1.4)));
+  m.emissiveNode = interior
+    .add(vc.mul(aE).mul(hk).mul(isK(KIND.glow)))
+    .add(warmG.mul(aE).mul(0.6).mul(hk).mul(mGlass))
+    .add(vec3(1.0, 0.62, 0.3).mul(fwin.mul(flit)).mul(mix(float(0.9), float(2.2), hdr)).mul(aE))
+    .add(vc.mul(aE).mul(mix(float(0.04), float(1), bl)).mul(hk).mul(isK(31)));
+  // screen-space reflections (Ultra / Élevé): puddles, wet patches, glass, vehicle paint
+  if (K.post && typeof K.post.ssr === 'function') {
+    try { K.post.ssr(m, tmax(tmax(pud.mul(0.85), wet.mul(0.3)), tmax(gW.mul(0.35), isK(30).mul(0.2)))); }
+    catch (e) { console.warn('Kit Rush 3D: city SSR opt-in failed', e); }
+  }
+  m.userData.dbg = { A, A1, A2, N1, uv, uv2, wb, tint, base, interior, glassM, nxy, vc, texC, macro, wet, pud, patch };
   if (opts.position) m.positionNode = opts.position(positionLocal);
   return m;
 }
@@ -696,7 +870,7 @@ function house(mb, px, F, w, yA, yB, o) {
   if (shop) {
     // ground floor shop front: big windows under a striped awning, siding above
     mb.quad(fp(F, a0, 0, 0), fp(F, a1, 0, 0), fp(F, a1, FH, 0), fp(F, a0, FH, 0), acc, KIND.plain, 0, w, FH);
-    mb.quad(fp(F, a0 + 0.5, 0.5, 0.02), fp(F, a1 - 0.5, 0.5, 0.02), fp(F, a1 - 0.5, FH - 0.5, 0.02), fp(F, a0 + 0.5, FH - 0.5, 0.02), trim, KIND.glass, 1, 1, 1);
+    mb.quad(fp(F, a0 + 0.5, 0.5, 0.02), fp(F, a1 - 0.5, 0.5, 0.02), fp(F, a1 - 0.5, FH - 0.5, 0.02), fp(F, a0 + 0.5, FH - 0.5, 0.02), trim, KIND.shop, 1, 1, 1);
     const ac = col(pick(['#c0392b', '#1f7a5c', '#2c5d9e', '#d17a22'], r));
     mb.quad(fp(F, a0 + 0.2, FH - 0.2, 0.05), fp(F, a1 - 0.2, FH - 0.2, 0.05), fp(F, a1 - 0.2, FH - 1.05, 1.3), fp(F, a0 + 0.2, FH - 1.05, 1.3), ac, KIND.awning, 0, w, 1);
     mb.quad(fp(F, a0 + 0.2, FH - 1.05, 1.3), fp(F, a1 - 0.2, FH - 1.05, 1.3), fp(F, a1 - 0.2, FH - 0.2, 0.05), fp(F, a0 + 0.2, FH - 0.2, 0.05), ac, KIND.awning, 0, w, 1);
@@ -1215,7 +1389,7 @@ function stopSign(mb, p, yaw) {
 }
 function manhole(mb, p, s) {
   const T = templates();
-  mb.geo(T.cyl12, TRS(p[0], p[1] + 0.008, p[2], 0, 0, 0, 0.42, 0.02, 0.42), IRON, KIND.metal, 0);
+  mb.geo(T.cyl12, TRS(p[0], p[1] + 0.008, p[2], 0, 0, 0, 0.42, 0.02, 0.42), IRON, KIND.manhole, 0);
   void s;
 }
 
@@ -1568,7 +1742,7 @@ function warehouse(mb, F, w, h, r) {
   const n = Math.max(2, Math.floor(w / 5));
   for (let k = 0; k < n; k++) {
     const c = -w / 2 + (k + 0.5) * w / n;
-    mb.quad(fp(F, c - 1.7, 0.2, 0.04), fp(F, c + 1.7, 0.2, 0.04), fp(F, c + 1.7, 3.8, 0.04), fp(F, c - 1.7, 3.8, 0.04), trim, KIND.glass, r() < 0.6 ? 1 : 0, 1, 1);
+    mb.quad(fp(F, c - 1.7, 0.2, 0.04), fp(F, c + 1.7, 0.2, 0.04), fp(F, c + 1.7, 3.8, 0.04), fp(F, c - 1.7, 3.8, 0.04), trim, KIND.shop, r() < 0.6 ? 1 : 0, 1, 1);
     for (let y = 6.2; y + 2.3 < h; y += 3.6) windowAt(mb, F, c, y, y + 2.3, 1.3, trim, r() < 0.35 ? 1 : 0);
   }
   // striped awning
@@ -2024,27 +2198,57 @@ const SUN_HEX = '#ffb47a';
 const FOG_HEX = '#d9a184';
 const SKY_UNI = {
   uSun: uniform(SUN_DIR.clone()), uTime: U.time, uHDR: U.hdr,
-  uZen: uniform(lin('#27306a')), uMid: uniform(lin('#b87e8e')), uHor: uniform(lin('#ffb27a')),
+  uZen: uniform(lin('#232a63')), uMid: uniform(lin('#b47d93')), uHor: uniform(lin('#ffb27a')),
   uHaze: uniform(lin(FOG_HEX)), uSunCol: uniform(lin('#ffd2a0'))
 };
-// golden-hour sky toward direction d (unit vec3 node); clouds: 0..1 (JS number)
-// PORT(city): v2 GLSL skyCol ported 1:1 (gradient, warm sun azimuth, haze below the horizon, altocumulus streaks);
-// v3: physical sky (SkyMesh / TSL) with the PMREM fed from it.
+// cloud fbm: value noise, 5 octaves, rotated between octaves (no grid streaks)
+function skyFbm(p, oct) {
+  let s = float(0), a = 0.5, q = p, tot = 0;
+  for (let i = 0; i < oct; i++) {
+    s = s.add(TL.vnoise(q).mul(a)); tot += a; a *= 0.5;
+    q = vec2(q.x.mul(1.6).sub(q.y.mul(1.2)), q.x.mul(1.2).add(q.y.mul(1.6))).add(vec2(3.1, 1.7));
+  }
+  return s.div(tot);
+}
+// golden-hour sky toward direction d (unit vec3 node); clouds: 0..1 (JS number of cloud octaves' weight)
+// Gradient: warm horizon toward the low sun, the pink "belt" and the cool earth shadow opposite it, a violet zenith;
+// a deck of altocumulus projected on a plane (domain-warped fbm) lit from the sun's side (gold edges near it, lavender
+// undersides away from it); haze under the horizon. Branch-free (masks), shared by the dome, the bay and the PMREM.
 function skyCol(d, hdr, t, clouds) {
   const S = SKY_UNI, h = d.y;
   const sd = tmax(tdot(d, S.uSun), 0);
-  const az = tpow(tmax(tdot(tnormalize(vec3(d.x, 0, d.z).add(1e-5)), tnormalize(vec3(S.uSun.x, 0, S.uSun.z))), 0), 2);
-  const hor = mix(mix(S.uHaze, vec3(0.62, 0.45, 0.55), 0.35), S.uHor, az);
-  let col = mix(mix(hor, S.uMid, smoothstep(0.0, 0.22, h)), S.uZen, smoothstep(0.12, 0.75, h));
-  col = col.add(vec3(1.0, 0.5, 0.18).mul(tpow(sd, 6)).mul(0.55).mul(float(1).sub(smoothstep(-0.05, 0.4, h))));
-  col = select(h.lessThan(0), mix(col, S.uHaze.mul(0.9), smoothstep(0.0, -0.08, h)), col);
+  const hd = vec3(d.x, 0, d.z), sh = vec3(S.uSun.x, 0, S.uSun.z);
+  const azc = tdot(hd.mul(inverseSqrt(tmax(tdot(hd, hd), 1e-6))), sh.mul(inverseSqrt(tmax(tdot(sh, sh), 1e-6))));
+  const az = tpow(tmax(azc, 0), 2), anti = tpow(tmax(azc.negate(), 0), 1.5);
+  // horizon: gold toward the sun, pink belt / cool earth shadow away from it
+  const belt = vec3(0.86, 0.55, 0.62), earth = vec3(0.42, 0.42, 0.62);
+  const horAway = mix(mix(S.uHaze, belt, 0.5), mix(earth, belt, smoothstep(0.02, 0.09, h)), anti);
+  const hor = mix(horAway, S.uHor, az);
+  let col = mix(mix(hor, S.uMid, smoothstep(0.0, 0.24, h)), S.uZen, smoothstep(0.14, 0.8, h));
+  // broad warm Mie glow round the low sun
+  col = col.add(vec3(1.0, 0.5, 0.2).mul(tpow(sd, 6).mul(0.5).add(tpow(sd, 24).mul(0.35))).mul(float(1).sub(smoothstep(-0.05, 0.45, h))));
+  // under the horizon: haze
+  col = mix(col, S.uHaze.mul(0.9), float(1).sub(smoothstep(-0.08, 0.0, h)));
   if (clouds > 0) {
-    const cp = d.xz.div(tmax(h.add(0.12), 0.05));
-    const n = TL.vnoise(cp.mul(1.3).add(vec2(t.mul(0.01), 0))).mul(0.55).add(TL.vnoise(cp.mul(3.1).sub(vec2(t.mul(0.02), 0))).mul(0.3)).add(TL.vnoise(cp.mul(vec2(7, 15))).mul(0.15));
-    const band = smoothstep(0.03, 0.12, h).mul(float(1).sub(smoothstep(0.35, 0.6, h)));
-    const c = smoothstep(0.52, 0.78, n).mul(band);
-    const lit = mix(vec3(1.0, 0.55, 0.42), vec3(1.0, 0.78, 0.5), az).mul(hdr.mul(1.2).mul(az).add(0.9));
-    col = mix(col, mix(vec3(0.42, 0.33, 0.48), lit, smoothstep(0.55, 0.85, n)), c.mul(0.85 * clouds));
+    const cp = d.xz.div(tmax(h.add(0.1), 0.04)).mul(0.9);
+    const wind = vec2(t.mul(0.012), t.mul(0.004));
+    const warp = vec2(skyFbm(cp.mul(0.35).add(wind), 3), skyFbm(cp.mul(0.35).add(vec2(5.2, 1.3)), 3)).sub(0.5).mul(2.4);
+    const q = cp.add(warp).add(wind.mul(2));
+    const n = skyFbm(q, 5);
+    // density toward the sun (projected): lit edges where the cloud thins toward the light
+    const sdir = vec2(S.uSun.x, S.uSun.z).mul(0.35);
+    const n2 = skyFbm(q.add(sdir), 5);
+    const band = smoothstep(0.025, 0.1, h).mul(float(1).sub(smoothstep(0.42, 0.75, h)));
+    const cov = mix(float(0.5), float(0.42), TL.vnoise(cp.mul(0.12)));
+    const c = smoothstep(cov, cov.add(0.22), n).mul(band);
+    const lightT = tclamp(n.sub(n2).mul(5).add(0.55), 0, 1);
+    const litC = mix(vec3(1.0, 0.56, 0.5), vec3(1.0, 0.74, 0.42), az).mul(hdr.mul(1.1).mul(az).add(0.95));
+    const shadeC = mix(vec3(0.38, 0.31, 0.47), vec3(0.55, 0.36, 0.42), az);
+    let cc = mix(shadeC, litC, lightT);
+    // silver lining: thin cloud edges next to the sun
+    const edge = c.mul(float(1).sub(c)).mul(4).mul(tpow(sd, 10)).mul(hdr.mul(2.5).add(0.6));
+    cc = cc.add(vec3(1.0, 0.75, 0.45).mul(edge));
+    col = mix(col, cc, c.mul(0.9 * clouds));
   }
   return col;
 }
@@ -2055,39 +2259,63 @@ function skyMaterial() {
   let col = skyCol(d, hdr, S.uTime, 1);
   const sd = tmax(tdot(d, S.uSun), 0);
   col = col.add(S.uSunCol.mul(tpow(sd, 900).mul(1.6).add(tpow(sd, 90).mul(0.45)).add(tpow(sd, 12).mul(0.12))));
-  col = col.add(S.uSunCol.mul(hdr).mul(smoothstep(0.99955, 0.9998, sd).mul(22).add(tpow(sd, 400).mul(2))));
+  // the disc (limb-darkened) and its core, HDR so the bloom and the lens flare pick it up
+  const disc = smoothstep(0.99955, 0.9998, sd);
+  col = col.add(S.uSunCol.mul(hdr).mul(disc.mul(smoothstep(0.99955, 0.99995, sd).mul(0.4).add(0.6)).mul(22).add(tpow(sd, 400).mul(2))));
   m.colorNode = mix(tmin(col, vec3(1)), col, hdr);
   const clip = cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(positionLocal.add(cameraPosition), 1));
   m.vertexNode = vec4(clip.xy, clip.w.mul(0.99999), clip.w);
   return m;
 }
-// PORT(city): v2 GLSL bay water ported 1:1 (wave normals, Fresnel sky reflection, sun glitter path); v3: SSR,
-// depth colour, foam along the piers and the sea wall.
+// The bay: the golden-hour sky reflected analytically (crisp clouds, Fresnel), wind waves (directional swells + two
+// noise ripple layers, calmer with distance), a dark teal body with sun-side scattering, the sun's glitter path and
+// sparkles (HDR), foam where the water meets the piles, the sea wall and the piers (scene depth, when the pipeline runs),
+// and screen-space reflections of the city and the bridge on Ultra / Élevé (K.post.ssr; the wave normal goes to the
+// G-buffer through normalNode). Transparent (drawn after the opaque scene so it can read its depth), depth-writing.
 function waterMaterial() {
-  const m = new THREE.MeshBasicNodeMaterial({ fog: true });
+  const m = new THREE.MeshBasicNodeMaterial({ fog: true, transparent: true, depthWrite: true });
   const S = SKY_UNI, hdr = S.uHDR, t = S.uTime;
-  const uDeep = uniform(lin('#123447')), uShallow = uniform(lin('#2e5f6e'));
-  const wp = positionWorld, p = positionGeometry.xz;
+  const uDeep = uniform(lin('#0f2f3f')), uShallow = uniform(lin('#2b6670'));
+  const wp = positionWorld, p = wp.xz;
   const Vd = tnormalize(cameraPosition.sub(wp));
   const dist = tlength(cameraPosition.sub(wp));
-  let g = vec2(0.8, 0.3).mul(tcos(tdot(p, vec2(0.11, 0.05)).add(t.mul(1.1))).mul(0.12))
-    .add(vec2(-0.3, 0.9).mul(tcos(tdot(p, vec2(-0.04, 0.17)).add(t.mul(1.4))).mul(0.09)))
+  let g = vec2(0.8, 0.3).mul(tcos(tdot(p, vec2(0.11, 0.05)).add(t.mul(1.1))).mul(0.11))
+    .add(vec2(-0.3, 0.9).mul(tcos(tdot(p, vec2(-0.04, 0.17)).add(t.mul(1.4))).mul(0.085)))
     .add(vec2(0.6, -0.7).mul(tcos(tdot(p, vec2(0.31, -0.27)).add(t.mul(2.2))).mul(0.05)))
-    .add(vec2(TL.vnoise(p.mul(0.9).add(t.mul(0.6))), TL.vnoise(p.mul(0.9).sub(t.mul(0.5)).add(7))).sub(0.5).mul(0.16))
-    .add(vec2(TL.vnoise(p.mul(3.3).sub(t.mul(0.9))), TL.vnoise(p.mul(3.3).add(t.mul(1.1)).add(3))).sub(0.5).mul(0.08));
-  g = g.mul(mix(float(1), float(0.35), smoothstep(80.0, 900.0, dist)));
+    .add(vec2(-0.9, -0.2).mul(tcos(tdot(p, vec2(-0.52, 0.21)).add(t.mul(2.9))).mul(0.03)))
+    .add(vec2(TL.vnoise(p.mul(0.9).add(t.mul(0.6))), TL.vnoise(p.mul(0.9).sub(t.mul(0.5)).add(7))).sub(0.5).mul(0.15))
+    .add(vec2(TL.vnoise(p.mul(3.3).sub(t.mul(0.9))), TL.vnoise(p.mul(3.3).add(t.mul(1.1)).add(3))).sub(0.5).mul(0.08))
+    .add(vec2(TL.vnoise(p.mul(8.1).add(t.mul(1.7))), TL.vnoise(p.mul(8.1).sub(t.mul(1.3)).add(11))).sub(0.5).mul(0.035));
+  g = g.mul(mix(float(1), float(0.3), smoothstep(60.0, 900.0, dist)));
   const N = tnormalize(vec3(g.x.negate(), 1, g.y.negate()));
-  const fr = tpow(float(1).sub(tmax(tdot(N, Vd), 0)), 5).mul(0.98).add(0.02);
+  const fr = tpow(float(1).sub(tmax(tdot(N, Vd), 0)), 5).mul(0.97).add(0.03);
   const Rr = treflect(Vd.negate(), N);
-  const refl = skyCol(vec3(Rr.x, tabs(Rr.y), Rr.z), hdr, t, 0.6);
-  const base = mix(uShallow, uDeep, smoothstep(0.0, 0.6, Vd.y));
-  let col = mix(base.mul(0.55), refl, tclamp(fr.mul(1.15), 0, 1));
+  const refl = skyCol(vec3(Rr.x, tabs(Rr.y), Rr.z), hdr, t, 0.7);
+  // body: dark teal, a little lighter on the wave faces lit through by the low sun
+  const scat = tpow(tmax(tdot(Vd, vec3(S.uSun.x, 0, S.uSun.z).negate().normalize()), 0), 3).mul(tclamp(g.x.mul(S.uSun.x).add(g.y.mul(S.uSun.z)).mul(-3).add(0.3), 0, 1));
+  const base = mix(uShallow, uDeep, smoothstep(0.0, 0.6, Vd.y)).mul(0.6).add(vec3(0.25, 0.45, 0.35).mul(scat).mul(0.35));
+  let col = mix(base, refl, tclamp(fr.mul(1.1), 0, 1));
   const Hh = tnormalize(S.uSun.add(Vd));
   const nh = tmax(tdot(N, Hh), 0);
-  const sp = tpow(nh, 260).mul(hdr.mul(5).add(1.4)).add(tpow(nh, 40).mul(0.18));
+  const sp = tpow(nh, 280).mul(hdr.mul(5.5).add(1.4)).add(tpow(nh, 40).mul(0.2));
   const sparkle = tstep(0.86, TL.hash21(tfloor(p.mul(2)).add(tfloor(t.mul(6))))).mul(tpow(nh, 30)).mul(hdr.mul(6).add(0.8));
   col = col.add(S.uSunCol.mul(sp.add(sparkle)).mul(vec3(1.0, 0.82, 0.6)));
+  // foam where something stands in the water (opaque depth just behind the surface)
+  let foam = float(0);
+  const sdN = K.post && typeof K.post.sceneDepth === 'function' ? K.post.sceneDepth() : null;
+  if (sdN && TSL.perspectiveDepthToViewZ && TSL.cameraNear && TSL.cameraFar) {
+    const zs = TSL.perspectiveDepthToViewZ(sdN.x, TSL.cameraNear, TSL.cameraFar);
+    const thick = tmax(positionView.z.sub(zs), 0);
+    const fn = TL.vnoise(p.mul(1.6).add(vec2(t.mul(0.3), t.mul(-0.2)))).mul(0.6).add(TL.vnoise(p.mul(5.3).sub(t.mul(0.5))).mul(0.4));
+    foam = float(1).sub(smoothstep(0.0, 1.6, thick.add(fn.mul(0.9)))).mul(smoothstep(0.25, 0.6, fn.add(float(1).sub(smoothstep(0.0, 0.5, thick)).mul(0.5)))).mul(float(1).sub(smoothstep(150.0, 400.0, dist)));
+    foam = foam.toVar('cFoam');
+  }
+  col = mix(col, vec3(0.95, 0.9, 0.86).mul(mix(float(0.8), float(1.1), hdr)), foam.mul(0.85));
   m.colorNode = mix(tmin(col, vec3(1)), col, hdr);
+  m.normalNode = tnormalize(cameraViewMatrix.mul(vec4(N, 0)).xyz);
+  if (K.post && typeof K.post.ssr === 'function') {
+    try { K.post.ssr(m, float(0.9).mul(float(1).sub(foam)), 0.03); } catch (e) { console.warn('Kit Rush 3D: water SSR opt-in failed', e); }
+  }
   return m;
 }
 // camera-facing billboard: clip position of an instance centre c (local vec3 node) with the quad corner scaled by size
@@ -2922,40 +3150,83 @@ function routePoint(s, d, h, out) { const p = rp(s, d, h); return (out || new V3
 
 // ===================== state, lights, build =====================
 const ST = { built: false, entered: false, time: 0, pickT: -1, sK: 0, vK: 0, kitD: 0, kitOn: false, cp: -1, focus: new V3(), buildMs: 0, prev: null, env: null, sun: null, hemi: null, fog: null, bg: null, kitS: 0, last: new V3() };
-function buildLights(group) {
+// The lights live in their own group at the world origin: CSMShadowNode (Ultra / Élevé) places its cascade lights in
+// world space next to the sun. Two suns, one visible at a time (K.gfx.shadows): 'csm' = 3 cascades (fade between them)
+// fitted to the camera frustum up to 280 m; 'single' / 'cheap' = v2's one shadow box following Kit.
+const SUN_I = 2.3 * LIGHT_PI;
+function buildLights() {
   const touch = isTouch();
-  const sun = new THREE.DirectionalLight(lin(SUN_HEX), 2.3 * LIGHT_PI);
-  sun.castShadow = true;
+  const L = new THREE.Group();
+  L.name = 'city-lights'; L.visible = false;
+  const mkSun = (size, ext) => {
+    const sun = new THREE.DirectionalLight(lin(SUN_HEX), SUN_I);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(size, size);
+    const c = sun.shadow.camera;
+    c.left = -ext; c.right = ext; c.top = ext; c.bottom = -ext; c.near = 1; c.far = 620;
+    c.updateProjectionMatrix();
+    sun.shadow.bias = -0.0007; sun.shadow.normalBias = 0.05;
+    L.add(sun); L.add(sun.target);
+    return sun;
+  };
   const size = touch ? 1024 : 2048, ext = touch ? 44 : 56;
-  sun.shadow.mapSize.set(size, size);
-  const c = sun.shadow.camera;
-  c.left = -ext; c.right = ext; c.top = ext; c.bottom = -ext; c.near = 1; c.far = 520;
-  c.updateProjectionMatrix();
-  sun.shadow.bias = -0.0007; sun.shadow.normalBias = 0.05;
+  const sunS = mkSun(size, ext);
   ST.shadowExt = ext; ST.shadowSize = size;
-  group.add(sun); group.add(sun.target);
+  const sunC = mkSun(2048, 60);
+  sunC.shadow.bias = -0.0005; sunC.shadow.normalBias = 0.04;
+  sunC.visible = false;
+  ST.sunS = sunS; ST.sunC = sunC; ST.sun = sunS;
+  if (typeof CityCSMShadowNode === 'function') {
+    try {
+      const csm = new CityCSMShadowNode(sunC, { cascades: 3, maxFar: 280, mode: 'practical', lightMargin: 160 });
+      csm.fade = true;
+      sunC.shadow.shadowNode = csm;
+      ST.csm = csm;
+    } catch (e) { console.warn('Kit Rush 3D: city CSM shadows unavailable', e); ST.csm = null; }
+  }
   const hemi = new THREE.HemisphereLight(lin('#8f92cc'), lin('#8a6652'), 0.5 * LIGHT_PI);
-  group.add(hemi);
+  L.add(hemi);
   // the open evening sky opposite the sun: a cool fill so the streets in the shade keep their asphalt, cars and Kit readable
   const fill = new THREE.DirectionalLight(lin('#adb7da'), 0.4 * LIGHT_PI);
   fill.position.set(-SUN_DIR.x * 0.55, 0.8, -SUN_DIR.z * 0.55).normalize().multiplyScalar(100);
-  group.add(fill); group.add(fill.target);
-  ST.sun = sun; ST.hemi = hemi; ST.fill = fill;
+  L.add(fill); L.add(fill.target);
+  ST.hemi = hemi; ST.fill = fill; ST.lights = L;
   const fog = new THREE.Fog(new THREE.Color(FOG_HEX), touch ? 140 : 180, touch ? 1900 : 2900);
   fog.hdrColor = lin(FOG_HEX);
   ST.fog = fog; ST.bg = new THREE.Color(FOG_HEX);
 }
+// K.gfx.shadows -> which sun casts: the cascades need the scene camera (set before their first build: the environment
+// capture renders the city through a CubeCamera first)
+function applyShadows(mode) {
+  const csm = !!ST.csm && mode === 'csm';
+  if (csm && !ST.csm.camera && K.view && K.view.camera && K.view.renderer) {
+    try { ST.csm._init({ camera: K.view.camera, renderer: K.view.renderer }); } catch (e) { console.warn('Kit Rush 3D: CSM init failed', e); ST.csm = null; return applyShadows('single'); }
+  }
+  ST.sunC.visible = csm; ST.sunS.visible = !csm;
+  ST.sun = csm ? ST.sunC : ST.sunS;
+  ST.shadowMode = csm ? 'csm' : mode === 'cheap' ? 'cheap' : 'single';
+  ST.csmKey = '';
+  placeSun();
+}
 const _sr = new V3(), _su = new V3(), _sp = new V3(), UPV = new V3(0, 1, 0);
 function placeSun() {
-  // the shadow box follows Kit, snapped to its texels (no shimmering)
+  // the shadow box follows Kit, snapped to its texels (no shimmering); world coordinates (the light group is at 0)
   const f = ST.focus, ext = ST.shadowExt;
   _sr.crossVectors(UPV, SUN_DIR).normalize(); _su.crossVectors(SUN_DIR, _sr);
   const texel = (2 * ext) / ST.shadowSize;
   const u = Math.round(f.dot(_sr) / texel) * texel, v = Math.round(f.dot(_su) / texel) * texel, w = f.dot(SUN_DIR);
   _sp.copy(_sr).multiplyScalar(u).addScaledVector(_su, v).addScaledVector(SUN_DIR, w);
-  ST.sun.target.position.copy(_sp);
-  ST.sun.position.copy(_sp).addScaledVector(SUN_DIR, 260);
-  ST.sun.target.updateMatrixWorld(); ST.sun.updateMatrixWorld();
+  _sp.x += OX; _sp.z += OZ;
+  for (const sun of [ST.sunS, ST.sunC]) {
+    sun.target.position.copy(_sp);
+    sun.position.copy(_sp).addScaledVector(SUN_DIR, 300);
+    sun.target.updateMatrixWorld(); sun.updateMatrixWorld();
+  }
+  // the cascades follow the camera's projection (fov changes with speed / cinematics)
+  if (ST.shadowMode === 'csm' && ST.csm && ST.csm.camera) {
+    const cam = ST.csm.camera, key = cam.fov.toFixed(2) + ',' + cam.aspect.toFixed(3) + ',' + cam.near + ',' + cam.far;
+    if (key !== ST.csmKey) { ST.csmKey = key; try { ST.csm.updateFrustums(); } catch (e) { /* not ready */ } }
+  }
 }
 function bakeParked(group) {
   for (const p of PARKED) {
@@ -3012,6 +3283,7 @@ function build(scene) {
   buildWires();
   propSolids();
   const mat = MESH.cityMat = cityMaterial();
+  if (K.tex && typeof K.tex.preload === 'function') K.tex.preload(CT.names).then(cityTexSync, () => {});
   const wires = [];
   for (const c of CK.list) {
     for (const v of c.wires) wires.push(v);
@@ -3059,7 +3331,10 @@ function build(scene) {
     group.add(water);
     ST.water = water;
   }
-  buildLights(group);
+  buildLights();
+  if (scene) scene.add(ST.lights);
+  applyShadows(K.gfx ? K.gfx.shadows : 'single');
+  if (K.gfx && typeof K.gfx.onChange === 'function') K.gfx.onChange(g => { if (ST.built) applyShadows(g.shadows); });
   group.add(glowMesh(LAMPS));
   if (STEAMS.length) group.add(steamMesh(STEAMS));
   group.add(fogMesh());
@@ -3103,9 +3378,12 @@ function enter() {
   const V = K.view, sc = V && V.scene, cam = V && V.camera;
   if (!sc || !cam) return;
   ST.entered = true;
+  cityTexSync();
   ST.prev = { fog: sc.fog, bg: sc.background, env: sc.environment, near: cam.near, far: cam.far };
   if (K.world && typeof K.world.setVisible === 'function') { try { K.world.setVisible(false); } catch (e) { console.warn(e); } }
   C.group.visible = true;
+  if (ST.lights.parent !== sc) sc.add(ST.lights);
+  ST.lights.visible = true;
   sc.fog = ST.fog; sc.background = ST.bg;
   cam.near = 0.3; cam.far = isTouch() ? 3200 : 4200; cam.updateProjectionMatrix();
   ST.focus.copy(C.start.pos); placeSun();
@@ -3143,6 +3421,7 @@ function exit() {
   ST.entered = false;
   const V = K.view, sc = V.scene, cam = V.camera, pv = ST.prev || {};
   C.group.visible = false;
+  ST.lights.visible = false;
   if (sc.fog === ST.fog) sc.fog = pv.fog || null;
   if (sc.background === ST.bg) sc.background = pv.bg || null;
   sc.environment = pv.env || null;
@@ -3191,6 +3470,7 @@ function update(dt, t) {
   if (!(dt > 0 && dt < 0.25)) dt = 1 / 60;
   ST.time += dt;
   U.time.value = ST.time % 3600;
+  cityTexSync();
   if (K.vehicles && K.vehicles.update) K.vehicles.update(dt, U.time.value);
   if (MESH.rings) K.util.spinY(MESH.rings.geometry, U.time.value * 3);
   const P = K.player;
@@ -3289,6 +3569,7 @@ const C = K.city = {
   bumperHit() { if (MESH.bumper) MESH.bumper.t = 0; },
   goalHit() { if (MESH.goal) MESH.goal.w = 28; },
   surfaceY(s, d) { return profY(clamp(s, 0, RT.len)) + surface(clamp(s, 0, RT.len), d).y; },
-  setFocus(v) { if (finV(v)) ST.focus.set(v.x - OX, v.y, v.z - OZ); }
+  setFocus(v) { if (finV(v)) ST.focus.set(v.x - OX, v.y, v.z - OZ); },
+  _dbg: { MESH, CT, ST, TSL }
 };
 })();
