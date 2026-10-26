@@ -286,7 +286,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
           const s = nr.s, lim = Math.max(0, hw - 3.4);
           const pc = clamp(3.6 * Math.sin(s * 0.019 + 1.1) + 1.6 * Math.sin(s * 0.047 + 0.3), -lim, lim);
           const pw = 1.2 + 0.35 * Math.sin(s * 0.061 + 2);
-          const pres = sstep(-0.1, 0.25, vnoise(s * 0.012, 0.5, 71)) * sstep(ARENA.flat, ARENA.flat + 6, ra);
+          const pres = sstep(0.02, 0.14, vnoise(s * 0.012, 0.5, 71)) * sstep(ARENA.flat, ARENA.flat + 6, ra);
           T.MT[i4] = pres * (1 - sstep(pw - 0.9, pw + 1.1, Math.abs(nr.d - pc))) * (1 - sstep(hw - 1.5, hw + 0.5, nr.dist));
         }
         T.MT[i4 + 1] = h > -6 ? 1 - sstep(0.9, 2.7, h) : 0;
@@ -400,15 +400,17 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     // ---- checker squares: sandstone, one texture repeat per square at a per-square offset (no visible tiling)
     const tile = tfloor(gq);
     const tileH = TL.hash21(tile.add(vec2(3.7, 1.3)));
-    const rUV = gq.add(vec2(tileH.mul(7.31), TL.hash21(tile.add(vec2(9.1, 4.2))).mul(5.17)));
-    const rA = ttexture(tRA, rUV).grad(gdx, gdy), rN = ttexture(tRN, rUV).grad(gdx, gdy), rO = ttexture(tRO, rUV).grad(gdx, gdy);
+    // (two texture repeats per square: the sandstone's strata and cracks stay stone-sized, not plank-sized)
+    const rUV = gq.mul(1.9).add(vec2(tileH.mul(7.31), TL.hash21(tile.add(vec2(9.1, 4.2))).mul(5.17)));
+    const rdx = gdx.mul(1.9), rdy = gdy.mul(1.9);
+    const rA = ttexture(tRA, rUV).grad(rdx, rdy), rN = ttexture(tRN, rUV).grad(rdx, rdy), rO = ttexture(tRO, rUV).grad(rdx, rdy);
     const chkC = TL.checker(gq, gw);
-    const gChk = mix(GM_UNI.gmChkA, GM_UNI.gmChkB, chkC).mul(rA.rgb.mul(meanInv('rock')))
+    const gChk = mix(GM_UNI.gmChkA, GM_UNI.gmChkB, chkC).mul(mix(vec3(1), rA.rgb.mul(meanInv('rock')), 0.7))
       .mul(gmCheckerShade(gq, gw)).mul(float(0.9).add(tileH.mul(0.2)));
     const gTf = tfract(gq);
     const bevel = tclamp(float(1).sub(tmax(gw.x, gw.y).mul(5)), 0, 1).mul(0.6);
     const gBv = vec2(smoothstep(0.9, 1.0, gTf.x).sub(smoothstep(0.1, 0.0, gTf.x)), smoothstep(0.9, 1.0, gTf.y).sub(smoothstep(0.1, 0.0, gTf.y))).mul(bevel)
-      .add(nXY(rN, 0.85));
+      .add(nXY(rN, 0.6));
     const chkBump = select(gUY, vec3(gBv.x, 0, gBv.y), select(gUX, vec3(0, gBv.y, gBv.x), vec3(gBv.x, gBv.y, 0)));
     const chkRough = rO.g, chkAO = rO.r;
     if (chkOnly) {
@@ -459,8 +461,12 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     let grassCol = gGrass, grassBump = vec3(grassN.x, 0, grassN.y), grassRough = gO.g, grassAO = gO.r;
     if (terrain) {
       const tSA = wtex('soil_albedo'), tSN = wtex('soil_normal'), tDA = wtex('sand_albedo'), tDN = wtex('sand_normal');
-      const sUV = gx.mul(1 / 1.9), dUV = gx.mul(1 / 1.6);
-      const sA = ttexture(tSA, sUV), sN = ttexture(tSN, sUV), dA = ttexture(tDA, dUV), dN = ttexture(tDN, dUV);
+      // soil and sand: like the grass, two lookups (the second rotated and offset) blended by the slow noise, so a
+      // beach or a long path never shows its 2 m tile
+      const sUV = gx.mul(1 / 1.9), dUV = gx.mul(1 / 1.6), dUV2 = rot2(gx, 2.1).mul(1 / 1.75).add(vec2(0.19, 0.53));
+      const sUV2 = rot2(gx, 0.7).mul(1 / 2.1).add(vec2(0.41, 0.17));
+      const sA = mix(ttexture(tSA, sUV), ttexture(tSA, sUV2), bw), sN = ttexture(tSN, sUV);
+      const dA = mix(ttexture(tDA, dUV), ttexture(tDA, dUV2), bw), dN = ttexture(tDN, dUV);
       // worn grass around the path: yellower, flattened
       const worn = smoothstep(0.2, 0.46, attribute('aMat', 'vec4').x).mul(float(1).sub(pathW));
       grassCol = mix(grassCol, grassCol.mul(vec3(1.25, 1.02, 0.7)), worn.mul(0.8));
@@ -502,21 +508,13 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     m.normalNode = tnormalize(normalViewGeometry.add(cameraViewMatrix.mul(vec4(bump, 0)).xyz));
     return m;
   }
-  // Swaying palms / flowers / flapping birds (vertex animation weighted by the aAnim attribute).
-  // PORT(world): v2 animated in the instance's local space with a phase from the instance position and spun the
-  // sunflower heads about their pivot (0, 2.1, 0.09); r186 applies instancing before positionNode, so this placeholder
-  // sways in model space with a per-instance hash phase and the heads no longer spin.
-  function animMaterial(kind, params) {
-    const m = new THREE.MeshStandardNodeMaterial(Object.assign({ vertexColors: true, roughness: 0.82, metalness: 0 }, params || {}));
+  // Gulls: the wings (aAnim = 1 at the tips) flap; each bird has its own phase (instance index hash). The rest of the
+  // island's vegetation sways through the decor materials (decorWind).
+  function birdMaterial() {
+    const m = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, side: THREE.DoubleSide });
     const aAnim = attribute('aAnim', 'float');
     const kPh = TL.hash21(vec2(float(instanceIndex).mul(0.37), 1.7)).mul(6.2832);
-    const p = positionLocal;
-    let off;
-    if (kind === 'palm') off = vec3(tsin(TIME.mul(1.5).add(kPh)).mul(aAnim).mul(0.32), tsin(TIME.mul(2.1).add(kPh)).mul(aAnim).mul(0.1), tcos(TIME.mul(1.1).add(kPh.mul(1.3))).mul(aAnim).mul(0.22));
-    else if (kind === 'sunflower') off = vec3(tsin(TIME.mul(1.3).add(kPh)).mul(0.04).mul(positionGeometry.y), 0, 0);
-    else if (kind === 'flower') off = vec3(tsin(TIME.mul(1.8).add(kPh)).mul(aAnim).mul(0.08), 0, tcos(TIME.mul(1.4).add(kPh)).mul(aAnim).mul(0.06));
-    else off = vec3(0, tsin(TIME.mul(9).add(kPh.mul(3))).mul(aAnim).mul(0.55), 0);
-    m.positionNode = p.add(off);
+    m.positionNode = positionLocal.add(vec3(0, tsin(TIME.mul(9).add(kPh.mul(3))).mul(aAnim).mul(0.55), 0));
     return m;
   }
 
@@ -716,13 +714,15 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   }
 
   // ======================= builders =======================
-  // Sun + shadows, per preset (K.gfx.shadows): 'csm' (Ultra, Élevé) = cascaded shadow maps (CSMShadowNode, 3 x 2048,
-  // out to ~220 m, faded between cascades); 'single' (Moyen) = one map that follows Kit; 'cheap' (Économie) = a small
-  // 1024 map close around Kit. Two suns share the same direction and colour; the inactive one is hidden (a light set
-  // change rebuilds the materials once, then both variants are cached). The terrain casts through a coarse proxy that
-  // only the shadow cameras see (SHADOW_LAYER): one draw per 128 m zone instead of every visible chunk.
+  // Sun + shadows, per preset (K.gfx.shadows): 'csm' = cascaded shadow maps (CSMShadowNode, 2048 per cascade, faded
+  // between cascades; Ultra 3 cascades out to 200 m, Élevé 2 out to 150 m); 'single' (Moyen) = one map that follows
+  // Kit; 'cheap' (Économie) = a small 1024 map close around Kit. The suns share the same direction and colour; only the
+  // active one is visible (a light set change rebuilds the materials once, then every variant is cached). The terrain
+  // casts through a coarse proxy that only the shadow cameras see (SHADOW_LAYER): one draw per 192 m zone instead of
+  // every visible chunk.
   const SHADOW_LAYER = 5;
   const SUN_I = 1.38 * LIGHT_PI;
+  const CSM_CFG = { ultra: { cascades: 3, maxFar: 200 }, high: { cascades: 2, maxFar: 150 } };
   function makeSun(scene) {
     const sun = new THREE.DirectionalLight(lin(SUN_HEX), SUN_I);
     sun.castShadow = true;
@@ -742,15 +742,20 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     c.left = -S.shadowExt; c.right = S.shadowExt; c.top = S.shadowExt; c.bottom = -S.shadowExt; c.near = 1; c.far = 360;
     c.updateProjectionMatrix();
     S.sunS = sun;
-    // cascades (Ultra / Élevé): the node places one shadow camera per cascade around the view frustum
-    const sc = makeSun(scene);
-    sc.shadow.mapSize.set(2048, 2048);
-    sc.shadow.camera.near = 1; sc.shadow.camera.far = 700;
-    sc.shadow.bias = -0.0004;
-    sc.shadow.normalBias = 0.05;
-    sc.position.copy(SUN_DIR).multiplyScalar(200); sc.target.position.set(0, 0, 0);
-    sc.updateMatrixWorld(); sc.target.updateMatrixWorld();
-    S.sunC = sc;
+    // cascades (Ultra / Élevé): the node places one shadow camera per cascade around the view frustum (created on
+    // first use; the lights exist from the start so the act switch hides them with the rest of the island)
+    S.csmSets = {};
+    for (const k in CSM_CFG) {
+      const sc = makeSun(scene);
+      sc.visible = false;
+      sc.shadow.mapSize.set(2048, 2048);
+      sc.shadow.camera.near = 1; sc.shadow.camera.far = 700;
+      sc.shadow.bias = -0.0004;
+      sc.shadow.normalBias = 0.05;
+      sc.position.copy(SUN_DIR).multiplyScalar(200); sc.target.position.set(0, 0, 0);
+      sc.updateMatrixWorld(); sc.target.updateMatrixWorld();
+      S.csmSets[k] = { light: sc, node: null, cam: { aspect: 0, fov: 0, far: 0, near: 0 } };
+    }
     S.sun = sun; S.hemi = hemi;
     applyShadows();
     placeShadow();
@@ -759,28 +764,31 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   function applyShadows() {
     if (!S.sunS) return;
     const mode = (K.gfx && K.gfx.shadows) || (S.touch ? 'single' : 'csm');
-    let csm = mode === 'csm' && !S.noCSM;
-    if (csm && !S.csm) {
+    const pre = K.gfx && K.gfx.preset === 'ultra' ? 'ultra' : 'high';
+    let set = mode === 'csm' && !S.noCSM ? S.csmSets[pre] : null;
+    if (set && !set.node) {
       try {
-        const node = new worldCSM(S.sunC, { cascades: 3, maxFar: 160, mode: 'practical', lightMargin: 80 });
+        const cfg = CSM_CFG[pre];
+        const node = new worldCSM(set.light, { cascades: cfg.cascades, maxFar: cfg.maxFar, mode: 'practical', lightMargin: 80 });
         node.fade = true;
         // bind it to the game camera now (left alone, it binds to whichever camera first builds a material: the
         // environment capture's cube camera)
         const V = K.view;
         if (V && V.camera && V.renderer) node._init({ camera: V.camera, renderer: V.renderer });
-        S.sunC.shadow.shadowNode = node;
-        S.csm = node;
-        S.csmCam = { aspect: 0, fov: 0, far: 0, near: 0 };
-      } catch (e) { console.warn('Kit Rush 3D: cascaded shadows unavailable', e); S.noCSM = true; csm = false; }
+        set.light.shadow.shadowNode = node;
+        set.node = node;
+      } catch (e) { console.warn('Kit Rush 3D: cascaded shadows unavailable', e); S.noCSM = true; set = null; }
     }
-    S.shadowMode = csm ? 'csm' : mode === 'cheap' ? 'cheap' : 'single';
+    S.shadowMode = set ? 'csm' : mode === 'cheap' ? 'cheap' : 'single';
+    S.csm = set;
     // (while Act 2 is shown the island's objects are hidden: record what setVisible(true) must restore)
     const setVis = (o, v) => { if (S.shown) o.visible = v; else o.userData.kitWasVisible = v; };
-    setVis(S.sunC, csm);
-    setVis(S.sunS, !csm);
-    S.sun = csm ? S.sunC : S.sunS;
+    for (const k in S.csmSets) setVis(S.csmSets[k].light, S.csmSets[k] === set);
+    setVis(S.sunS, !set);
+    S.sun = set ? set.light : S.sunS;
     W.sun = S.sun;
-    if (!csm) {
+    if (set) set.cam.aspect = 0; // re-fit the cascades
+    else {
       const cheap = S.shadowMode === 'cheap';
       const size = cheap ? 1024 : S.shadowSize, ext = cheap ? 30 : S.shadowExt;
       const sh = S.sunS.shadow;
@@ -796,12 +804,12 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   }
   // the cascades follow the camera's projection (aspect / fov / far change on resize, phones, cinematics)
   function updateCSM() {
-    const n = S.csm, cam = K.view && K.view.camera;
-    if (!n || !cam || !S.sunC.visible) return;
-    const k = S.csmCam;
+    const set = S.csm, cam = K.view && K.view.camera;
+    if (!set || !set.node || !cam) return;
+    const k = set.cam;
     if (k.aspect !== cam.aspect || k.fov !== cam.fov || k.far !== cam.far || k.near !== cam.near) {
       k.aspect = cam.aspect; k.fov = cam.fov; k.far = cam.far; k.near = cam.near;
-      try { n.updateFrustums(); } catch (e) { /* not initialised yet */ }
+      try { set.node.updateFrustums(); } catch (e) { /* not initialised yet */ }
     }
   }
   const _sr = new V3(), _su = new V3(), _sp = new V3();
@@ -1020,7 +1028,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       col = col.add(U.uSunCol.mul(hdr).mul(tpow(nh, 1800)).mul(40));
       const sp = ttexture(tFX, p.mul(0.33).add(vec2(t.mul(0.05), t.mul(-0.04)))).b.mul(ttexture(tFX, p.mul(0.41).sub(vec2(t.mul(0.03), t.mul(0.06)))).b);
       const gfade = float(1).sub(smoothstep(50.0, 190.0, dist));
-      col = col.add(U.uSunCol.mul(smoothstep(0.36, 0.55, sp)).mul(tpow(nh, 16)).mul(hdr.mul(4).add(2.4)).mul(gfade));
+      col = col.add(U.uSunCol.mul(smoothstep(0.44, 0.62, sp)).mul(tpow(nh, 24)).mul(hdr.mul(2.5).add(1.6)).mul(gfade));
       // foam: bands rolling onto the shore + a fringe where the water is a few centimetres deep, bubbly texture
       const fnz = ttexture(tFX, p.mul(0.045).add(vec2(t.mul(0.011), t.mul(-0.008)))).b;
       const bub = ttexture(tFX, p.mul(0.31).add(vec2(t.mul(0.02), t.mul(0.012)))).r;
@@ -1091,7 +1099,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   }
   function buildTerrainMeshes(scene) {
     const mat = groundMaterial('terrain');
-    const NX = T.NX, NZ = T.NZ, H = T.H, CH = 64;
+    const NX = T.NX, NZ = T.NZ, H = T.H, CH = 96;
     const grp = new THREE.Group(); grp.name = 'terrain';
     S.terrChunks = [];
     for (let cz = 0; cz < NZ - 1; cz += CH) for (let cx = 0; cx < NX - 1; cx += CH) {
@@ -1144,7 +1152,8 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     const cam = K.view && K.view.camera;
     if (!cam || !S.terrChunks) return;
     const cxp = cam.position.x, czp = cam.position.z;
-    const t1 = S.touch ? 115 : 180, t2 = S.touch ? 230 : 340;
+    const pre = (K.gfx && K.gfx.preset) || (S.touch ? 'medium' : 'high');
+    const t1 = pre === 'ultra' ? 160 : pre === 'high' ? 125 : 95, t2 = pre === 'ultra' ? 320 : pre === 'high' ? 260 : 200;
     for (const ch of S.terrChunks) {
       const dx = cxp < ch.x0 ? ch.x0 - cxp : cxp > ch.x1 ? cxp - ch.x1 : 0, dz = czp < ch.z0 ? ch.z0 - czp : czp > ch.z1 ? czp - ch.z1 : 0;
       const d = Math.sqrt(dx * dx + dz * dz), h = ch.lod === 0 ? 6 : -6, h2 = ch.lod === 2 ? -6 : 6;
@@ -1156,11 +1165,11 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     }
   }
 
-  // Terrain shadow caster: the heightfield at a 2 m step, in 128 m zones, on a layer only the shadow cameras render. Shadow
+  // Terrain shadow caster: the heightfield at a 2 m step, in 192 m zones, on a layer only the shadow cameras render. Shadow
   // maps take back faces (three's default shadowSide), so only the silhouette of the slopes facing away from the sun
   // matters: at 2 m it stays within a metre of the real ridge line.
   function buildShadowProxy(scene) {
-    const NX = T.NX, NZ = T.NZ, H = T.H, st = 2, ZZ = 128;
+    const NX = T.NX, NZ = T.NZ, H = T.H, st = 2, ZZ = 192;
     const mat = new THREE.MeshBasicNodeMaterial({ colorWrite: false, depthWrite: false });
     mat.shadowSide = THREE.BackSide;
     const xs = [];
@@ -1552,9 +1561,13 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     const nrm = new V3(), a = new V3(), b = new V3();
     for (let j = 0; j < rows.length; j++) {
       const r = rows[j], prev = rows[Math.max(0, j - 1)], next = rows[Math.min(rows.length - 1, j + 1)];
-      // the normal agrees with the triangles' winding (front = along x across): double-sided materials flip it
-      a.subVectors(next.m, prev.m); b.subVectors(r.r, r.l);
-      nrm.crossVectors(a, b).normalize();
+      // the normal agrees with the triangles' winding (front = along x across): double-sided materials flip it (a row
+      // of zero width, a pointed tip, keeps the previous row's across direction)
+      a.subVectors(next.m, prev.m);
+      if (r.r.distanceToSquared(r.l) > 1e-10) b.subVectors(r.r, r.l);
+      else if (j === 0) { const r1 = rows[Math.min(rows.length - 1, 1)]; b.subVectors(r1.r, r1.l); }
+      nrm.crossVectors(a, b);
+      if (nrm.lengthSq() < 1e-12) nrm.set(0, 1, 0); else nrm.normalize();
       for (let k = 0; k < 3; k++) {
         const p = k === 0 ? r.l : k === 1 ? r.m : r.r;
         db.v(p.x, p.y, p.z, nrm.x, nrm.y, nrm.z, col, uvs ? r.u : 0, uvs ? k * 0.5 : 0, kind, r.bend, r.ph, r.fl * (k === 1 ? 0.5 : 1));
@@ -1811,7 +1824,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     return gb.build('aAnim');
   }
 
-  const ZONE = 110; // decor zones along z (frustum culling + one solid and one foliage draw each)
+  const ZONE = 150; // decor zones along z (frustum culling + one solid and one foliage draw each)
 
   // ======================= level placements =======================
   function R(z, d) { routeAtZ(z, _ra); return { x: _ra.x + _ra.rx * d, z: _ra.z + _ra.rz * d, dx: _ra.dx, dz: _ra.dz, rx: _ra.rx, rz: _ra.rz, yaw: _ra.yaw }; }
@@ -2403,7 +2416,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       const lA = ttexture(wtex('leaves_albedo'), uvn), lN = ttexture(wtex('leaves_normal'), uvn);
       const alb = bA.rgb.mul(meanInv('bark')).mul(isB).add(rA.rgb.mul(meanInv('rock')).mul(isR))
         .add(mix(vec3(1), wA.rgb.mul(meanInv('wood')), 0.28).mul(isW)).add(lA.rgb.mul(meanInv('leaves')).mul(isL)).add(vec3(1).mul(isP))
-        .add(wA.rgb.mul(meanInv('wood')).mul(isRW));
+        .add(mix(vec3(1), wA.rgb.mul(meanInv('wood')), 0.7).mul(isRW));
       sol.colorNode = vc.mul(alb);
       const flatN = vec3(0.5, 0.5, 1);
       const nT = bN.xyz.mul(isB).add(rN.xyz.mul(isR)).add(mix(flatN, wN.xyz, 0.5).mul(isW)).add(lN.xyz.mul(isL)).add(flatN.mul(isP)).add(wN.xyz.mul(isRW));
@@ -2425,7 +2438,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       fol.thicknessAmbientNode = float(0.0);
       fol.thicknessAttenuationNode = float(0.9);
       fol.thicknessPowerNode = float(3.0);
-      fol.thicknessScaleNode = float(3.0);
+      fol.thicknessScaleNode = mix(float(0.9), float(3.0), isF); // petals / leaves: less light through (they bleach)
       fol.positionNode = decorWind();
     }
     return { solid: sol, foliage: fol };
@@ -2473,6 +2486,16 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) dens[j * NX + i] = 0;
     }
     for (const g of SEGW.list) for (let t = 0; t <= g.len; t += 1) stamp(g.ax + g.ux * t, g.az + g.uz * t, g.ht + 0.3);
+    // erode by one cell: the field is sampled bilinearly, so a blade near a cliff edge or a bank would otherwise stand
+    // on the interpolated height, half way up the wall
+    const er = Float32Array.from(dens);
+    for (let iz = 1; iz < NZ - 1; iz++) for (let ix = 1; ix < NX - 1; ix++) {
+      const i = iz * NX + ix;
+      let m = dens[i];
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) m = Math.min(m, dens[i + dz * NX + dx]);
+      er[i] = m;
+    }
+    dens.set(er);
     const toH = THREE.DataUtils.toHalfFloat, data = new Uint16Array(NX * NZ * 4);
     for (let i = 0; i < NX * NZ; i++) {
       data[i * 4] = toH(H[i]); data[i * 4 + 1] = toH(dens[i]); data[i * 4 + 2] = toH(clamp(T.RM[i], 0, 1)); data[i * 4 + 3] = toH(T.AO[i]);
@@ -2558,8 +2581,10 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   }
   function applyGrass() {
     const k = K.gfx && Number.isFinite(K.gfx.grass) ? K.gfx.grass : (S.touch ? 0.4 : 0.7);
+    const pre = (K.gfx && K.gfx.preset) || '';
     for (const G of GR.meshes) {
-      const n = Math.round(G.N * clamp(k, 0, 1));
+      const kk = G.ring.tile > 3 && pre !== 'ultra' && pre !== 'high' ? k * 0.4 : k;
+      const n = Math.round(G.N * clamp(kk, 0, 1));
       G.mesh.geometry.instanceCount = n;
       const on = n > 0;
       if (S.shown) G.mesh.visible = on; else G.mesh.userData.kitWasVisible = on;
@@ -2652,8 +2677,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       scene.add(m);
     }
     if (mistPts.length) {
-      // PORT(world): v2 waterfall mist = GL points (PointsMaterial size 4.2); WebGPU draws THREE.Points 1 px wide, so
-      // these are instanced sprites (one soft glow per mist puff)
+      // spray at the foot of each fall: instanced soft sprites (one per puff), bobbing and drifting (updateMist)
       const pos = new Float32Array(mistPts.length * 3);
       const attr = new THREE.InstancedBufferAttribute(pos, 3);
       attr.setUsage(THREE.DynamicDrawUsage);
@@ -2678,7 +2702,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   // ======================= sky dressing: birds, far islands =======================
   function buildBirds(scene) {
     const geo = birdGeo();
-    const mat = animMaterial('bird', { roughness: 0.8, side: THREE.DoubleSide });
+    const mat = birdMaterial();
     const flocks = [[-10, 46, -40, 22], [25, 52, -250, 28], [-20, 40, -420, 20], [15, 50, -600, 30]];
     for (let f = 0; f < flocks.length; f++) for (let k = 0; k < 4; k++) {
       S.birdData.push({ cx: R(flocks[f][2], 0).x + flocks[f][0], cy: flocks[f][1] + k * 1.3, cz: flocks[f][2], r: flocks[f][3] + k * 2.2, w: (0.28 + 0.05 * f) * (f % 2 ? -1 : 1), ph: k * 0.32 + f });
@@ -2719,17 +2743,23 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       }
       g.computeVertexNormals();
       const top = kind ? topB : topA;
+      const nrm = g.attributes.normal;
+      let vi = 0;
       gb.add(g, (v, lx, ly) => {
         const t = clamp((ly + 6) / h, 0, 1);
         const c = new THREE.Color(lerp(hor.r, top.r, Math.pow(t, 0.6)), lerp(hor.g, top.g, Math.pow(t, 0.6)), lerp(hor.b, top.b, Math.pow(t, 0.6)));
         if (!kind && t > 0.78) c.lerp(snow, clamp((t - 0.78) * 6, 0, 1));
-        return c;
+        // sunlit / shaded flanks (they are unlit: baked), fading into the haze toward the foot
+        const ndl = nrm ? Math.max(0, nrm.getX(vi) * SUN_DIR.x + nrm.getY(vi) * SUN_DIR.y + nrm.getZ(vi) * SUN_DIR.z) : 0.5;
+        vi++;
+        const k = lerp(1, 0.84 + 0.3 * ndl, Math.pow(t, 0.5));
+        return c.multiplyScalar(k);
       }, M4().makeTranslation(Math.cos(a) * dist, 0, Math.sin(a) * dist), 0);
     }
     const mat = new THREE.MeshBasicNodeMaterial({ vertexColors: true, fog: false });
     S.farMat = mat;
-    // follows the camera on xz and is kept just inside the far plane: the islands stand beyond the fog, and phones use
-    // a shorter view distance (PORT(world): v2 GLSL vertex trick ported 1:1 as a vertexNode)
+    // follows the camera on xz and is kept just inside the far plane (vertexNode): the islands stand beyond the fog,
+    // and phones use a shorter view distance
     {
       const clip = cameraProjectionMatrix.mul(cameraViewMatrix).mul(modelWorldMatrix).mul(vec4(positionLocal.add(vec3(CAMXZ.x, 0, CAMXZ.y)), 1));
       mat.vertexNode = vec4(clip.xy, tmin(clip.z, clip.w.mul(0.99995)), clip.w);
@@ -2757,18 +2787,21 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       P.setSun(SUN_DIR, SUN_HEX);
       P.init();
       S.envPos.copy(K.level.start.pos).add(_envUp);
-      P.refreshEnvironment(S.envPos);
+      P.refreshEnvironment(S.envPos, ENV_OPTS);
     } catch (e) { console.warn('Kit Rush 3D: post pipeline not started', e); }
     balanceLights();
   }
   const _envUp = new V3(0, 16, -6);
+  // a warm neutral floor under the vantage point: bounce light that lifts the shadow sides without turning the orange
+  // checker faces olive (the sunlit lawn below would tint everything green)
+  const ENV_OPTS = { floor: true, floorColor: 0x8a8068, floorOpacity: 0.7 };
   // with the environment map lighting the PBR materials, the hemisphere fill steps back (same total ambient)
   function balanceLights() {
     if (!S.hemi) return;
     S.hemi.intensity = S.scene && S.scene.environment ? HEMI_ENV : HEMI_BASE;
   }
   // r155+ physically based light units: three r128 multiplied punctual and hemisphere light by PI in its shaders
-  const HEMI_BASE = 0.6 * LIGHT_PI, HEMI_ENV = 0.22 * LIGHT_PI;
+  const HEMI_BASE = 0.6 * LIGHT_PI, HEMI_ENV = 0.28 * LIGHT_PI;
 
   // quality preset changed (pause menu): shadows, grass blades, decor density
   function onGfx() {
@@ -2852,7 +2885,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
         if (K.post && typeof K.post.refreshEnvironment === 'function') {
           try {
             K.post.setSun(SUN_DIR, SUN_HEX);
-            K.post.refreshEnvironment(S.envPos);
+            K.post.refreshEnvironment(S.envPos, ENV_OPTS);
           } catch (e) { console.warn('Kit Rush 3D: island environment not restored', e); }
         }
         balanceLights();

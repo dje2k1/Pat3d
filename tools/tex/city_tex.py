@@ -196,8 +196,8 @@ def L_asphalt():
     seal = (1 - smoothstep(0.012, 0.03, border)) * smoothstep(0.5, 0.6, fbm2(3, 3, 2, 52)) * (1 - crack_on * 0.5)
     h = 0.5 + 0.22 * stone * (0.6 + 0.4 * sbright) + 0.08 * (fine - 0.5) - 0.45 * crack
     h = h * (1 - seal * 0.6) + seal * 0.52
-    lumf = 1 + 0.35 * stone * (sbright - 0.45) + 0.16 * (fine - 0.5) + 0.18 * (blot - 0.5)
-    lumf = lumf * (1 - 0.65 * crack) * (1 - 0.5 * seal)
+    lumf = 1 + 0.3 * stone * (sbright - 0.45) + 0.12 * (fine - 0.5) + 0.12 * (blot - 0.5)
+    lumf = lumf * (1 - 0.45 * crack) * (1 - 0.32 * seal)
     alb_l = 0.5 * lumf
     warm = 1 + 0.06 * stone * (sbright - 0.5)
     alb = to_srgb(np.stack([alb_l * warm, alb_l, alb_l * (2 - warm)], axis=-1))
@@ -562,6 +562,105 @@ def L_manhole():
     return layer(alb, tint, hb, rough, ao=cavity_ao(hb, 3, 2.0), nstr=6.0)
 
 
+# ------------------------------------------------------------------------------------------------ foliage atlas
+# city_foliage: RGBA 1024 x 1024 (half 512), 2 x 2 tiles of 512 (u right, v up after the flipY upload):
+#   tile 0 (u 0-0.5, v 0-0.5)  broadleaf cluster card (street trees, parks): alpha-tested leaves, grey-green (tinted
+#                              by the vertex colour like the array layers), darker toward the twig
+#   tile 1 (u 0.5-1, v 0-0.5)  palm frond: base at u = 0, tip at u = 1, midrib at v = 0.5
+#   tile 2 (u 0-0.5, v 0.5-1)  bark (opaque, tiles vertically): fissured, tinted
+#   tile 3 (u 0.5-1, v 0.5-1)  needle / small-leaf cluster (the Presidio's cypresses and pines)
+def _leaf_poly(L, W, n=12):
+    pts = []
+    for k in range(n + 1):
+        t = k / n
+        pts.append(((t - 0.0) * L, math.sin(t * math.pi) ** 0.75 * W * 0.5))
+    return pts + [(x, -y) for x, y in reversed(pts[1:-1])]
+
+
+def foliage_atlas():
+    T = 512
+    S = T * 2  # supersampled tile
+    r = rng(901)
+
+    def card(kind):
+        col = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(col)
+        cx, cy = S / 2, S / 2
+        if kind == 'leaf':
+            # twigs radiating from the centre, leaves along them (back ones darker), filling a disc
+            leaves = []
+            for tw in range(11):
+                a0 = tw / 11 * 2 * math.pi + (r.random() - 0.5) * 0.4
+                L = S * (0.3 + r.random() * 0.12)
+                for k in range(11):
+                    t = (k + 1) / 11
+                    bx = cx + math.cos(a0) * L * t
+                    by = cy + math.sin(a0) * L * t
+                    side = 1 if k % 2 else -1
+                    a = a0 + side * (0.5 + r.random() * 0.6)
+                    leaves.append((bx, by, a, S * (0.07 + r.random() * 0.05), t, r.random()))
+            leaves.sort(key=lambda q: q[5])
+            for bx, by, a, ll, t, depth in leaves:
+                g = int(95 + 120 * depth * (0.6 + 0.4 * t))
+                hue = r.random()
+                c = (int(g * (0.9 + 0.14 * hue)), g, int(g * (0.76 + 0.12 * hue)), 255)
+                ca, sa = math.cos(a), math.sin(a)
+                poly = [(bx + x * ca - y * sa, by + x * sa + y * ca) for x, y in _leaf_poly(ll, ll * 0.5)]
+                d.polygon(poly, fill=c)
+                d.line([(bx, by), (bx + ca * ll * 0.9, by + sa * ll * 0.9)], fill=(int(g * 0.78), int(g * 0.84), int(g * 0.68), 255), width=2)
+        elif kind == 'needle':
+            for k in range(3600):
+                a = r.random() * 2 * math.pi
+                rr = (r.random() ** 0.5) * S * 0.46
+                x, y = cx + math.cos(a) * rr, cy + math.sin(a) * rr * 0.9
+                ll = S * (0.02 + r.random() * 0.03)
+                b = a + (r.random() - 0.5) * 1.2
+                g = int(90 + 100 * (1 - rr / (S * 0.45)) * r.random() + 40)
+                d.line([(x, y), (x + math.cos(b) * ll, y + math.sin(b) * ll)], fill=(int(g * 0.85), g, int(g * 0.8), 255), width=4)
+        elif kind == 'frond':
+            # midrib along x (base left -> tip right), leaflets angled toward the tip
+            y0 = S / 2
+            d.line([(0, y0), (S, y0)], fill=(150, 140, 100, 255), width=7)
+            n = 46
+            for k in range(n):
+                t = (k + 0.5) / n
+                x = t * S
+                for side in (-1, 1):
+                    ll = S * 0.46 * (math.sin(min(1.0, t * 1.15) * math.pi) ** 0.6) * (0.85 + 0.15 * r.random())
+                    a = side * (math.pi / 2 - 0.55 - 0.25 * t)
+                    ex, ey = x + math.cos(a) * ll * 0.55, y0 + math.sin(a) * ll
+                    w = S * 0.012 * (1.2 - t)
+                    g = int(140 + 70 * r.random())
+                    poly = [(x - w, y0), (x + w, y0), (ex + w * 0.2, ey), (ex - w * 0.2, ey)]
+                    d.polygon(poly, fill=(int(g * 0.9), g, int(g * 0.72), 255))
+        return col
+
+    def to_arr(img):
+        a = np.asarray(img, np.float32) / 255.0
+        a = resize(a, (T, T))
+        rgb = a[..., :3] / np.maximum(a[..., 3:4], 1e-3)  # un-premultiply the box filter
+        return np.concatenate([np.clip(rgb, 0, 1), a[..., 3:4]], axis=-1)
+
+    leaf = to_arr(card('leaf'))
+    frond = to_arr(card('frond'))
+    needle = to_arr(card('needle'))
+    # bark: vertical fissures, plates
+    u, v = grid(T)
+    fis = 1 - np.abs(vn2(10, 3, 911, T) * 2 - 1)
+    plates = fbm2(6, 14, 3, 912, n=T)
+    hb = 0.55 * plates + 0.45 * smoothstep(0.55, 0.95, fis)
+    bl = (0.75 + 0.5 * hb) * (1 + 0.1 * (vn2(64, 64, 913, T) - 0.5))
+    bark = np.concatenate([grey(0.5, bl)[:T, :T], np.ones((T, T, 1), np.float32)], axis=-1)
+    # alpha-tested cards: bleed the colour of the leaves into the transparent texels (no dark fringes in the mips)
+    for a in (leaf, frond, needle):
+        m = a[..., 3] > 0.05
+        fill = a[..., :3][m].mean(axis=0)
+        a[..., :3][~m] = fill
+    top = np.concatenate([bark, needle], axis=1)   # v 0.5..1 (image top)
+    bot = np.concatenate([leaf, frond], axis=1)    # v 0..0.5
+    return np.concatenate([top, bot], axis=0)
+
+
 # order = array layer index (must match the L_* constants in src/25-city.js)
 LAYERS = [
     ('paintwood', L_paintwood),   # 0
@@ -639,6 +738,22 @@ if __name__ == '__main__':
     m = Manifest('city')
     m.add('city_alb', alb, colorspace='srgb', group='act2', quality=88)
     m.add('city_nrm', nrm, colorspace='linear', group='act2', quality=92)
+    # per-layer means (bytes, layer 0 first): the runtime fills its 1x1 placeholder layers with them, so the city is
+    # shaded the same (minus the detail) before the strips arrive
+    L = len(LAYERS)
+    ma, mn = [], []
+    for k in range(L):
+        ta = alb[(L - 1 - k) * N:(L - k) * N]
+        tn = nrm[(L - 1 - k) * N:(L - k) * N]
+        rgb = linear_to_srgb(srgb_to_linear(ta[..., :3]).reshape(-1, 3).mean(axis=0))
+        ma.append([int(round(float(v) * 255)) for v in rgb] + [int(round(float(ta[..., 3].mean()) * 255))])
+        mn.append([128, 128] + [int(round(float(tn[..., c].mean()) * 255)) for c in (2, 3)])
+    m.data['textures']['city_alb']['means'] = ma
+    m.data['textures']['city_nrm']['means'] = mn
+    fol = foliage_atlas()
+    m.add('city_foliage', fol, colorspace='srgb', group='act2', quality=90)
+    if '--preview' in sys.argv:
+        Image.fromarray((np.clip(fol, 0, 1) * 255).astype(np.uint8), 'RGBA').save(os.path.join(os.path.dirname(__file__), '..', '..', 'dev', 'city', 'foliage.png'))
     m.data['layers'] = [n for n, _ in LAYERS]
     m.data['tile'] = N
     m.save()

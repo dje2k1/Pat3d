@@ -28,6 +28,9 @@ const VIEWS = {
   overview: { cam: [-40, 0, 30, -160, 0, 0] },
   closegrass: { cam: [-20, 6, 1.4, -30, 4, 0] },
   closecliff: { cam: [-120, 0, 2.5, -124, 9, 4] },
+  sunflower: { cam: [-98, -3, 1.6, -106, -9, 1.9] },
+  lakeside: { cam: [-366, -9, 6, -392, 4, 0] },
+  palms: { cam: [-30, 0, 2.2, -44, -12, 5] },
 };
 (async () => {
   const views = (arg('views') || 'start,valley,loop1,cliffs,descent,lake,bridge,arena').split(',').filter(Boolean);
@@ -74,7 +77,7 @@ const VIEWS = {
     if (K.post && K.post.setQuality) K.post.setQuality(preset);
     if (!hud) { const h = document.getElementById('hud'); if (h) h.style.visibility = 'hidden'; for (const id of ['btnSound', 'btnPause', 'btnFull', 'touch']) { const e = document.getElementById(id); if (e) e.style.visibility = 'hidden'; } }
     T.ticks(30); T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'play', 400); T.ticks(20);
-    return { state: G.state, q: K.post && K.post.quality };
+    return { state: G.state, q: K.post && K.post.quality, backend: K.view.backend };
   }, { v2, preset, hud: process.argv.includes('--hud') });
   console.log('setup', JSON.stringify(setup));
   if (arg('eval')) console.log('eval', JSON.stringify(await p.evaluate(new Function('return (async () => { ' + arg('eval') + ' })()'))));
