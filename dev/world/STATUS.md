@@ -30,7 +30,17 @@ Owner files: src/20-world.js, tools/tex/world_*.py, assets/tex/world/.
   * Fixes: ribbon NaN normals (black petal / leaf tips), grass density eroded 1 cell (no blades half way up walls or
     on banks), sea sparkles toned down, sandstone 2 repeats per checker square at 70 % contrast, env capture with a
     warm neutral floor (ENV_OPTS) + HEMI_ENV 0.28 pi (shadowed checker faces stay brown, not olive).
-  NEXT: phone Moyen + WebGPU + Ultra shots, v2 side-by-side, far islands, bridge wood grain, path pebbles.
+  * 2026-10-26 later: phone Moyen shots OK (dev/world/shots/ph1-grid.png, 127-163 calls, 345-595 k tris, 18 MB tex),
+    WebGPU Élevé + Ultra boot and render OK (gpu1-grid.png, gpu2-*.png; backend 'webgpu' confirmed), v2/v3
+    side-by-side sheets dev/world/shots/sbs-1..4.png, Économie / Ultra q-grid.png. Bird material replaces
+    animMaterial (no PORT(world) markers left), far islands shaded by the sun, soil/sand double lookups, softer bridge
+    wood, path stretches with sharper ends.
+  * e2e fullrun,regress,present,regress2,phone,post,act2 (dev/world/e2e-r1.log): 42/44. FAIL 1 = Act 2 shaded street
+    luma (city: HEAD's partial city fails it too, dev/city/e2e-base-r.log; the city builder's working copy passes).
+    FAIL 2 = lawn seam on Ultra (centre 6.2): blade noise + SSGI on the lawn. Fixed: the mown lane keeps 45 % of the
+    blades, softer blade root contrast, blades fade within 0.8-2.6 m of the camera; probe dev/world/probe-seam.js
+    now gives Ultra centre 2.0 / High 2.6 (limit 4.5).
+  NEXT: re-run regress2 (+ the other Act 1 suites) and the WebGPU suite, then report.
 - SESSION 1 2026-10-20: harness.
   * `sh dev/world/mkbuild.sh` (HEAD parts of other roles + my working 20-world.js -> dev/world/site/test.html;
     WORLD=head OUT=base -> baseline; MIX=work -> all working-tree parts).

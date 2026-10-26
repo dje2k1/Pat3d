@@ -837,7 +837,8 @@ function templates() {
     cyl6o: new THREE.CylinderGeometry(1, 1, 1, 6, 1, true),
     ico: new THREE.IcosahedronGeometry(1, 1),
     box: new THREE.BoxGeometry(1, 1, 1),
-    tor: new THREE.TorusGeometry(1, 0.1, 6, 20)
+    tor: new THREE.TorusGeometry(1, 0.1, 6, 20),
+    torLo: new THREE.TorusGeometry(1, 0.12, 4, 10)
   };
   return TPL;
 }
@@ -1266,6 +1267,7 @@ function buildRouteSurface() {
 // houses on both sides, lamps. p0: start (local x, z), dir unit, len, y0 at the start, slope (rise per unit).
 // The streets are only planned here and built together by buildSideStreets, once their crossings are known.
 const SIDE = [];
+const SIDE_M = []; // per side street: {mb (always drawn), mb.hd near / mb.lod far, meshes, box}
 function sideStreet(p0x, p0z, dx, dz, t0, len, y0, slope, r, opts) {
   SIDE.push({ p0x, p0z, dx, dz, t0, len, y0, slope, opts: opts || {} });
   void r;
@@ -1318,7 +1320,11 @@ function buildSideStreet(p0x, p0z, dx, dz, t0, len, y0, slope, r, opts) {
     mb.quad(P(t, -0.3, 0.012), P(t, -0.15, 0.012), P(t2, -0.15, 0.012), P(t2, -0.3, 0.012), YELLOWP, KIND.paint, 0, 1, 1);
     mb.quad(P(t, 0.15, 0.012), P(t, 0.3, 0.012), P(t2, 0.3, 0.012), P(t2, 0.15, 0.012), YELLOWP, KIND.paint, 0, 1, 1);
   }
-  // houses: the line function returns the sidewalk point at distance t along the street
+  // houses: the line function returns the sidewalk point at distance t along the street. Each side street gets its own
+  // detail / far meshes (SIDE_M) so its painted ladies switch to boxes by their own distance (budgets on Moyen)
+  const hmb = new MB();
+  hmb.hd = new MB(); hmb.lod = new MB(); hmb.fol = mb.fol || null;
+  SIDE_M.push({ mb: hmb, mesh: null, hdMesh: null, lodMesh: null, box: null, far: false });
   const det = opts.detail == null ? 70 : opts.detail;
   for (const sd of [-1, 1]) {
     if (opts.noSide === sd) continue;
@@ -1329,10 +1335,10 @@ function buildSideStreet(p0x, p0z, dx, dz, t0, len, y0, slope, r, opts) {
     // rows read left to right as seen from the street: on the right side the frontage runs back toward the start
     const ta = h0, tb = Math.min(len, h0 + det);
     const flip = (u0, u1) => (sd > 0 ? t => line(u0 + u1 - t) : line);
-    houseRow(mb, PXL, ta, tb, flip(ta, tb), bx, bz, r, true, { openA: true, openB: true });
-    if (len > tb + 6) houseRow(mb, PXL, tb, len, flip(tb, len), bx, bz, r, false);
+    houseRow(hmb, PXL, ta, tb, flip(ta, tb), bx, bz, r, true, { openA: true, openB: true });
+    if (len > tb + 6) houseRow(mb, PXL, tb, len, flip(tb, len), bx, bz, r, false); // plain boxes: the chunk's mesh
     // lamps
-    for (let t = t0 + 14; t < Math.min(len, t0 + 90); t += 32) lamp(mb, P(t, sd * (ROAD + 0.9), CURB), sd, rx, rz);
+    for (let t = t0 + 14; t < Math.min(len, t0 + 90); t += 32) lamp(hmb, P(t, sd * (ROAD + 0.9), CURB), sd, rx, rz);
   }
 }
 // street lamp: dark post, curved arm over the road, lantern with a warm globe
@@ -1360,7 +1366,7 @@ function lamp(mb, p, side, rx, rz) {
   const a0 = P(0, 5.3), a1 = P(0.45, 5.52), a2 = P(1.0, 5.55), a3 = P(1.32, 5.4);
   seg(a0, a1, 0.05); seg(a1, a2, 0.045); seg(a2, a3, 0.04);
   seg(P(0, 4.75), P(0.5, 5.45), 0.025);
-  mb.geo(T.tor, TRS(x + ux * 0.32, y + 5.08, z + uz * 0.32, 0, Math.atan2(-uz, ux), 0, 0.16, 0.16, 0.16), POLE, KIND.metal, 0);
+  mb.geo(T.torLo, TRS(x + ux * 0.32, y + 5.08, z + uz * 0.32, 0, Math.atan2(-uz, ux), 0, 0.16, 0.16, 0.16), POLE, KIND.metal, 0);
   void yaw;
   // the lantern
   const hx = a3[0], hz = a3[2], hy = y + 5.12;
@@ -2570,6 +2576,42 @@ function glowMesh(points) {
   mesh.frustumCulled = false; mesh.renderOrder = 5;
   return mesh;
 }
+// soft edges against the opaque scene (K.post.sceneDepth: one shared depth copy; 1 without the pipeline)
+function softFade(d, range) {
+  const sd = K.post && typeof K.post.sceneDepth === 'function' ? K.post.sceneDepth() : null;
+  if (!sd || !TSL.perspectiveDepthToViewZ || !TSL.cameraNear || !TSL.cameraFar) return float(1);
+  const zs = TSL.perspectiveDepthToViewZ(sd.x, TSL.cameraNear, TSL.cameraFar).negate();
+  return smoothstep(0.0, range, zs.sub(d));
+}
+// soft warm light cones under the street lamps (one instanced open cone, additive, brightest where the view crosses the
+// most "air"; faded near the camera and beyond ~150 m)
+function lampConesMesh(points) {
+  const pts = points.filter(p => !p[3]);
+  const n = Math.max(1, pts.length);
+  const base = new THREE.ConeGeometry(1, 1, 18, 1, true);
+  base.translate(0, -0.5, 0); // apex at y = 0, opening at y = -1
+  const g = new THREE.InstancedBufferGeometry();
+  g.index = base.index; g.setAttribute('position', base.attributes.position); g.setAttribute('normal', base.attributes.normal);
+  const off = new Float32Array(n * 4);
+  pts.forEach((p, i) => { off[i * 4] = p[0]; off[i * 4 + 1] = p[1] - 0.15; off[i * 4 + 2] = p[2]; off[i * 4 + 3] = p[1] - 0.15 - (p[4] != null ? p[4] : p[1] - 5.05); });
+  g.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4));
+  g.instanceCount = pts.length;
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false });
+  const aOff = attribute('aOff', 'vec4'), pg = positionGeometry;
+  const h = tmax(aOff.w, 3.5), rad = h.mul(0.42);
+  const wp = aOff.xyz.add(vec3(pg.x.mul(rad), pg.y.mul(h), pg.z.mul(rad)));
+  m.vertexNode = cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(wp, 1)));
+  const d = viewDepth(wp);
+  const ws = modelWorldMatrix.mul(vec4(wp, 1)).xyz;
+  const Vd = tnormalize(cameraPosition.sub(ws)), Nn = tnormalize(vec3(normalGeometry.x, 0.42, normalGeometry.z));
+  const face = tpow(tabs(tdot(Nn, Vd)), 1.6);
+  const along = pg.y.negate(); // 0 at the lamp .. 1 at the ground
+  const k = face.mul(tpow(float(1).sub(along), 1.4)).mul(smoothstep(3.0, 9.0, d)).mul(float(1).sub(smoothstep(70.0, 150.0, d)));
+  m.colorNode = vec3(1.0, 0.68, 0.36).mul(k).mul(mix(float(0.05), float(0.11), U.hdr));
+  const mesh = new THREE.Mesh(g, m);
+  mesh.frustumCulled = false; mesh.renderOrder = 5;
+  return mesh;
+}
 // manhole steam: rising, growing, fading puffs lit by the sunset
 function steamMesh(vents) {
   const per = 7, n = Math.max(1, vents.length * per);
@@ -2589,7 +2631,7 @@ function steamMesh(vents) {
   const vA = smoothstep(0.0, 0.12, ph).mul(float(1).sub(smoothstep(0.45, 1.0, ph)));
   const uLit = uniform(lin('#ffc9a0')), uShade = uniform(lin('#9a8ea8'));
   m.colorNode = mix(uShade, uLit.mul(mix(float(1), float(1.6), U.hdr)), smoothstep(-0.6, 0.8, q.x.mul(0.7).add(q.y.mul(0.5))));
-  m.opacityNode = smoothstep(1.0, 0.1, r).mul(vA).mul(0.32);
+  m.opacityNode = smoothstep(1.0, 0.1, r).mul(vA).mul(0.32).mul(softFade(viewDepth(c0), 1.2));
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false; mesh.renderOrder = 6;
   return mesh;
@@ -2632,7 +2674,7 @@ function fogMesh() {
   const tx = ttexture(fogTexture(), tuv());
   const uLit = uniform(lin('#ffd4b0')), uShade = uniform(lin('#b9a3b3'));
   m.colorNode = mix(uShade, uLit.mul(mix(float(1), float(1.35), U.hdr)), smoothstep(0.2, 0.9, tuv().y));
-  m.opacityNode = tx.a.mul(0.85).mul(smoothstep(30.0, 160.0, viewDepth(c0)));
+  m.opacityNode = tx.a.mul(0.85).mul(smoothstep(30.0, 160.0, viewDepth(c0))).mul(softFade(viewDepth(c0), 12));
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false; mesh.renderOrder = 4;
   return mesh;
@@ -3100,13 +3142,22 @@ function ringWindow() {
   im.instanceMatrix.needsUpdate = true;
 }
 function dashMesh() {
-  const g = new THREE.TorusGeometry(1, 0.11, 10, 40);
-  const m = new THREE.MeshStandardMaterial({ color: lin('#c8f6ff'), emissive: lin('#2fd8ff'), emissiveIntensity: 1.5, metalness: 0.4, roughness: 0.3 });
+  const g = new THREE.TorusGeometry(1, 0.11, 12, 56);
+  const m = new THREE.MeshPhysicalNodeMaterial({ color: lin('#c8f6ff'), metalness: 0.5, roughness: 0.2, clearcoat: 1, clearcoatRoughness: 0.05 });
+  m.emissiveNode = vec3(0.18, 0.85, 1.0).mul(float(1.2).add(tsin(U.time.mul(5)).mul(0.3))).mul(mix(float(0.8), float(1.6), U.hdr));
   const im = new THREE.InstancedMesh(g, m, Math.max(1, DASH.length));
   im.frustumCulled = false;
   // a soft disc inside each hoop
   const dg = new THREE.CircleGeometry(1, 32);
-  const dm = new THREE.MeshBasicMaterial({ color: lin('#5fe6ff'), transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+  // the portal: rings rushing inward, a bright rim, a soft core (additive HDR, blooms)
+  const dm = new THREE.MeshBasicNodeMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  {
+    const q = tuv().sub(0.5).mul(2), rr = tlength(q);
+    const rings = smoothstep(0.7, 1.0, tfract(rr.mul(3.2).add(U.time.mul(1.6))));
+    const rim = smoothstep(0.75, 0.98, rr);
+    const k = rings.mul(0.55).add(rim.mul(0.6)).add(0.12).mul(float(1).sub(smoothstep(0.98, 1.0, rr)));
+    dm.colorNode = vec3(0.35, 0.9, 1.0).mul(k).mul(mix(float(0.35), float(0.8), U.hdr));
+  }
   const disc = new THREE.InstancedMesh(dg, dm, Math.max(1, DASH.length));
   disc.frustumCulled = false; disc.renderOrder = 3;
   MESH.dashDisc = disc;
@@ -3521,21 +3572,26 @@ function build(scene) {
   }
   FOL_FAR.mb = new MB();
   const r = rng(2024);
-  buildRouteSurface();
-  buildTracks();
-  buildCrossings(r);
-  buildCorners(r);
-  buildSummit(r);
-  buildSideStreets();
-  buildRouteHouses(r);
-  buildRouteProps(r);
-  buildConstruction(r);
-  buildRail();
-  buildWaterfront(r);
-  buildPier(r);
-  buildManholes(r);
+  // triangles per stage (main / near detail / far / foliage), for the budgets (stats().buildTris)
+  const tc = () => { const o = [0, 0, 0, 0]; for (const c of CK.list) { o[0] += c.mb.i.length / 3; o[1] += c.mb.hd.i.length / 3; o[2] += c.mb.lod.i.length / 3; o[3] += c.mb.fol.i.length / 3; } return o; };
+  ST.buildTris = {};
+  let tPrev = tc();
+  const stage = (name, fn) => { fn(); const t = tc(); ST.buildTris[name] = t.map((v, i) => Math.round(v - tPrev[i])); tPrev = t; };
+  stage('surface', buildRouteSurface);
+  stage('tracks', buildTracks);
+  stage('crossings', () => buildCrossings(r));
+  stage('corners', () => buildCorners(r));
+  stage('summit', () => buildSummit(r));
+  stage('sideStreets', buildSideStreets);
+  stage('routeHouses', () => buildRouteHouses(r));
+  stage('routeProps', () => buildRouteProps(r));
+  stage('construction', () => buildConstruction(r));
+  stage('rail', buildRail);
+  stage('waterfront', () => buildWaterfront(r));
+  stage('pier', () => buildPier(r));
+  stage('manholes', () => buildManholes(r));
   buildParked(r);
-  bakeParked(group);
+  stage('parked', () => bakeParked(group));
   buildWires();
   propSolids();
   const mat = MESH.cityMat = cityMaterial();
@@ -3555,6 +3611,15 @@ function build(scene) {
       if (!c.box) c.box = f.geometry.boundingBox.clone(); else c.box.union(f.geometry.boundingBox);
     }
     c.mb = null; c.wires = null;
+  }
+  for (const sm of SIDE_M) {
+    const b = sm.mb;
+    if (b.count) { const m = new THREE.Mesh(b.build(), mat); m.receiveShadow = true; group.add(m); sm.mesh = m; }
+    if (b.hd.count) {
+      const g = b.hd.build(), m = new THREE.Mesh(g, mat); m.receiveShadow = true; group.add(m); sm.hdMesh = m; sm.box = g.boundingBox.clone();
+      if (b.lod.count) { const l = new THREE.Mesh(b.lod.build(), mat); l.receiveShadow = true; l.visible = false; group.add(l); sm.lodMesh = l; }
+    }
+    sm.mb = null;
   }
   {
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(wires, 3));
@@ -3597,6 +3662,7 @@ function build(scene) {
   applyShadows(K.gfx ? K.gfx.shadows : 'single');
   if (K.gfx && typeof K.gfx.onChange === 'function') K.gfx.onChange(g => { if (ST.built) applyShadows(g.shadows); });
   group.add(glowMesh(LAMPS));
+  group.add(lampConesMesh(LAMPS));
   if (STEAMS.length) group.add(steamMesh(STEAMS));
   group.add(fogMesh());
   if (FLAGS.length) group.add(flagMesh(FLAGS));
@@ -3714,7 +3780,17 @@ function lodUpdate() {
   const cam = K.view && K.view.camera;
   if (!cam) return;
   const x = cam.position.x - OX, y = cam.position.y, z = cam.position.z - OZ;
-  const far = isTouch() ? 270 : 360;
+  const pr = K.gfx && K.gfx.preset, light = pr === 'medium' || pr === 'low';
+  const far = (isTouch() ? 270 : 360) * (light ? 0.8 : 1), sideFar = pr === 'ultra' ? 300 : pr === 'high' ? 230 : 150;
+  for (let i = 0; i < SIDE_M.length; i++) {
+    const c = SIDE_M[i];
+    if (!c.box || !c.lodMesh) continue;
+    const b = c.box;
+    const dx = Math.max(b.min.x - x, 0, x - b.max.x), dy = Math.max(b.min.y - y, 0, y - b.max.y), dz = Math.max(b.min.z - z, 0, z - b.max.z);
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const f = c.far ? d > sideFar - 20 : d > sideFar + 20;
+    if (f !== c.far) { c.far = f; c.hdMesh.visible = !f; c.lodMesh.visible = f; }
+  }
   for (let i = 0; i < CK.list.length; i++) {
     const c = CK.list[i];
     if (!c.box || !c.lodMesh) continue; // (chunks without far versions keep everything)
@@ -3806,7 +3882,7 @@ function stats() {
   return {
     built: ST.built, entered: ST.entered, buildMs: ST.buildMs, len: RT.len, rings: RINGS.n, ringsLeft: left, flightRings: RINGS.n - RINGS.flight0,
     cars: TR.active.length, parked: PARKED.length, cp: ST.cp, cps: CPS.length, s: +ST.sK.toFixed(1), solids: SOL.list.length, dash: DASH.length,
-    chunks: CK.list.filter(c => c.mesh).length, lamps: LAMPS.length
+    chunks: CK.list.filter(c => c.mesh).length, lamps: LAMPS.length, buildTris: ST.buildTris
   };
 }
 // city internals the vehicles part builds with (mesh builder, templates, surface kinds, shared colours, material)

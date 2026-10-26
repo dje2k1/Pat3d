@@ -2519,8 +2519,10 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     const dCam = tlength(root.sub(cameraPosition.xz));
     const fade = smoothstep(ring.fade, ring.fade * 0.6, dCam);
     // density: a blade exists where its random number is under the local density
-    const here = tstep(r1, hf.y.mul(fade));
-    const hgt = mix(float(0.4), float(0.16), hf.z).mul(float(0.6).add(r2.mul(0.75))).mul(here).mul(smoothstep(0, 0.35, fade));
+    // (the mown lane in the valley keeps fewer, shorter blades: the lawn texture and its stripes read through)
+    const here = tstep(r1, hf.y.mul(fade).mul(mix(float(1), float(0.45), hf.z)));
+    const hgt = mix(float(0.4), float(0.16), hf.z).mul(float(0.6).add(r2.mul(0.75))).mul(here).mul(smoothstep(0, 0.35, fade))
+      .mul(smoothstep(0.8, 2.6, dCam));
     const wid = float(0.022).add(r3.mul(0.022)).mul(here).mul(float(1).add(smoothstep(4, 20, dCam).mul(1.2)));
     const ang = r2.mul(43.9);
     const across = vec2(tcos(ang), tsin(ang));
@@ -2542,8 +2544,8 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     m.normalNode = tnormalize(cameraViewMatrix.mul(vec4(TSL.varying(nW), 0)).xyz);
     const rootV = TSL.varying(root), yV = TSL.varying(y), aoV = TSL.varying(hf.w), tintV = TSL.varying(grassTint(root));
     const alb = ttexture(wtex('grass_albedo'), rootV.div(2.6)).rgb.mul(meanInv('grass'));
-    const hueV = TSL.varying(vec3(float(0.92).add(r2.mul(0.16)), float(0.95).add(r3.mul(0.1)), float(0.85).add(r1.mul(0.2))));
-    m.colorNode = tintV.mul(alb).mul(hueV).mul(mix(float(0.42), float(1.0), tpow(yV, 0.7))).mul(mix(vec3(1), vec3(1.06, 1.04, 0.8), yV.mul(yV)))
+    const hueV = TSL.varying(vec3(float(0.95).add(r2.mul(0.1)), float(0.97).add(r3.mul(0.06)), float(0.9).add(r1.mul(0.14))));
+    m.colorNode = tintV.mul(alb).mul(hueV).mul(mix(float(0.62), float(1.0), tpow(yV, 0.7))).mul(mix(vec3(1), vec3(1.05, 1.03, 0.84), yV.mul(yV)))
       .mul(mix(float(1), aoV, 0.6));
     m.roughnessNode = float(0.86);
     return m;
