@@ -43,7 +43,10 @@ Owner files: src/20-world.js, tools/tex/world_*.py, assets/tex/world/.
   * Seam check is noise-limited (no visible seam: dev/world/shots/seam-e2e-*.png saved by the instrumented copy
     dev/world/e2e-seam.js). Mown lane texture contrast x 0.7 + lane blades 30 %: combined run regress,present,
     fullrun,regress2 24/24 (dev/world/e2e-seam3.log, Ultra centre 3.6, High 2.0, Low 1.9).
-  NEXT (2026-10-27): final runs = build.sh, private e2e all suites (WebGL 2) + --webgpu, then report.json.
+  * FINAL (2026-10-27, tree fc7dfe5 + my working 20-world.js): ./build.sh OK (index.html 1011188 B); private e2e
+    all suites WebGL 2 80/80 PASS + Moyen target met (dev/world/e2e-final.log, 1784 s); WebGPU suite 6/6 PASS
+    (dev/world/e2e-gpu-final.log). Final shots dev/world/shots/final-grid.png (Élevé), ph1-grid.png (phone Moyen),
+    gpu1-grid.png (WebGPU), sbs-1..4.png (v2 | v3). Report: dev/world/report.json. DONE.
 - SESSION 1 2026-10-20: harness.
   * `sh dev/world/mkbuild.sh` (HEAD parts of other roles + my working 20-world.js -> dev/world/site/test.html;
     WORLD=head OUT=base -> baseline; MIX=work -> all working-tree parts).
