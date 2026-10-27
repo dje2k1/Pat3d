@@ -1,4 +1,22 @@
 {
-  "role": "vehicles",
-  "textures": {}
+ "role": "vehicles",
+ "textures": {
+  "veh_atlas": {
+   "full": "veh_atlas.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "srgb",
+   "group": "act2",
+   "wrap": "clamp",
+   "bytes": 55136,
+   "half": "veh_atlas_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 20726
+  }
+ }
 }

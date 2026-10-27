@@ -1,4 +1,22 @@
 {
-  "role": "entities",
-  "textures": {}
+ "role": "entities",
+ "textures": {
+  "detail": {
+   "full": "detail.webp",
+   "size": [
+    512,
+    512
+   ],
+   "colorSpace": "linear",
+   "group": "act1",
+   "wrap": "repeat",
+   "bytes": 407720,
+   "half": "detail_half.webp",
+   "halfSize": [
+    256,
+    256
+   ],
+   "halfBytes": 138336
+  }
+ }
 }
