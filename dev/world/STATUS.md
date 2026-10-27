@@ -40,7 +40,10 @@ Owner files: src/20-world.js, tools/tex/world_*.py, assets/tex/world/.
     FAIL 2 = lawn seam on Ultra (centre 6.2): blade noise + SSGI on the lawn. Fixed: the mown lane keeps 45 % of the
     blades, softer blade root contrast, blades fade within 0.8-2.6 m of the camera; probe dev/world/probe-seam.js
     now gives Ultra centre 2.0 / High 2.6 (limit 4.5).
-  NEXT: re-run regress2 (+ the other Act 1 suites) and the WebGPU suite, then report.
+  * Seam check is noise-limited (no visible seam: dev/world/shots/seam-e2e-*.png saved by the instrumented copy
+    dev/world/e2e-seam.js). Mown lane texture contrast x 0.7 + lane blades 30 %: combined run regress,present,
+    fullrun,regress2 24/24 (dev/world/e2e-seam3.log, Ultra centre 3.6, High 2.0, Low 1.9).
+  NEXT (2026-10-27): final runs = build.sh, private e2e all suites (WebGL 2) + --webgpu, then report.json.
 - SESSION 1 2026-10-20: harness.
   * `sh dev/world/mkbuild.sh` (HEAD parts of other roles + my working 20-world.js -> dev/world/site/test.html;
     WORLD=head OUT=base -> baseline; MIX=work -> all working-tree parts).

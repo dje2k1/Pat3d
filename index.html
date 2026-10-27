@@ -3902,6 +3902,8 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       const band = smoothstep(-0.3, 0.3, tcos(R.y.mul(Math.PI / 5.5))).mul(2).sub(1);
       const vxz = tnormalize(cameraPosition.xz.sub(positionWorld.xz).add(vec2(1e-4, 0)));
       stripe = band.mul(tdot(vxz, MT.zw).mul(0.75).add(0.25)).mul(tclamp(R.z, 0, 1));
+      // the mown lane is a finer, more even lawn than the rough grass on the hills (texture contrast x 0.7)
+      gGrass = gTint.mul(mix(gAlb, mix(vec3(1), gAlb, 0.7), tclamp(R.z, 0, 1)));
       const gFN = tnormalize(tcross(dFdx(positionWorld), dFdy(positionWorld)));
       gSt = mix(gSt, float(1).sub(tabs(gFN.y)), 0.72);
       const nE = TL.vnoise(gx.mul(1.3)).sub(0.5).mul(0.34).add(TL.vnoise(gx.mul(4.1).add(9)).sub(0.5).mul(0.14));
@@ -5980,8 +5982,8 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     const dCam = tlength(root.sub(cameraPosition.xz));
     const fade = smoothstep(ring.fade, ring.fade * 0.6, dCam);
     // density: a blade exists where its random number is under the local density
-    // (the mown lane in the valley keeps fewer, shorter blades: the lawn texture and its stripes read through)
-    const here = tstep(r1, hf.y.mul(fade).mul(mix(float(1), float(0.45), hf.z)));
+    // (the mown lane in the valley keeps 30 % of the blades, shorter: the lawn texture and its stripes read through)
+    const here = tstep(r1, hf.y.mul(fade).mul(mix(float(1), float(0.3), hf.z)));
     const hgt = mix(float(0.4), float(0.16), hf.z).mul(float(0.6).add(r2.mul(0.75))).mul(here).mul(smoothstep(0, 0.35, fade))
       .mul(smoothstep(0.8, 2.6, dCam));
     const wid = float(0.022).add(r3.mul(0.022)).mul(here).mul(float(1).add(smoothstep(4, 20, dCam).mul(1.2)));
@@ -7793,10 +7795,18 @@ const LAMP_TPL = { get col() {
 } };
 function hydrant(mb, p) {
   if (mb.hd) mb = mb.hd; // a detail: drawn near the camera only
-  const T = templates(), c = lin('#f2e7cf'), cap = lin('#e0b33a');
-  mb.geo(T.cyl8, TRS(p[0], p[1] + 0.35, p[2], 0, 0, 0, 0.17, 0.7, 0.17), c, KIND.plain, 0);
-  mb.geo(T.sph6, TRS(p[0], p[1] + 0.72, p[2], 0, 0, 0, 0.18, 0.14, 0.18), cap, KIND.metal, 0);
-  mb.geo(T.cyl8, TRS(p[0], p[1] + 0.48, p[2], 0, 0, Math.PI / 2, 0.07, 0.5, 0.07), cap, KIND.metal, 0);
+  // the city's cream hydrant: flanged base, barrel, a coloured bonnet with its operating nut, two hose outlets and the
+  // big pumper outlet with caps
+  const T = templates(), c = lin('#f2e7cf'), cap = lin('#e0b33a'), x = p[0], y = p[1], z = p[2];
+  mb.geo(T.cyl8, TRS(x, y + 0.04, z, 0, 0, 0, 0.24, 0.08, 0.24), c, KIND.metal, 0);
+  mb.geo(T.cyl12, TRS(x, y + 0.38, z, 0, 0, 0, 0.16, 0.62, 0.16), c, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.66, z, 0, 0, 0, 0.19, 0.06, 0.19), c, KIND.metal, 0);
+  mb.geo(T.sph8, TRS(x, y + 0.7, z, 0, 0, 0, 0.17, 0.15, 0.17), cap, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.86, z, 0, 0, 0, 0.04, 0.06, 0.04), cap, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.48, z, 0, 0, Math.PI / 2, 0.065, 0.48, 0.065), c, KIND.metal, 0);
+  for (const sd of [-1, 1]) mb.geo(T.cyl8, TRS(x + sd * 0.25, y + 0.48, z, 0, 0, Math.PI / 2, 0.075, 0.04, 0.075), cap, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.42, z + 0.18, Math.PI / 2, 0, 0, 0.09, 0.12, 0.09), c, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.42, z + 0.25, Math.PI / 2, 0, 0, 0.1, 0.04, 0.1), cap, KIND.metal, 0);
 }
 // ---- foliage: trees and palms are alpha-tested cards + bark on the city_foliage atlas, in one mesh per chunk (drawn
 // near the camera, with the detailed houses) that casts its own dappled shadows. aEmit = atlas tile (0 broadleaf

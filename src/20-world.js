@@ -2521,8 +2521,8 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     const dCam = tlength(root.sub(cameraPosition.xz));
     const fade = smoothstep(ring.fade, ring.fade * 0.6, dCam);
     // density: a blade exists where its random number is under the local density
-    // (the mown lane in the valley keeps fewer, shorter blades: the lawn texture and its stripes read through)
-    const here = tstep(r1, hf.y.mul(fade).mul(mix(float(1), float(0.45), hf.z)));
+    // (the mown lane in the valley keeps 30 % of the blades, shorter: the lawn texture and its stripes read through)
+    const here = tstep(r1, hf.y.mul(fade).mul(mix(float(1), float(0.3), hf.z)));
     const hgt = mix(float(0.4), float(0.16), hf.z).mul(float(0.6).add(r2.mul(0.75))).mul(here).mul(smoothstep(0, 0.35, fade))
       .mul(smoothstep(0.8, 2.6, dCam));
     const wid = float(0.022).add(r3.mul(0.022)).mul(here).mul(float(1).add(smoothstep(4, 20, dCam).mul(1.2)));
