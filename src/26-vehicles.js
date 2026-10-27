@@ -573,8 +573,8 @@ function buildCar(lod, taxi) {
   for (const sx of [-1, 1]) {
     fr(sx * 0.45, sx * 0.48, 0.46, 0.6, 1, 2, 0.012, VK.CHROME, C_CHROME, 0);
     // head lamps wrap round the front corners; tail lamps round the rear corners (with an amber indicator strip)
-    patch(vb, S, true, 6, 2, (u, v) => [sx * lerp(0.52, 0.89, u), lerp(0.64, 0.775, v), 0], () => [0, 0, 1], 0.01, VK.HEAD, WHITE, 0.9, (i, j) => [sx > 0 ? i / 6 : 1 - i / 6, j / 2]);
-    patch(vb, S, true, 6, 2, (u, v) => [sx * lerp(0.44, 0.85, u), lerp(0.78, 0.92, v), 0], () => [0, 0, -1], 0.01, VK.TAIL, red, 0.7, (i, j) => [sx > 0 ? i / 6 : 1 - i / 6, j / 2]);
+    patch(vb, S, true, 6, 2, (u, v) => [sx * lerp(0.52, 0.89, u), lerp(0.64, 0.775, v), 0], () => [0, 0, 1], 0.01, VK.HEAD, WHITE, 0.62, (i, j) => [sx > 0 ? i / 6 : 1 - i / 6, j / 2]);
+    patch(vb, S, true, 6, 2, (u, v) => [sx * lerp(0.44, 0.85, u), lerp(0.78, 0.92, v), 0], () => [0, 0, -1], 0.01, VK.TAIL, red, 0.45, (i, j) => [sx > 0 ? i / 6 : 1 - i / 6, j / 2]);
     patch(vb, S, true, 2, 1, (u, v) => [sx * lerp(0.6, 0.86, u), lerp(0.74, 0.78, v), 0], () => [0, 0, -1], 0.008, VK.AMBER, amber, 0.4);
     patch(vb, S, true, 1, 1, (u, v) => [0, lerp(0.66, 0.7, v), lerp(1.98, 2.08, u)], () => [sx, 0, 0], 0.005, VK.AMBER, amber, 0.5);
     const fg = hitOut(S, [sx * 0.6, 0.6, 0], [0, 0, 1]);
@@ -1152,7 +1152,7 @@ function vehicleMaterial() {
   const hk = tmix(float(1), float(2.6), U.hdr);
   const bl = tstep(0.45, tfract(U.time.mul(1.4)));
   const headE = vec3(1.0, 0.9, 0.74).mul(tmax(lens, drl.mul(0.8)).mul(1.0).add(0.04)).mul(mHead);
-  const tailE = vec3(1.0, 0.05, 0.025).mul(bars.mul(0.15).add(0.85)).mul(mTail);
+  const tailE = vec3(1.0, 0.025, 0.012).mul(bars.mul(0.12).add(0.88)).mul(mTail);
   const blinkE = vec3(1.0, 0.5, 0.06).mul(tmix(float(0.03), float(1), bl)).mul(mBlink);
   const amberE = vec3(1.0, 0.45, 0.05).mul(0.5).mul(mAmber);
   const atlE = atlC.xyz.mul(atlC.w).mul(mAtlas);
