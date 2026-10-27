@@ -437,7 +437,7 @@ function atlasCanvas() {
 const MAT = {};
 const TEX = {};
 // live TSL uniforms: time (screens, dash arrows), emission gain (HDR: blooms), micro-bump strength (per preset), rings
-const U = { time: uniform(0), glow: uniform(2.6), bump: uniform(1), ring: uniform(1) };
+const U = { time: uniform(0), glow: uniform(1.9), bump: uniform(1), ring: uniform(1) };
 // fallback sky for the metals when the scene has no environment map (normally scene.environment, K.post's capture of
 // the island sky, lights every entity material)
 function makeEnv() {
@@ -538,6 +538,7 @@ function entMaterial() {
   m.sheenNode = col.mul(0.5).add(0.04).mul(mSoft);
   m.sheenRoughnessNode = float(0.55);
   m.emissiveNode = col.mul(am.z).mul(U.glow).mul(it.xyz).add(vec3(it.w.mul(0.85)));
+  m.specularIntensityNode = float(1).sub(wk(K_GLOW).mul(0.85)); // lamps and LEDs keep their colour (no sky sheen)
   return m;
 }
 // polished gold rings: mirror-like metal (env + sun highlights bloom) with a warm fresnel glow so they read as gold even
@@ -625,7 +626,10 @@ function makeMaterials() {
 function onGfx(g) {
   const q = g && g.preset;
   U.bump.value = q === 'low' ? 0.35 : 1;
-  RING_FAR2 = q === 'medium' || q === 'low' ? 160 * 160 : 190 * 190;
+  const lite = q === 'medium' || q === 'low';
+  RING_FAR2 = lite ? 160 * 160 : 190 * 190;
+  RING_NEAR2 = lite ? 18 * 18 : 26 * 26;
+  LOD_D2 = lite ? 18 * 18 : 30 * 30;
 }
 
 // ===================== instanced part pools =====================
@@ -650,7 +654,7 @@ function poolOf(geo, opts) {
 // a part of an entity: holder under `group` + an instance of the pool of `geo`; returns the slot (s.t = tint)
 // A part whose geometry has a far LOD (geo.userData.far, see lodTpl) gets a twin slot in the far pool, which casts no
 // shadow: within LOD_D of the camera the near instance is drawn, beyond it the far one.
-const LOD_D2 = 30 * 30;
+let LOD_D2 = 30 * 30; // 18 m on Moyen / Économie (onGfx)
 function part(group, geo, opts) {
   if (!geo) return null;
   const h = new THREE.Object3D();
@@ -1035,7 +1039,7 @@ const ents = [];           // generic {root, home, vis, show} for distance culli
 // flicker that costs one draw per cascade). A soft halo sprite keeps the far ones sparkling.
 const RG = { n: 0, pos: [], got: [], near: null, far: null, spin: 0, lost: [], lostMesh: null, lostSpin: 0, glowGeo: null, glowAttr: null, twk: 0, lostDirty: false };
 let RING_FAR2 = 190 * 190;   // farther rings are a few pixels wide: only their glow sprite is drawn (160 m on Moyen / Économie)
-const RING_NEAR2 = 26 * 26;  // detailed rings within this distance of the camera
+let RING_NEAR2 = 26 * 26;    // detailed rings within this distance of the camera (18 m on Moyen / Économie)
 // polished ring: a superellipse cross-section (flat faces, rounded edges -> crisp highlight bands) swept around Z
 function ringGeometry(seg, prof) {
   const R = 0.44, a = 0.092, b = 0.068, e = 2.6;
@@ -1451,7 +1455,7 @@ function tplDash() {
     for (const s of [-1, 1]) {
       g.paint.add(rbox(0.14, 0.17, 3.5, 0.05, 2), COL.yellow, TRS(s * 1.23, 0.085, 0));
       g.chrome.add(box(0.06, 0.04, 3.2), COL.silver, TRS(s * 1.12, 0.16, 0));
-      if (HI()) for (const z of [-1.55, -0.78, 0, 0.78, 1.55]) g.chrome.add(sph(0.025, 8, 6), COL.silver, TRS(s * 1.23, 0.17, z + 0.39));
+      if (HI()) for (const z of [-1.17, -0.39, 0.39, 1.17]) g.chrome.add(sph(0.025, 8, 6), COL.silver, TRS(s * 1.23, 0.17, z));
     }
     g.paint.add(rbox(2.6, 0.17, 0.14, 0.05, 2), COL.yellow, TRS(0, 0.085, 1.68));
     g.paint.add(rbox(2.6, 0.17, 0.14, 0.05, 2), COL.yellow, TRS(0, 0.085, -1.68));

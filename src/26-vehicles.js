@@ -17,15 +17,18 @@
 //                                    passes its street chunk builder); with a plain builder the far model is written into
 //                                    it with the city's surface kinds (old behaviour, kept for compatibility)
 //   K.vehicles.update(dt, t)         lamp / blinker clock (called by K.city.update; t = the city clock in seconds)
-//   K.vehicles.stats()               { types, near:[count per type], far:[...], tris:{lod0:[], lod1:[]}, parked, hooked }
+//   K.vehicles.stats()               { types, near / far / dist: [instances drawn per type], tris: {lod0: [], lod1: []},
+//                                    parked, ents, hooked, built }
 //   K.vehicles.PAINT (30), BLINK (31) surface kinds: per-instance paint, flashing amber lamps; PAINTS: palette (hex)
-// LOD instancing (v3): every vehicle of the city (traffic + parked) is drawn by two InstancedMeshes per type that this
-// part adds to K.city.group: 'veh-near-<t>' (LOD 0) and 'veh-far-<t>' (LOD 1). The city still creates one traffic
-// InstancedMesh per type from build(type) and moves its cars with setMatrixAt: those meshes are found in the city group,
-// hidden, and their setMatrixAt only records the pose. Slots are assigned once per drawn frame, from onBeforeRender of
-// the LOD meshes (after every update of the frame, so the drawn car is exactly where its collision box is): near / far /
-// culled by distance to the camera (per preset, with hysteresis), far ones also by the view frustum; a vehicle keeps its
-// slot while it stays in the same LOD; count = highest used slot + 1 (count 0 = no draw call).
+// LOD instancing (v3): every vehicle of the city (traffic + parked) is drawn by InstancedMeshes per type that this part
+// adds to K.city.group: 'veh-near-<t>' (LOD 0, no shadow of its own), 'veh-shadow-<t>' (the LOD 1 model sharing the near
+// pool's instance buffers, drawn in the shadow passes only), 'veh-far-<t>' (LOD 1, casts shadows) and 'veh-dist-<t>'
+// (LOD 1, no shadows). The city still creates one traffic InstancedMesh per type from build(type) and moves its cars
+// with setMatrixAt: those meshes are found in the city group, hidden, and their setMatrixAt only records the pose.
+// Slots are assigned once per drawn frame, from onBeforeRender of the LOD meshes (after every update of the frame, so
+// the drawn car is exactly where its collision box is): near / far / distant / culled by distance to the camera (LODD
+// per K.gfx preset, with hysteresis), far ones also by the view frustum; a vehicle keeps its slot while it stays in the
+// same LOD; count = highest used slot + 1 (count 0 = no draw call).
 // Models: lofted bodies (sections along z with smooth normals: rounded plan and sides, tumblehome, wheel arches cut in
 // the sills), separate inset glass behind rubber seals, bumpers swept along the plan outline, lamps / plates / handles
 // projected onto the body (ray cast on the loft), tyres (lathe, tread + sidewall in the shader) on 5-spoke alloys or
@@ -274,7 +277,9 @@ function patch(vb, S, closed, nu, nv, org, dir, off, kind, colr, emit, uvFn) {
   for (let a = 0; a <= nu; a++) {
     const row = [];
     for (let b = 0; b <= nv; b++) {
-      const h = hitOut(S, org(a / nu, b / nv), dir(a / nu, b / nv));
+      // a ray that slips past the silhouette is pulled towards the centre line (x), a few times
+      let o = org(a / nu, b / nv), h = null;
+      for (let k = 0; k < 6 && !(h = hitOut(S, o, dir(a / nu, b / nv))); k++) o = [o[0] * 0.97, o[1], o[2]];
       if (!h) return false;
       row.push(addv(h.p, mulv(h.n, off)));
     }
@@ -336,17 +341,17 @@ function wheel(vb, x, y, z, r, w, lod, style) {
   const s = Math.sign(x) || 1, hw = w / 2, ri = style === 'bus' ? r * 0.58 : style === 'steel' ? r * 0.6 : r * 0.65;
   if (lod > 0) {
     // far: octagon tread band + one disc (tyre ring / rim by radius in the shader)
-    lathe(vb, x, y, z, s, [[r, -hw], [r, hw]], 8, () => [VK.TYRE, C_TYRE, 0], (i, j) => [j / 8, 0.5]);
-    disc(vb, x, y, z, s, r, hw, 8, style === 'bus' || style === 'steel' ? C_STEEL : C_ALLOY, VK.WHEELFAR, ri / r, (rad, t) => [t, rad]);
+    lathe(vb, x, y, z, s, [[r, -hw], [r, hw]], 6, () => [VK.TYRE, C_TYRE, 0], (i, j) => [j / 6, 0.5]);
+    disc(vb, x, y, z, s, r, hw, 6, style === 'bus' || style === 'steel' ? C_STEEL : C_ALLOY, VK.WHEELFAR, ri / r, (rad, t) => [t, rad]);
     return;
   }
   const prof = [[ri + 0.004, -hw * 0.84], [r - 0.05, -hw], [r - 0.012, -hw * 0.8], [r, -hw * 0.4], [r, hw * 0.4], [r - 0.012, hw * 0.8], [r - 0.05, hw], [ri + 0.004, hw * 0.84]];
   const tv = [0, 0.18, 0.3, 0.36, 0.64, 0.7, 0.82, 1];
-  lathe(vb, x, y, z, s, prof, 16, () => [VK.TYRE, C_TYRE, 0], (i, j) => [j / 16, tv[i]]);
+  lathe(vb, x, y, z, s, prof, 14, () => [VK.TYRE, C_TYRE, 0], (i, j) => [j / 14, tv[i]]);
   const lip = hw * 0.84, rc = style === 'steel' || style === 'bus' ? C_STEEL : C_ALLOY;
   // rim lip (chrome ring) and the barrel behind it
-  lathe(vb, x, y, z, s, [[ri + 0.006, lip], [ri - 0.016, lip + 0.004]], 16, () => [VK.CHROME, C_CHROME, 0]);
-  lathe(vb, x, y, z, s, [[ri - 0.016, lip + 0.004], [ri - 0.016, -hw * 0.3]], 16, () => [VK.RIM, lc('#5a5e64'), 0], null, 0, Math.PI * 2, true);
+  lathe(vb, x, y, z, s, [[ri + 0.006, lip], [ri - 0.016, lip + 0.004]], 14, () => [VK.CHROME, C_CHROME, 0]);
+  lathe(vb, x, y, z, s, [[ri - 0.016, lip + 0.004], [ri - 0.016, -hw * 0.3]], 14, () => [VK.RIM, lc('#5a5e64'), 0], null, 0, Math.PI * 2, true);
   disc(vb, x, y, z, s, ri - 0.014, -hw * 0.25, 10, C_DARK, VK.TRIM, 0);
   if (style === 'alloy') {
     // brake disc + calliper behind the spokes, 5 dished spokes, centre cap
@@ -382,18 +387,18 @@ function section(spec, z, lod) {
   const W = Math.max(0, spec.W(z)), yb = spec.yb(z), belt = Math.max(spec.belt(z), yb + 0.08), top = Math.max(spec.top(z), belt);
   const h = top - belt, f = W / Math.max(1e-6, spec.W0);
   const sh = Math.min(Math.max(spec.sh, yb + 0.16), belt - 0.06), cr = spec.crown(z), rr = spec.roofR;
-  const x7 = Math.max(0, W - 0.05 * f), xr = Math.min(spec.xr(z, h), x7 - 0.012 * f), xb = Math.min(x7, Math.max(W - (spec.beltIn || 0.075) * f, xr));
+  const x7 = Math.max(0, W - 0.06 * f), xr = Math.min(spec.xr(z, h), x7 - 0.012 * f), xb = Math.min(x7, Math.max(W - (spec.beltIn || 0.075) * f, xr));
   const pts = [];
   if (lod === 0) {
     pts.push([0, yb], [Math.max(0, W - 0.06 * f), yb + 0.008], [Math.max(0, W - 0.012 * f), Math.min(yb + 0.045, sh - 0.02)],
-      [W, Math.min(yb + 0.12, sh - 0.012)], [W + 0.004 * f, lerp(Math.min(yb + 0.12, sh - 0.012), sh, 0.5)], [W, sh],
-      [Math.max(0, W - 0.02 * f), Math.max(sh + 0.005, belt - 0.06)], [x7, belt]);
+      [W - 0.004 * f, Math.min(yb + 0.12, sh - 0.012)], [W + 0.008 * f, lerp(Math.min(yb + 0.12, sh - 0.012), sh, 0.55)], [W + 0.004 * f, sh],
+      [Math.max(0, W - 0.03 * f), Math.max(sh + 0.005, belt - 0.07)], [x7, belt]);
     const ts = spec.gh(h);
     for (const t of ts) { const bow = Math.sin(Math.PI * t) * 0.012 * Math.min(1, h / 0.3); pts.push([lerp(xb, xr, t) + bow * f, belt + 0.004 + (h - 0.004) * t]); }
     pts.push([Math.max(0, xr - rr * 0.35), top + rr * 0.12 + cr * 0.3], [Math.max(0, xr - rr), top + rr * 0.2 + cr * 0.6], [xr * 0.5, top + rr * 0.2 + cr * 0.92], [0, top + rr * 0.2 + cr]);
   } else {
     pts.push([0, yb], [Math.max(0, W - 0.04 * f), yb + 0.02], [W, Math.min(yb + 0.13, sh - 0.01)], [W, sh], [Math.max(0, W - 0.05 * f), belt],
-      [xr, top], [Math.max(0, xr - rr), top + rr * 0.2 + cr * 0.6], [0, top + rr * 0.2 + cr]);
+      [xr, top], [0, top + rr * 0.2 + cr]);
   }
   return pts;
 }
@@ -474,11 +479,11 @@ const plateQuad = (vb, x, y, z, w, h, dir, k) => {
 // ===================== sedan / taxi =====================
 function carSpec(taxi) {
   const L = 2.25, W0 = 0.915;
-  const arches = [{ z: 1.42, r: 0.335, Ra: 0.38 }, { z: -1.42, r: 0.335, Ra: 0.38 }];
-  const belt = pchip([[-2.25, 0.72], [-2.215, 0.86], [-2.14, 0.955], [-2.0, 0.99], [-1.6, 1.0], [-1.0, 0.995], [0, 0.982], [1.2, 0.962], [1.85, 0.935], [2.06, 0.905], [2.17, 0.85], [2.225, 0.77], [2.25, 0.68]]);
+  const arches = [{ z: 1.42, r: 0.345, Ra: 0.385 }, { z: -1.42, r: 0.345, Ra: 0.385 }];
+  const belt = pchip([[-2.25, 0.72], [-2.215, 0.86], [-2.14, 0.955], [-2.0, 0.99], [-1.6, 1.0], [-1.0, 0.995], [0, 0.982], [1.2, 0.962], [1.75, 0.942], [1.98, 0.905], [2.1, 0.855], [2.19, 0.775], [2.235, 0.69], [2.25, 0.62]]);
   const roof = pchip([[-1.47, 0.99], [-1.33, 1.17], [-1.15, 1.33], [-0.95, 1.395], [-0.55, 1.425], [-0.1, 1.432], [0.3, 1.425], [0.52, 1.405], [0.72, 1.33], [0.95, 1.16], [1.2, 0.962]]);
-  const base = pchip([[-2.25, 0.42], [-2.17, 0.34], [-1.95, 0.26], [-1.62, 0.205], [1.62, 0.205], [1.95, 0.245], [2.15, 0.31], [2.25, 0.4]]);
-  const side = [[-1.36, -0.21], [-0.05, 1.17]], wsh = [0.64, 1.14], rear = [-1.4, -0.99], S = 0.03;
+  const base = pchip([[-2.25, 0.42], [-2.17, 0.34], [-1.95, 0.26], [-1.62, 0.205], [1.62, 0.205], [1.95, 0.25], [2.12, 0.31], [2.22, 0.37], [2.25, 0.42]]);
+  const side = [[-1.0, -0.21], [-0.05, 1.17]], wsh = [0.64, 1.14], rear = [-1.4, -0.99], S = 0.03;
   const spec = {
     L, W0, W: planW(W0, L, 12, 4), yb: archY(arches, base), belt, sh: 0.79, roofR: 0.07, beltIn: 0.075, glassInset: 0.012,
     top: z => (z < -1.47 || z > 1.2 ? belt(z) : Math.max(belt(z), roof(z))),
@@ -486,19 +491,16 @@ function carSpec(taxi) {
     xr: (z, h) => 0.705 + 0.085 * (1 - Math.min(1, h / 0.46)),
     gh: h => { const a = Math.min(0.35, 0.03 / Math.max(h, 1e-3)), b = Math.min(0.35, 0.026 / Math.max(h, 1e-3)); return [0, a, 0.5, 1 - b, 1]; },
     arches, side, wsh, rear,
-    stations0: uniq([-2.25, -2.244, -2.232, -2.21, -2.17, -2.1, -1.98, ...archStations(-1.42, 0.38, 7), ...archStations(1.42, 0.38, 7),
-      ...rangeStations(side, S), ...rangeStations([wsh, rear], S), -0.6, 0.3, 0.85, 1.98, 2.1, 2.17, 2.21, 2.232, 2.244, 2.25]),
-    stations1: uniq([-2.25, -2.235, -2.18, -2.08, -1.8, -1.6, -1.42, -1.24, -1.04, -0.97, -0.21, -0.05, 0.64, 1.04, 1.24, 1.42, 1.6, 1.8, 2.08, 2.18, 2.235, 2.25]),
+    stations0: uniq([-2.25, -2.238, -2.21, -2.15, -2.05, ...archStations(-1.42, 0.385, 6), ...archStations(1.42, 0.385, 6),
+      ...rangeStations(side, S), ...rangeStations([wsh, rear], S), 0.85, 2.05, 2.15, 2.21, 2.238, 2.25]),
+    stations1: uniq([-2.25, -2.225, -2.12, -1.8, -1.61, -1.23, -1.04, -0.99, -0.21, -0.05, 0.64, 1.04, 1.23, 1.61, 1.8, 2.12, 2.225, 2.25]),
     cell(lod, zm, c, sd) {
-      const P = [WHITE, VK.PAINT, taxi ? 4 : 1];
       const paint = [VK.PAINT, WHITE, taxi ? 4 : 1], trim = [VK.TRIM, lc('#1a1b1d'), 0], under = [VK.TRIM, lc('#0c0c0d'), 0];
-      void P;
       if (lod > 0) {
         if (c === 0) return under;
         if (c === 1) return trim;
         if (c === 4) return winState(zm, side, 0) === 2 && !inR(zm, [-0.21, -0.05]) ? [VK.GLASS, WHITE, 0] : paint;
-        if (c === 6) return inR(zm, wsh) || inR(zm, rear) ? [VK.GLASS, WHITE, 0] : paint;
-        if (c === 5) return inR(zm, [0.6, 1.2]) || inR(zm, [-1.45, -0.95]) ? trim : paint;
+        if (c === 5) return inR(zm, wsh) || inR(zm, rear) ? [VK.GLASS, WHITE, 0] : paint;
         if (taxi && c === 3 && inR(zm, [-1.0, 0.95])) return [VK.DECAL, WHITE, 2];
         return paint;
       }
@@ -521,6 +523,7 @@ function carSpec(taxi) {
   };
   return spec;
 }
+// triangles per part of the sedan (dev stats: K.vehicles._dbg.PARTS)
 const PARTS = {};
 const partMark = (vb, name, t0) => { PARTS[name] = (PARTS[name] || 0) + vb.tris - t0; return vb.tris; };
 function taxiSign(vb, lod) {
@@ -543,7 +546,7 @@ function buildCar(lod, taxi) {
   if (lod > 0) {
     // lamps projected on the coarse body, plates as dark patches, the roof sign
     for (const sx of [-1, 1]) {
-      patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.5, 0.86, u), lerp(0.69, 0.82, v), 0], () => [0, 0, 1], 0.01, VK.HEAD, WHITE, 1.2, (i, j) => [0.3 + 0.4 * (sx > 0 ? i : 1 - i), 0.48]);
+      patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.5, 0.86, u), lerp(0.64, 0.77, v), 0], () => [0, 0, 1], 0.01, VK.HEAD, WHITE, 1.2, (i, j) => [0.3 + 0.4 * (sx > 0 ? i : 1 - i), 0.48]);
       patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.42, 0.88, u), lerp(0.76, 0.92, v), 0], () => [0, 0, -1], 0.01, VK.TAIL, red, 1.0, (i, j) => [i, 0.5]);
     }
     if (taxi) taxiSign(vb, 1);
@@ -564,16 +567,16 @@ function buildCar(lod, taxi) {
   t0 = partMark(vb, 'car0:bumpers', t0);
   // front: honeycomb grille in a chrome frame between the head lamps; fog lamps in the bumper
   const fr = (x0, x1, y0, y1, nu, nv, off, kind, c, e, uv) => patch(vb, S, true, nu, nv, (u, v) => [lerp(x0, x1, u), lerp(y0, y1, v), 0], () => [0, 0, 1], off, kind, c, e, uv);
-  fr(-0.47, 0.47, 0.5, 0.68, 5, 2, 0.008, VK.GRILLE, WHITE, 0, (i, j) => [i / 5 * 4, j / 2 * 0.7]);
-  fr(-0.5, 0.5, 0.68, 0.705, 5, 1, 0.012, VK.CHROME, C_CHROME, 0);
-  fr(-0.5, 0.5, 0.48, 0.5, 5, 1, 0.012, VK.CHROME, C_CHROME, 0);
+  fr(-0.45, 0.45, 0.46, 0.6, 5, 2, 0.008, VK.GRILLE, WHITE, 0, (i, j) => [i / 5 * 4, j / 2 * 0.6]);
+  fr(-0.48, 0.48, 0.6, 0.622, 5, 1, 0.012, VK.CHROME, C_CHROME, 0);
+  fr(-0.48, 0.48, 0.44, 0.46, 5, 1, 0.012, VK.CHROME, C_CHROME, 0);
   for (const sx of [-1, 1]) {
-    fr(sx * 0.47, sx * 0.5, 0.5, 0.68, 1, 2, 0.012, VK.CHROME, C_CHROME, 0);
+    fr(sx * 0.45, sx * 0.48, 0.46, 0.6, 1, 2, 0.012, VK.CHROME, C_CHROME, 0);
     // head lamps wrap round the front corners; tail lamps round the rear corners (with an amber indicator strip)
-    patch(vb, S, true, 6, 2, (u, v) => [sx * lerp(0.52, 0.88, u), lerp(0.69, 0.83, v), 0], () => [0, 0, 1], 0.01, VK.HEAD, WHITE, 0.9, (i, j) => [sx > 0 ? i / 6 : 1 - i / 6, j / 2]);
-    patch(vb, S, true, 6, 2, (u, v) => [sx * lerp(0.44, 0.89, u), lerp(0.78, 0.93, v), 0], () => [0, 0, -1], 0.01, VK.TAIL, red, 0.7, (i, j) => [sx > 0 ? i / 6 : 1 - i / 6, j / 2]);
+    patch(vb, S, true, 6, 2, (u, v) => [sx * lerp(0.52, 0.89, u), lerp(0.64, 0.775, v), 0], () => [0, 0, 1], 0.01, VK.HEAD, WHITE, 0.9, (i, j) => [sx > 0 ? i / 6 : 1 - i / 6, j / 2]);
+    patch(vb, S, true, 6, 2, (u, v) => [sx * lerp(0.44, 0.85, u), lerp(0.78, 0.92, v), 0], () => [0, 0, -1], 0.01, VK.TAIL, red, 0.7, (i, j) => [sx > 0 ? i / 6 : 1 - i / 6, j / 2]);
     patch(vb, S, true, 2, 1, (u, v) => [sx * lerp(0.6, 0.86, u), lerp(0.74, 0.78, v), 0], () => [0, 0, -1], 0.008, VK.AMBER, amber, 0.4);
-    patch(vb, S, true, 1, 1, (u, v) => [0, lerp(0.73, 0.77, v), lerp(2.0, 2.1, u)], () => [sx, 0, 0], 0.005, VK.AMBER, amber, 0.5);
+    patch(vb, S, true, 1, 1, (u, v) => [0, lerp(0.66, 0.7, v), lerp(1.98, 2.08, u)], () => [sx, 0, 0], 0.005, VK.AMBER, amber, 0.5);
     const fg = hitOut(S, [sx * 0.6, 0.6, 0], [0, 0, 1]);
     if (fg) vb.geo(new THREE.CircleGeometry(0.045, 10), TM(sx * 0.62, 0.3, L + 0.0475), WHITE, VK.HEAD, 0.5, () => [0.32, 0.48]);
     // door handles, mirror, wiper
@@ -629,7 +632,7 @@ function vanSpec(dvan) {
         if (c === 0) return under;
         if (c === 1) return trim;
         if (c === 4) return winState(zm, side, 0) === 2 ? glass : logo ? [VK.DECAL, WHITE, 1] : paint;
-        if (c === 6) return inR(zm, wsh) ? glass : paint;
+        if (c === 5) return inR(zm, wsh) ? glass : paint;
         if (logo && (c === 2 || c === 3)) return [VK.DECAL, WHITE, 1];
         return paint;
       }
@@ -678,9 +681,9 @@ function buildVan(lod, dvan) {
   patch(vb, S, true, 4, 1, (u, v) => [lerp(-0.52, 0.52, u), lerp(0.92, 0.95, v), 2.25], () => [0, 0, 1], 0.008, VK.CHROME, C_CHROME, 0);
   for (const sx of [-1, 1]) {
     patch(vb, S, true, 3, 2, (u, v) => [sx * lerp(0.56, 0.9, u), lerp(0.98, 1.2, v), 2.25], () => [0, 0, 1], 0.006, VK.HEAD, WHITE, 2.2, (i, j) => [sx > 0 ? i / 3 : 1 - i / 3, j / 2]);
-    patch(vb, S, true, 1, 3, (u, v) => [sx * lerp(0.8, 0.95, u), lerp(0.85, 1.4, v), -2.2], () => [0, 0, -1], 0.006, VK.TAIL, lc('#ff2a1a'), 1.4, (i, j) => [i, j / 3]);
+    patch(vb, S, true, 1, 3, (u, v) => [sx * lerp(0.72, 0.86, u), lerp(0.85, 1.38, v), -2.2], () => [0, 0, -1], 0.006, VK.TAIL, lc('#ff2a1a'), 1.4, (i, j) => [i, j / 3]);
     if (dvan) {
-      patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.8, 0.95, u), lerp(1.42, 1.54, v), -2.2], () => [0, 0, -1], 0.008, BLINK, amb, 2.6);
+      patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.72, 0.86, u), lerp(1.42, 1.54, v), -2.2], () => [0, 0, -1], 0.008, BLINK, amb, 2.6);
       patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.88, 0.95, u), lerp(0.85, 0.95, v), 2.25], () => [0, 0, 1], 0.009, BLINK, amb, 2.6);
     }
     const hm = hitOut(S, [0, 1.5, 1.95], [sx, 0, 0]);
@@ -880,12 +883,14 @@ function buildCable(lod) {
   const vb = new VB();
   const mar = lc('#7a1f22'), cream = lc('#efe1bf'), red = lc('#b8322a'), wood = lc('#8a6038'), brass = lc('#d6b25a'), dk = lc('#1d1e20');
   const LIV = VK.LIVERY;
+  // far model: plain boxes instead of rounded ones
+  const rbx = (x, y, z, w, h, d, r, c, k, e, rx, ry, rz, seg) => (lod ? box(vb, x, y, z, w, h, d, c, k, e, rx, ry, rz) : rbox(vb, x, y, z, w, h, d, r, c, k, e, rx, ry, rz, seg));
   // underframe, trucks, wheels
   box(vb, 0, 0.38, 0, 1.9, 0.28, 8.2, dk, VK.TRIM, 0);
   for (const sx of [-1, 1]) for (const z of [-2.6, 2.6]) wheel(vb, sx * 0.75, 0.32, z, 0.32, 0.12, lod, 'steel');
   // floor / running boards (wood), maroon skirt with a gold line
-  rbox(vb, 0, 0.6, 0, 2.5, 0.1, 8.6, 0.03, wood, VK.WOOD, 0);
-  rbox(vb, 0, 0.92, 0, 2.38, 0.56, 8.5, lod ? 0.06 : 0.08, mar, LIV, 0, 0, 0, 0, lod ? 1 : 2);
+  rbx( 0, 0.6, 0, 2.5, 0.1, 8.6, 0.03, wood, VK.WOOD, 0);
+  rbx( 0, 0.92, 0, 2.38, 0.56, 8.5, lod ? 0.06 : 0.08, mar, LIV, 0, 0, 0, 0, lod ? 1 : 2);
   if (!lod) for (const sx of [-1, 1]) box(vb, sx * 1.192, 1.1, 0, 0.01, 0.02, 8.3, brass, VK.CHROME, 0);
   // enclosed centre cabin: cream walls, windows with frames, a red belt rail
   const cz = 2.1, wy0 = 1.62, wy1 = 2.42;
@@ -927,13 +932,13 @@ function buildCable(lod) {
   for (const dz of [1, -1]) {
     const zc = dz * 3.2;
     for (const sx of [-1, 1]) {
-      rbox(vb, sx * 0.88, 1.18, zc, 0.42, 0.08, 1.9, 0.02, wood, VK.WOOD, 0);
+      rbx( sx * 0.88, 1.18, zc, 0.42, 0.08, 1.9, 0.02, wood, VK.WOOD, 0);
       if (!lod) {
-        rbox(vb, sx * 0.62, 1.48, zc, 0.06, 0.5, 1.9, 0.02, wood, VK.WOOD, 0);
+        rbx( sx * 0.62, 1.48, zc, 0.06, 0.5, 1.9, 0.02, wood, VK.WOOD, 0);
         for (const ddz of [-0.85, 0, 0.85]) cyl(vb, sx * 1.12, 1.95, zc + ddz, 0.025, 1.9, brass, VK.CHROME, 0, 0, 0, 0, 6);
       }
     }
-    rbox(vb, 0, 1.12, dz * 4.22, 2.3, 0.5, 0.16, 0.05, mar, LIV, 0);
+    rbx( 0, 1.12, dz * 4.22, 2.3, 0.5, 0.16, 0.05, mar, LIV, 0);
     if (!lod) {
       vb.geo(tpl().cyl12, TM(0, 1.3, dz * 4.255, Math.PI / 2, 0, 0, 0.13, 0.05, 0.13), C_CHROME, VK.CHROME, 0);
       vb.geo(new THREE.CircleGeometry(0.105, 12), TM(0, 1.3, dz * 4.282, 0, dz > 0 ? 0 : Math.PI, 0), WHITE, VK.HEAD, 2.6, (p) => [0.5 + p[0] * dz * 2.2, (p[1] - 1.195) / 0.21]);
@@ -941,8 +946,8 @@ function buildCable(lod) {
     } else vb.geo(new THREE.CircleGeometry(0.1, 6), TM(0, 1.3, dz * 4.31, 0, dz > 0 ? 0 : Math.PI, 0), WHITE, VK.HEAD, 2.4, () => [0.32, 0.48]);
   }
   // the roof: cream canopy over the whole car, red clerestory with small windows, the end boards
-  rbox(vb, 0, 2.86, 0, 2.5, 0.16, 8.6, 0.07, cream, LIV, 0, 0, 0, 0, lod ? 1 : 2);
-  rbox(vb, 0, 3.12, 0, 1.4, 0.36, 7.0, 0.05, red, LIV, 0, 0, 0, 0, lod ? 1 : 2);
+  rbx( 0, 2.86, 0, 2.5, 0.16, 8.6, 0.07, cream, LIV, 0, 0, 0, 0, lod ? 1 : 2);
+  rbx( 0, 3.12, 0, 1.4, 0.36, 7.0, 0.05, red, LIV, 0, 0, 0, 0, lod ? 1 : 2);
   if (!lod) {
     for (const sx of [-1, 1]) for (let k = -5; k <= 5; k++) box(vb, sx * 0.703, 3.13, k * 0.6, 0.008, 0.16, 0.42, WHITE, VK.GLASS, 0);
     box(vb, 0, 3.32, 0, 1.2, 0.04, 6.8, lc('#5a3a2a'), VK.WOOD, 0);
@@ -1046,7 +1051,7 @@ function vehicleMaterial() {
   const kp = KPa.element(int(tclamp(kk.sub(30), 0, NK - 1)));
   const mPaint = is(VK.PAINT), mDecal = is(VK.DECAL), mGlass = is(VK.GLASS), mTyre = is(VK.TYRE), mHead = is(VK.HEAD), mTail = is(VK.TAIL);
   const mAtlas = is(VK.ATLAS), mWood = is(VK.WOOD), mStripe = is(VK.STRIPE), mEarth = is(VK.EARTH), mGrille = is(VK.GRILLE), mFar = is(VK.WHEELFAR);
-  const mBlink = is(VK.BLINK), mAmber = is(VK.AMBER), mTrim = is(VK.TRIM);
+  const mBlink = is(VK.BLINK), mAmber = is(VK.AMBER);
   const pg = positionGeometry, ng = normalGeometry;
   const sampleA = uvN => { const n = ttexture(atlasTexture(), uvN); ATLAS_NODES.push(n); return n; };
   // ---- per instance: metallic or solid paint (from the colour: a car keeps its finish), the plate variant
@@ -1063,7 +1068,7 @@ function vehicleMaterial() {
   const seam = tmax(tmax(seamL(se.x), seamL(se.y)), tmax(seamL(se.z), seamL(se.w))).mul(sideM).mul(mPaint).toVar('vSeam');
   // ---- taxi checker band / delivery van logo panel (DECAL: aEmit 2 = checker, 1 = van logo by local position)
   const chk = tabs(tstep(0.5, tfract(pg.z.mul(6.25))).sub(tstep(0.5, tfract(pg.y.mul(6.25)))));
-  const logoUv = vec2(tfract(pg.z.add(2.35).div(3.3)), pg.y.sub(0.55).div(1.5));
+  const logoUv = vec2(tfract(pg.z.add(2.35).div(3.3)), pg.y.sub(0.85).div(1.15));
   const logoUvS = vec2(tmix(logoUv.x, float(1).sub(logoUv.x), mk(ng.x.greaterThan(0))), logoUv.y);
   const vr = ATL.van;
   const logoA = sampleA(vec2(tmix(vr[0] / 512, vr[2] / 512, tclamp(logoUvS.x, 0, 1)), tmix(1 - vr[3] / 512, 1 - vr[1] / 512, tclamp(logoUvS.y, 0, 1))));
@@ -1076,7 +1081,11 @@ function vehicleMaterial() {
   base = tmix(base, tmix(vec3(0.03), vec3(0.92), chk), mChk);
   base = tmix(base, logoA.xyz, mLogo);
   // glass: dark tint, darker towards the top (a hint of the cabin: headrests / seat backs below the waist)
-  base = tmix(base, vec3(0.014, 0.017, 0.02), mGlass);
+  // glass: dark tint; on the cars' side glass (loft uv = local z, y) the seat backs and headrests show faintly below
+  const cr = ATL.cabin, cv = aUv.y.sub(0.95).div(0.42);
+  const cab = sampleA(vec2(tfract(aUv.x.mul(0.62)).mul((cr[2] - cr[0]) / 512).add(cr[0] / 512), tclamp(cv, 0.02, 0.98).mul((cr[3] - cr[1]) / 512).add(1 - cr[3] / 512)));
+  const inCab = tstep(0, cv).mul(tstep(cv, 1)).mul(tsmooth(0.5, 0.8, tabs(ng.x)));
+  base = tmix(base, tmix(vec3(0.014, 0.017, 0.02), cab.xyz.mul(0.32), inCab), mGlass);
   // tyres: tread blocks and sidewall lettering (atlas strip, two turns)
   const tread = tsmooth(0.3, 0.36, aUv.y).mul(float(1).sub(tsmooth(0.64, 0.7, aUv.y)));
   const wallV = tclamp(tmix(aUv.y.div(0.3), float(1).sub(aUv.y).div(0.3), mk(aUv.y.greaterThan(0.5))), 0, 1);
@@ -1092,7 +1101,7 @@ function vehicleMaterial() {
   const drl = tsmooth(0.78, 0.84, lv).mul(float(1).sub(tsmooth(0.94, 0.98, lv))).mul(tsmooth(0.04, 0.1, lu)).mul(float(1).sub(tsmooth(0.9, 0.96, lu)));
   base = tmix(base, tmix(vec3(0.62, 0.64, 0.66), vec3(0.85, 0.86, 0.88), lens), mHead);
   const bars = tsmooth(0.15, 0.25, tfract(lv.mul(3))).mul(float(1).sub(tsmooth(0.75, 0.85, tfract(lv.mul(3))))).toVar('vBars');
-  base = tmix(base, vc.mul(tmix(float(0.3), float(0.4), bars)), mTail);
+  base = tmix(base, vc.mul(0.33), mTail);
   // atlas (plates, signs): the texel colour
   base = tmix(base, atlC.xyz.mul(vc), mAtlas);
   // grille: honeycomb tile from the atlas
@@ -1143,7 +1152,7 @@ function vehicleMaterial() {
   const hk = tmix(float(1), float(2.6), U.hdr);
   const bl = tstep(0.45, tfract(U.time.mul(1.4)));
   const headE = vec3(1.0, 0.9, 0.74).mul(tmax(lens, drl.mul(0.8)).mul(1.0).add(0.04)).mul(mHead);
-  const tailE = vec3(1.0, 0.05, 0.025).mul(bars.mul(0.3).add(0.7)).mul(mTail);
+  const tailE = vec3(1.0, 0.05, 0.025).mul(bars.mul(0.15).add(0.85)).mul(mTail);
   const blinkE = vec3(1.0, 0.5, 0.06).mul(tmix(float(0.03), float(1), bl)).mul(mBlink);
   const amberE = vec3(1.0, 0.45, 0.05).mul(0.5).mul(mAmber);
   const atlE = atlC.xyz.mul(atlC.w).mul(mAtlas);
@@ -1152,7 +1161,6 @@ function vehicleMaterial() {
   if (K.post && typeof K.post.ssr === 'function') {
     try { K.post.ssr(m, kp.w.mul(float(1).sub(seam))); } catch (e) { console.warn('Kit Rush 3D: vehicle SSR opt-in failed', e); }
   }
-  void mTrim;
   return m;
 }
 function material() {
@@ -1172,20 +1180,22 @@ function geometry(type, lod) {
 function buildLOD(type, lod) { return { geometry: geometry(type, lod ? 1 : 0), material: material() }; }
 
 // ===================== LOD instancing of the city's vehicles =====================
-const LODD = { ultra: [70, 420], high: [48, 320], medium: [22, 200], low: [18, 150] };
+// per preset: [near (LOD 0), far with shadows (LOD 1), distant without shadows (LOD 1)] in metres (x sqrt(length / 4.6))
+const LODD = { ultra: [60, 170, 420], high: [40, 120, 320], medium: [16, 70, 150], low: [14, 50, 120] };
 const CAP_NEAR = [40, 12, 16, 3, 2, 1, 3, 3];
-const POOL = { group: null, near: [], far: [], ents: [], parked: [], hooked: [], cityGeo: [], frame: -1, dirty: true, camKey: '', ck: new Float64Array(7), built: false };
+const POOL = { group: null, near: [], far: [], dist: [], pools: null, ents: [], parked: [], hooked: [], cityGeo: [], frame: -1, dirty: true, camKey: '', ck: new Float64Array(7), built: false };
+POOL.pools = [POOL.near, POOL.far, POOL.dist];
 const _v = new THREE.Vector3(), _m = new THREE.Matrix4(), _fr = new THREE.Frustum(), _sp = new THREE.Sphere(), _cq = new THREE.Quaternion();
 const ZERO16 = new Float32Array(16);
 function makePool(type, lod, cap) {
-  const mesh = new THREE.InstancedMesh(geometry(type, lod), material(), Math.max(1, cap));
-  mesh.name = (lod ? 'veh-far-' : 'veh-near-') + VT[type].name;
+  const mesh = new THREE.InstancedMesh(geometry(type, lod ? 1 : 0), material(), Math.max(1, cap));
+  mesh.name = ['veh-near-', 'veh-far-', 'veh-dist-'][lod] + VT[type].name;
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   mesh.instanceMatrix.array.fill(0);
   mesh.setColorAt(0, new THREE.Color(1, 1, 1));
   mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
   mesh.count = 0;
-  mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
+  mesh.castShadow = lod === 1; mesh.receiveShadow = true; mesh.frustumCulled = false;
   mesh.onBeforeRender = evaluate;
   return { mesh, slots: new Array(Math.max(1, cap)).fill(null), top: 0, cap: Math.max(1, cap), dirtyM: false, dirtyC: false };
 }
@@ -1201,9 +1211,9 @@ function ensurePool() {
     const total = nParked[t] + tcount[t] + 8;
     const N = POOL.near[t] = makePool(t, 0, Math.min(total, CAP_NEAR[t] + Math.ceil(nParked[t] * 0.15)));
     POOL.far[t] = makePool(t, 1, total);
+    POOL.dist[t] = makePool(t, 2, total);
     // the near cars cast their shadow with the far model: a proxy sharing the near pool's instance buffers, drawn in
     // the shadow passes only (count = near count between onBeforeShadow and onAfterShadow, 0 in the colour pass)
-    N.mesh.castShadow = false;
     const sh = new THREE.InstancedMesh(geometry(t, 1), material(), 1);
     sh.name = 'veh-shadow-' + VT[t].name;
     sh.instanceMatrix = N.mesh.instanceMatrix; sh.instanceColor = N.mesh.instanceColor;
@@ -1212,7 +1222,7 @@ function ensurePool() {
     sh.onAfterShadow = () => { sh.count = 0; };
     sh.onBeforeRender = evaluate;
     N.shadow = sh;
-    g.add(N.mesh); g.add(POOL.far[t].mesh); g.add(sh);
+    g.add(N.mesh); g.add(POOL.far[t].mesh); g.add(POOL.dist[t].mesh); g.add(sh);
   }
   for (const e of POOL.parked) POOL.ents.push(e);
   POOL.built = true;
@@ -1252,7 +1262,7 @@ function hookCity() {
 }
 function release(e) {
   if (e.lod < 0) return;
-  const P = (e.lod === 0 ? POOL.near : POOL.far)[e.type];
+  const P = POOL.pools[e.lod][e.type];
   P.slots[e.slot] = null;
   P.mesh.instanceMatrix.array.set(ZERO16, e.slot * 16);
   P.dirtyM = true;
@@ -1260,7 +1270,7 @@ function release(e) {
   e.lod = -1; e.slot = -1;
 }
 function alloc(e, lod) {
-  const P = (lod === 0 ? POOL.near : POOL.far)[e.type];
+  const P = POOL.pools[lod][e.type];
   let s = 0;
   while (s < P.cap && P.slots[s]) s++;
   if (s >= P.cap) return false;
@@ -1296,11 +1306,11 @@ function evaluate() {
       const t = VT[e.type], m = e.m;
       const x = m[12] + m[4] * t.hy, y = m[13] + m[5] * t.hy, z = m[14] + m[6] * t.hy;
       const d = Math.hypot(x - cx, y - cy, z - cz);
-      const sz = Math.sqrt(t.hz / 2.3), dn = dd[0] * sz, df = dd[1] * sz;
+      const sz = Math.sqrt(t.hz / 2.3), dn = dd[0] * sz, ds = dd[1] * sz, df = dd[2] * sz;
       if (d < dn * (e.lod === 0 ? 1.12 : 1)) want = 0;
-      else if (d < df * (e.lod === 1 ? 1.05 : 1)) {
+      else if (d < df * (e.lod === 2 ? 1.05 : 1)) {
         _sp.center.set(x, y, z); _sp.radius = Math.hypot(t.hx, t.hy, t.hz) + 3;
-        want = d < dn * 1.6 || _fr.intersectsSphere(_sp) ? 1 : -1;
+        want = d < dn * 1.6 || _fr.intersectsSphere(_sp) ? (d < ds * (e.lod === 1 ? 1.06 : 1) ? 1 : 2) : -1;
       }
     }
     if (want !== e.lod || (e.cdirty && e.lod >= 0)) {
@@ -1308,12 +1318,12 @@ function evaluate() {
       if (want >= 0 && !alloc(e, want) && want === 0) alloc(e, 1);
     }
     if (e.lod >= 0) {
-      const P = (e.lod === 0 ? POOL.near : POOL.far)[e.type];
+      const P = POOL.pools[e.lod][e.type];
       P.mesh.instanceMatrix.array.set(e.m, e.slot * 16);
       P.dirtyM = true;
     }
   }
-  for (const L of [POOL.near, POOL.far]) for (const P of L) {
+  for (const L of POOL.pools) for (const P of L) {
     if (!P) continue;
     P.mesh.count = P.top;
     if (P.dirtyM) { P.mesh.instanceMatrix.clearUpdateRanges(); P.mesh.instanceMatrix.addUpdateRange(0, Math.max(1, P.top) * 16); P.mesh.instanceMatrix.needsUpdate = true; P.dirtyM = false; }
@@ -1362,12 +1372,12 @@ function update(dt, t) {
   if (POOL.built && POOL.hooked.length < VT.length) hookCity();
 }
 function stats() {
-  const near = POOL.near.map(P => (P ? P.mesh.count : 0)), far = POOL.far.map(P => (P ? P.mesh.count : 0));
+  const cnt = L => L.map(P => (P ? P.mesh.count : 0)), near = cnt(POOL.near), far = cnt(POOL.far), dist = cnt(POOL.dist);
   const tris = { lod0: GEO[0].map(g => (g ? g.index.count / 3 : 0)), lod1: GEO[1].map(g => (g ? g.index.count / 3 : 0)) };
-  return { types: VT.length, near, far, tris, parked: POOL.parked.length, ents: POOL.ents.length, hooked: POOL.hooked.slice(), built: POOL.built };
+  return { types: VT.length, near, far, dist, tris, parked: POOL.parked.length, ents: POOL.ents.length, hooked: POOL.hooked.slice(), built: POOL.built };
 }
 K.vehicles = {
   VT, PAINT, BLINK, PAINTS, vehicleTop, build, buildLOD, material, paint, parkedPaint, addTo, update, stats,
-  _dbg: { POOL, VK, PARTS, geometry, evaluate, show(on) { for (const L of [POOL.near, POOL.far]) for (const P of L) if (P) { P.mesh.visible = on; if (P.shadow) P.shadow.visible = on; } } }
+  _dbg: { POOL, VK, PARTS, geometry, evaluate, show(on) { for (const L of POOL.pools) for (const P of L) if (P) { P.mesh.visible = on; if (P.shadow) P.shadow.visible = on; } } }
 };
 })();
