@@ -441,6 +441,8 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       const band = smoothstep(-0.3, 0.3, tcos(R.y.mul(Math.PI / 5.5))).mul(2).sub(1);
       const vxz = tnormalize(cameraPosition.xz.sub(positionWorld.xz).add(vec2(1e-4, 0)));
       stripe = band.mul(tdot(vxz, MT.zw).mul(0.75).add(0.25)).mul(tclamp(R.z, 0, 1));
+      // the mown lane is a finer, more even lawn than the rough grass on the hills (texture contrast x 0.7)
+      gGrass = gTint.mul(mix(gAlb, mix(vec3(1), gAlb, 0.7), tclamp(R.z, 0, 1)));
       const gFN = tnormalize(tcross(dFdx(positionWorld), dFdy(positionWorld)));
       gSt = mix(gSt, float(1).sub(tabs(gFN.y)), 0.72);
       const nE = TL.vnoise(gx.mul(1.3)).sub(0.5).mul(0.34).add(TL.vnoise(gx.mul(4.1).add(9)).sub(0.5).mul(0.14));

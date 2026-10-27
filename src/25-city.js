@@ -6,6 +6,12 @@ import { CSMShadowNode as CityCSMShadowNode } from 'three/addons/csm/CSMShadowNo
 // tracks, traffic, the waterfront, a long pier ending at a giant pinball bumper, and the red bridge in the fog.
 // Everything lives in K.city.group, translated far east of the island (OX) so no Act 1 query ever overlaps it.
 // Geometry is built in the group's local frame; the physics API takes and returns world coordinates.
+// v3 look (SPEC3 §5): one TSL uber-material on PBR texture ARRAYS (tools/tex/city_tex.py: siding, shingles, asphalt,
+// concrete, brick, planks, painted metal, window sashes, manholes ...) with derivative normal mapping, interior-mapped
+// windows and shop fronts, worn road paint, puddles (SSR); alpha-tested foliage cards; a lit golden-hour TSL sky with
+// altocumulus; the bay with analytic reflections, glitter, depth foam and SSR; CSM sun shadows on Ultra / Élevé
+// (K.gfx.shadows); per-side-street LOD for the Moyen budget. Layout, colliders, traffic and timings are v2's: every
+// visual builder keeps the layout's random sequence intact (burn()).
 if (typeof THREE === 'undefined') return;
 
 const V3 = THREE.Vector3;
@@ -614,7 +620,8 @@ function cityMaterial(opts) {
   // ---- puddles on the flat parts of the streets (local noise, edges broken by the aggregate)
   const flat = smoothstep(0.985, 0.997, normalGeometry.y);
   const pn = TL.fbm(lp.xz.mul(0.075).add(vec2(13.1, 7.7)));
-  const wet = smoothstep(0.6, 0.7, pn.add(lumT.sub(0.5).mul(0.25))).mul(flat).mul(mRoad).toVar('cWet');
+  const cluster = smoothstep(0.42, 0.62, TL.vnoise(lp.xz.mul(0.011).add(vec2(5.3, 1.9))));
+  const wet = smoothstep(0.62, 0.72, pn.add(lumT.sub(0.5).mul(0.25))).mul(flat).mul(mRoad).mul(cluster).toVar('cWet');
   const pud = smoothstep(0.55, 0.85, wet).toVar('cPud');
   base = base.mul(float(1).sub(wet.mul(0.25)).sub(pud.mul(0.12)));
   // ---- normal: cotangent frame from derivatives of the sampling uv (view space)
@@ -660,15 +667,23 @@ function cityMaterial(opts) {
   const shelf = tstep(0.5, tfract(fy.mul(2.2))).mul(tstep(fy, 2.0)).mul(0.25);
   const dresser = tstep(fy, mix(float(0.8), float(0.95), mShop)).mul(tstep(r3.mul(0.4).add(0.1), bx)).mul(tstep(bx, r3.mul(0.4).add(0.55)));
   const backHouse = mix(wallC, vec3(0.25, 0.32, 0.4).mul(r4.add(0.6)), pic);
-  const backShop = wallC.mul(float(0.85).sub(shelf)).add(vec3(0.25, 0.15, 0.1).mul(shelf));
+  // shop shelves: boards and rows of coloured goods (per shelf cell), on the back and side walls
+  const gx = mix(hx.mul(2.4), hz.mul(2.4), mSideW), cell = vec2(tfloor(gx), tfloor(fy.mul(2.2)));
+  const gh = TL.hash21(cell.add(r1.mul(17)));
+  const goods = mix(vec3(TL.hash21(cell.add(1.3)), TL.hash21(cell.add(2.7)), TL.hash21(cell.add(4.1))), vec3(0.5), 0.45).mul(0.75).add(0.12);
+  const inShelf = tstep(0.18, tfract(fy.mul(2.2))).mul(tstep(tfract(fy.mul(2.2)), 0.82)).mul(tstep(fy, 2.1)).mul(tstep(0.45, fy)).mul(tstep(0.25, gh));
+  const backShop = mix(wallC.mul(float(0.85).sub(shelf)).add(vec3(0.25, 0.15, 0.1).mul(shelf)), goods.mul(tfract(gx).mul(0.3).add(0.75)), inShelf);
   const backC = mix(mix(backHouse, backShop, mShop), vec3(0.3, 0.19, 0.12), dresser);
-  const roomC = backC.mul(mBack).add(wallC.mul(0.82).mul(mSideW)).add(floorC.mul(mFloor)).add(ceilC.mul(mCeil));
+  const sideC = mix(wallC.mul(0.82), backShop.mul(0.85), mShop);
+  // shop ceilings: light panels
+  const panelL = tstep(0.75, tfract(hx.mul(0.8))).mul(tstep(0.6, tfract(hz.mul(0.45).negate()))).mul(mShop);
+  const roomC = backC.mul(mBack).add(sideC.mul(mSideW)).add(floorC.mul(mFloor)).add(ceilC.mul(float(1).add(panelL.mul(1.5))).mul(mCeil));
   // lamp light: warm, brighter high in the room and near the window; dark rooms keep a dim cool ambient
   const mLit = mk(aE.greaterThan(0.01));
   const depthK = float(1).sub(hz.negate().div(rD).mul(0.45));
   const lampK = mix(float(1), float(0.7), mFloor).mul(depthK).mul(float(0.75).add(fy.div(rhi.sub(rlo)).mul(0.35)));
   const warm = mix(vec3(1.0, 0.62, 0.32), vec3(1.0, 0.82, 0.55), r4);
-  const roomL = mix(vec3(0.05, 0.055, 0.07).mul(depthK), warm.mul(lampK).mul(aE.mul(0.6).add(0.4)), mLit);
+  const roomL = mix(vec3(0.05, 0.055, 0.07).mul(depthK), warm.mul(lampK).mul(aE.mul(0.6).add(0.4)).mul(mix(float(1), float(0.62), mShop)), mLit);
   // curtains and blinds just behind the glass (house windows)
   const cl = r2.mul(0.22).add(0.06), cr = r3.mul(0.22).add(0.06);
   const curt = tstep(aUv.x, cl).add(tstep(float(1).sub(cr), aUv.x)).mul(tstep(0.25, r4)).mul(mWin);
@@ -702,7 +717,7 @@ function cityMaterial(opts) {
   rough = mix(rough, mix(rough, float(0.58), paintCover), mPaint);
   rough = mix(rough, rough.mul(0.75), patch);
   rough = mix(rough, rough.mul(0.45), wet);
-  rough = mix(rough, float(0.04), pud);
+  rough = mix(rough, float(0.07), pud);
   rough = mix(rough, float(0.04), glassM.mul(mWS));
   rough = mix(rough, float(0.12), fwin);
   rough = mix(rough, float(0.3), wetWall.mul(0.6));
@@ -711,7 +726,9 @@ function cityMaterial(opts) {
   m.aoNode = mix(float(1), tclamp(ao0, 0, 1), p2.z);
   // ---- normal: the map (flat glass with a faint waviness of old panes)
   const nStr = p1.x.mul(float(1).sub(pud)).mul(mix(float(1), mix(float(1), float(0.45), paintCover), mPaint));
-  const nxy = nxy0.mul(nStr);
+  // puddles: a faint wind ripple instead of the asphalt's relief
+  const rip = vec2(TL.vnoise(lp.xz.mul(2.3).add(uTime.mul(0.35))), TL.vnoise(lp.xz.mul(2.3).sub(uTime.mul(0.3)).add(4.1))).sub(0.5).mul(0.05);
+  const nxy = nxy0.mul(nStr).add(rip.mul(pud));
   const nz = tsqrt(tmax(float(1).sub(tdot(nxy, nxy)), 0.0));
   const wav = vec2(TL.vnoise(aUv.mul(vec2(9, 13)).add(r1.mul(10))), TL.vnoise(aUv.mul(vec2(13, 9)).add(r2.mul(10)))).sub(0.5).mul(0.035);
   const gW = glassM.mul(mWS);
@@ -728,7 +745,7 @@ function cityMaterial(opts) {
     .add(vc.mul(aE).mul(mix(float(0.04), float(1), bl)).mul(hk).mul(isK(31)));
   // screen-space reflections (Ultra / Élevé): puddles, wet patches, glass, vehicle paint
   if (K.post && typeof K.post.ssr === 'function') {
-    try { K.post.ssr(m, tmax(tmax(pud.mul(0.85), wet.mul(0.3)), tmax(gW.mul(0.35), isK(30).mul(0.2)))); }
+    try { K.post.ssr(m, tmax(tmax(pud.mul(0.6), wet.mul(0.25)), tmax(gW.mul(0.35), isK(30).mul(0.2)))); }
     catch (e) { console.warn('Kit Rush 3D: city SSR opt-in failed', e); }
   }
   m.userData.dbg = { A, A1, A2, N1, uv, uv2, wb, tint, base, interior, glassM, nxy, vc, texC, macro, wet, pud, patch };
@@ -1388,10 +1405,18 @@ const LAMP_TPL = { get col() {
 } };
 function hydrant(mb, p) {
   if (mb.hd) mb = mb.hd; // a detail: drawn near the camera only
-  const T = templates(), c = lin('#f2e7cf'), cap = lin('#e0b33a');
-  mb.geo(T.cyl8, TRS(p[0], p[1] + 0.35, p[2], 0, 0, 0, 0.17, 0.7, 0.17), c, KIND.plain, 0);
-  mb.geo(T.sph6, TRS(p[0], p[1] + 0.72, p[2], 0, 0, 0, 0.18, 0.14, 0.18), cap, KIND.metal, 0);
-  mb.geo(T.cyl8, TRS(p[0], p[1] + 0.48, p[2], 0, 0, Math.PI / 2, 0.07, 0.5, 0.07), cap, KIND.metal, 0);
+  // the city's cream hydrant: flanged base, barrel, a coloured bonnet with its operating nut, two hose outlets and the
+  // big pumper outlet with caps
+  const T = templates(), c = lin('#f2e7cf'), cap = lin('#e0b33a'), x = p[0], y = p[1], z = p[2];
+  mb.geo(T.cyl8, TRS(x, y + 0.04, z, 0, 0, 0, 0.24, 0.08, 0.24), c, KIND.metal, 0);
+  mb.geo(T.cyl12, TRS(x, y + 0.38, z, 0, 0, 0, 0.16, 0.62, 0.16), c, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.66, z, 0, 0, 0, 0.19, 0.06, 0.19), c, KIND.metal, 0);
+  mb.geo(T.sph8, TRS(x, y + 0.7, z, 0, 0, 0, 0.17, 0.15, 0.17), cap, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.86, z, 0, 0, 0, 0.04, 0.06, 0.04), cap, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.48, z, 0, 0, Math.PI / 2, 0.065, 0.48, 0.065), c, KIND.metal, 0);
+  for (const sd of [-1, 1]) mb.geo(T.cyl8, TRS(x + sd * 0.25, y + 0.48, z, 0, 0, Math.PI / 2, 0.075, 0.04, 0.075), cap, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.42, z + 0.18, Math.PI / 2, 0, 0, 0.09, 0.12, 0.09), c, KIND.metal, 0);
+  mb.geo(T.cyl8, TRS(x, y + 0.42, z + 0.25, Math.PI / 2, 0, 0, 0.1, 0.04, 0.1), cap, KIND.metal, 0);
 }
 // ---- foliage: trees and palms are alpha-tested cards + bark on the city_foliage atlas, in one mesh per chunk (drawn
 // near the camera, with the detailed houses) that casts its own dappled shadows. aEmit = atlas tile (0 broadleaf
@@ -2391,9 +2416,20 @@ function buildBridge(mb, r) {
   }
   // the goal pad at mid-span
   const gz = B.goalZ;
+  // a painted starburst (worn road paint), a ring of lights round it, a glowing star in the middle
+  const gy = B.deck + 0.47;
   for (let k = 0; k < 20; k++) {
-    const a0 = (k / 20) * TAU, a1 = ((k + 1) / 20) * TAU, r0 = 6.5;
-    mb.tri([x, B.deck + 0.5, gz], [x + Math.cos(a1) * r0, B.deck + 0.5, gz + Math.sin(a1) * r0], [x + Math.cos(a0) * r0, B.deck + 0.5, gz + Math.sin(a0) * r0], k % 2 ? lin('#ffd23f') : lin('#2f5bff'), KIND.glow, 0.5);
+    const a0 = (k / 20) * TAU, a1 = ((k + 1) / 20) * TAU, r0 = 6.1;
+    mb.tri([x, gy, gz], [x + Math.cos(a1) * r0, gy, gz + Math.sin(a1) * r0], [x + Math.cos(a0) * r0, gy, gz + Math.sin(a0) * r0], k % 2 ? lin('#ffd23f') : lin('#2f5bff'), KIND.paint, 0, [0, 0, 1, 0, 0.5, 1]);
+  }
+  for (let k = 0; k < 48; k++) {
+    const a0 = (k / 48) * TAU, a1 = ((k + 1) / 48) * TAU, ri = 6.1, ro = 6.5, y2 = gy + 0.005;
+    const P = (a, rr) => [x + Math.cos(a) * rr, y2, gz + Math.sin(a) * rr];
+    mb.quad(P(a0, ri), P(a0, ro), P(a1, ro), P(a1, ri), k % 2 ? lin('#fff1c0') : lin('#ffb020'), KIND.glow, 0.9, 1, 1);
+  }
+  for (let i = 0; i < 10; i++) {
+    const a = Math.PI / 2 + i * Math.PI / 5, b = Math.PI / 2 + (i + 1) * Math.PI / 5, ra = i % 2 ? 0.75 : 1.8, rb = i % 2 ? 1.8 : 0.75, y3 = gy + 0.01;
+    mb.tri([x, y3, gz], [x + Math.cos(b) * rb, y3, gz - Math.sin(b) * rb], [x + Math.cos(a) * ra, y3, gz - Math.sin(a) * ra], lin('#fff6e0'), KIND.glow, 0.8);
   }
   void r; void STEELW;
   return [];
@@ -2552,7 +2588,7 @@ function waterMaterial() {
 const billboard = (c, size) => cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(c, 1)).add(vec4(positionGeometry.xy.mul(size), 0, 0)));
 const viewDepth = c => modelViewMatrix.mul(vec4(c, 1)).z.negate();
 // soft glow billboards (lamps, aviation lights, the lighthouse): one instanced quad, camera-facing, additive
-// PORT(city): v2 GLSL billboards ported 1:1 to TSL (vertexNode); v3: real emissive lamp heads + bloom, light cones.
+// (v3: the lamp heads themselves are emissive and bloom; these sprites add the halo, lampConesMesh the light cones)
 function glowMesh(points) {
   const n = Math.max(1, points.length);
   const g = new THREE.InstancedBufferGeometry();
@@ -2697,7 +2733,7 @@ function flagMesh(list) {
     }
   }
   const g = mb.build();
-  // cloth waving (vertex animation along the fly, aUv.x = 0 at the hoist) — PORT(city): v2 GLSL ported 1:1 (positionNode)
+  // cloth waving (vertex animation along the fly, aUv.x = 0 at the hoist), TSL positionNode on the city material
   const m = cityMaterial({
     position: p => {
       const fu = attribute('aUv', 'vec2').x, t = U.time;
@@ -2722,7 +2758,7 @@ function gullMesh(center) {
     mb.quad([-0.12, -0.05, -0.5], [0.12, -0.05, -0.5], [0.12, -0.05, 0.5], [-0.12, -0.05, 0.5], G, KIND.plain, 0, 0, 0, 0, id);
   }
   const g = mb.build();
-  // each gull flaps and circles (vertex animation: aUv.x = wing side, aUv.y = gull id) — PORT(city): v2 GLSL ported 1:1
+  // each gull flaps and circles (vertex animation: aUv.x = wing side, aUv.y = gull id), TSL positionNode
   const C = uniform(new V3(center[0], center[1], center[2]));
   const m = cityMaterial({
     position: p => {
@@ -3104,8 +3140,8 @@ function ringsMesh() {
   const g = new THREE.TorusGeometry(0.62, 0.12, 10, 32);
   const m = new THREE.MeshPhysicalNodeMaterial({ color: lin('#ffc21a'), metalness: 1, roughness: 0.16, clearcoat: 0.6, clearcoatRoughness: 0.08 });
   m.emissiveNode = vec3(1.0, 0.55, 0.05).mul(mix(float(0.22), float(0.38), U.hdr));
-  // PORT(city): v2 spun every ring about its own axis in the vertex shader (angle = time * 3); r186 applies the
-  // instance matrix before positionNode, so the shared torus geometry is spun on the CPU instead (K.util.spinY, per frame)
+  // v2 spun every ring about its own axis in the vertex shader (angle = time * 3); r186 applies the instance matrix
+  // before positionNode, so the shared torus geometry is spun on the CPU instead (K.util.spinY, per frame)
   const n = RINGS.pos.length;
   // only the rings near Kit are drawn: a window along the route (and the sky rings once the pier is close)
   RINGS.cap = Math.min(n, 150);
