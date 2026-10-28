@@ -21,9 +21,10 @@ const STAGE = () => {
     for (const id of ['btnSound', 'btnPause', 'btnFull', 'touch']) { const e = document.getElementById(id); if (e) e.style.visibility = on ? '' : 'hidden'; }
   };
   // settle: draw a few frames that each advance one tick (motion blur = one tick of motion, TAA history converged)
-  S.settle = n => { for (let i = 0; i < (n || 6); i++) T.frame(); };
+  // (S.place makes Kit invulnerable while staging: that blinks him, so it ends before the frames are drawn)
+  S.settle = n => { P.invT = 0; for (let i = 0; i < (n || 6); i++) T.frame(); };
   // still: frames without ticking (free cameras)
-  S.still = n => { for (let i = 0; i < (n || 6); i++) T.renderNow(); };
+  S.still = n => { if (P.invT > 0) { P.invT = 0; T.ticks(1); } for (let i = 0; i < (n || 6); i++) T.renderNow(); };
   S.act = a => {
     if (G.act === a && (G.state === 'play' || G.state === 'card')) { if (G.state === 'card') T.until(() => G.state === 'play', 600); return G.state; }
     if (G.state !== 'title') T.toTitle();
@@ -84,6 +85,7 @@ const STAGE = () => {
   S.trafficVis = on => { const KV = K.vehicles; if (KV._dbg && KV._dbg.show) KV._dbg.show(on); };
   S.lineup = (s0, list, d, gap) => {
     S.lineEnd();
+    P.vel.set(0, 0, 0); if (K.post && K.post.speed) K.post.speed(0); if (K.vfx && K.vfx.reset) K.vfx.reset();
     S.lu = []; S.trafficVis(false);
     const MS = C()._dbg && C()._dbg.MESH; S.hid = [];
     if (MS) for (const o of [MS.rings, MS.dash, MS.dashDisc]) if (o && o.visible) { o.visible = false; S.hid.push(o); }
@@ -144,7 +146,8 @@ const V = {
     return { hp: f2.hp, cap: cap.state, state: G.state };
   } },
   // Kit close-ups (Act 1, a clear spot)
-  kitface: { act: 1, fn: () => { const K = __K; S.follow1(-2, 6, 90); S.orbit(0.35, 1.3, 0.95, 0.9, 30); S.still(8); } },
+  kitface: { act: 1, fn: () => { const K = __K; S.follow1(-2, 6, 90); S.orbit(0.4, 2.0, 1.05, 0.95, 30); S.still(8); } },
+  kitspinclose: { act: 1, fn: () => { S.follow1(-20, 0, 40); T.key('ShiftLeft', true); T.ticks(10); for (let i = 0; i < 3; i++) { T.tapKey('Space'); T.ticks(8); } S.orbit(2.4, 3.2, 1.0, 0.4, 40); S.freeze1(); S.settle(3); T.key('ShiftLeft', false); S.thaw1(); T.ticks(30); } },
   kit34: { act: 1, fn: () => { const K = __K; S.follow1(-2, 6, 90); S.orbit(0.9, 3.0, 1.0, 0.62, 33); S.still(8); } },
   kitback: { act: 1, fn: () => { const K = __K; S.follow1(-2, 6, 90); S.orbit(2.5, 2.8, 1.3, 0.62, 33); S.still(8); } },
   kitrun: { act: 1, fn: () => { S.follow1(-30, 0, 10); T.key('KeyW', true); T.ticks(40); S.orbit(1.3, 3.2, 1.0, 0.6, 38); S.freeze1(); S.settle(3); T.key('KeyW', false); S.thaw1(); } },
@@ -152,7 +155,7 @@ const V = {
   // ---------- Act 2
   a2hill: { act: 2, fn: () => { S.place(S.f('iA0') + 20, 0); T.ticks(40); S.settle(); } },
   a2street: { act: 2, fn: () => { S.place(S.f('iA0') + 150, 0, 14); T.ticks(40); S.settle(); } },
-  a2traffic: { act: 2, fn: () => { S.place(S.f('iA0') + 205, 0, 14); T.ticks(50); S.settle(); } },
+  a2traffic: { act: 2, fn: () => { S.place(S.f('iA0') + 205, 2.6, 14); T.ticks(50); S.settle(); } },
   a2air: { act: 2, fn: () => { S.place(S.f('iA2') - 70, 0, 24); T.key('ArrowUp', true); T.until(() => __K.board.mode === 'air' && __K.board.stats().airT > 0.35, 400); T.key('ArrowUp', false); S.settle(2); } },
   a2works: { act: 2, fn: () => { S.place(S.f('iB') - 120, 0, 12); T.ticks(30); S.settle(); } },
   a2pier: { act: 2, fn: () => { S.place(S.f('bumper') - 46, 0, 12); T.ticks(20); S.settle(); } },
@@ -165,25 +168,42 @@ const V = {
   a2west: { act: 2, fn: () => { const K = __K; S.place(S.f('t3b') + 60, 0, 0); T.ticks(5); S.freeze2(); const a = K.city.routePoint(S.f('t3b') + 60, 0, 2.2), d = K.city.sunDir; S.camXYZ([a.x, a.y, a.z], [a.x + d.x * 100, a.y + 4, a.z + d.z * 100], 62); S.still(); } },
   a2facade: { act: 2, fn: () => { S.place(S.f('iA1') + 40, 0); T.ticks(5); S.cam2(S.f('iA1') + 40, 4, 1.8, S.f('iA1') + 52, 12, 4.5, 55); S.still(); } },
   a2bridge: { act: 2, fn: () => { const K = __K; S.place(S.f('bumper') - 20, 0); T.ticks(5); S.freeze2(); const g = K.city.offset; S.camXYZ([g.x - 260, 22, -1560], [g.x - 600, 40, -1800], 55); S.still(); } },
-  kitskate: { act: 2, fn: () => { S.place(S.f('iA0') + 30, 0, 6); T.ticks(30); S.freeze2(); S.orbit(0.7, 2.6, 0.9, 0.6, 38); S.settle(3); } },
-  kitflight: { act: 2, fn: () => { S.toFlight(); T.until(() => __K.board.timeScale >= 1 && __K.board.stats().flightU > 0.3, 3000); S.freeze2(); S.orbit(0.9, 3.2, 0.6, 0.5, 40); S.settle(2); } },
+  kitskate: { act: 2, fn: () => { S.place(S.f('iA0') + 30, 0, 6); T.ticks(30); S.freeze2(); S.orbit(0.75, 3.4, 1.0, 0.6, 40); S.settle(3); } },
+  kitflight: { act: 2, fn: () => { S.toFlight(); T.until(() => __K.board.timeScale >= 1 && __K.board.stats().flightU > 0.3, 3000); S.freeze2(); S.orbit(2.2, 3.4, 0.9, 0.5, 42); S.still(8); } },
   // vehicles: two line-ups (cars / big vehicles) on the waterfront + a close-up
   vehcars: { act: 2, fn: () => {
     const K = __K, LANE = 3.2, base = S.f('t3b') + 30; S.place(base - 30, 0); T.ticks(5); S.freeze2(); if (K.player.mesh) K.player.mesh.visible = false;
-    const L = S.lineup(base, [{ type: 0, paint: '#c0392b' }, { type: 1 }, { type: 2, paint: '#2f6b4f' }, { type: 7, i: 0 }, { type: 0, paint: '#2e5c9a' }, { type: 6 }], -LANE, 1.6);
+    const L = S.lineup(base, [{ type: 2, paint: '#2f6b4f' }, { type: 1 }, { type: 0, paint: '#2e5c9a' }, { type: 0, paint: '#c0392b' }], -LANE, 1.6);
     const b = L[L.length - 1].s, mid = (L[0].s + b) / 2, len = b - L[0].s + 6;
-    S.cam2(mid + len * 0.55, -LANE + len * 0.42, len * 0.12 + 1.5, mid + len * 0.05, -LANE, 1.0, 50); S.still(8);
+    S.cam2(mid - len * 0.55, -LANE - len * 0.4, len * 0.14 + 1.8, mid - len * 0.05, -LANE, 1.0, 50); S.still(8);
   } },
   vehbig: { act: 2, fn: () => {
     const K = __K, LANE = 3.2, base = S.f('t3b') + 30; S.place(base - 30, 0); T.ticks(5); S.freeze2(); if (K.player.mesh) K.player.mesh.visible = false;
     const L = S.lineup(base, [{ type: 3 }, { type: 4 }, { type: 5 }], -LANE, 3);
     const b = L[L.length - 1].s, mid = (L[0].s + b) / 2, len = b - L[0].s + 6;
-    S.cam2(mid - len * 0.55, -LANE - len * 0.4, len * 0.14 + 1.8, mid - len * 0.05, -LANE, 1.0, 50); S.still(8);
+    S.cam2(mid + len * 0.55, -LANE + len * 0.42, len * 0.12 + 1.5, mid + len * 0.05, -LANE, 1.0, 50); S.still(8);
+  } },
+  vehvans: { act: 2, fn: () => {
+    const K = __K, LANE = 3.2, base = S.f('t3b') + 30; S.place(base - 30, 0); T.ticks(5); S.freeze2(); if (K.player.mesh) K.player.mesh.visible = false;
+    const L = S.lineup(base, [{ type: 0, paint: '#f2f2ef' }, { type: 0, paint: '#1d1f24' }, { type: 7, i: 0 }, { type: 6 }], -LANE, 1.6);
+    const b = L[L.length - 1].s, mid = (L[0].s + b) / 2, len = b - L[0].s + 6;
+    S.cam2(mid + len * 0.55, -LANE + len * 0.42, len * 0.12 + 1.5, mid + len * 0.05, -LANE, 1.0, 50); S.still(8);
   } },
   vehclose: { act: 2, fn: () => {
     const K = __K, LANE = 3.2, base = S.f('t3b') + 30; S.place(base - 30, 0); T.ticks(5); S.freeze2(); if (K.player.mesh) K.player.mesh.visible = false;
     const L = S.lineup(base, [{ type: 0, paint: '#c0392b' }], -LANE, 1.6);
     const s = L[0].s; S.cam2(s + 4.2, -LANE + 3.6, 1.5, s + 0.3, -LANE, 0.75, 45); S.still(8);
+  } },
+  // headlights straight at the camera (lamp bloom / lens ghosts), 6 m and 3 m
+  vehlamps: { act: 2, fn: () => {
+    const K = __K, LANE = 3.2, base = S.f('t3b') + 30; S.place(base - 30, 0); T.ticks(5); S.freeze2(); if (K.player.mesh) K.player.mesh.visible = false;
+    const L = S.lineup(base, [{ type: 0, paint: '#2e5c9a' }, { type: 1 }], -LANE, 4);
+    const s = L[1].s; S.cam2(s + 7.5, -LANE + 0.8, 1.1, s, -LANE, 0.7, 55); S.still(8);
+  } },
+  vehlamps2: { act: 2, fn: () => {
+    const K = __K, LANE = 3.2, base = S.f('t3b') + 30; S.place(base - 30, 0); T.ticks(5); S.freeze2(); if (K.player.mesh) K.player.mesh.visible = false;
+    const L = S.lineup(base, [{ type: 0, paint: '#2e5c9a' }, { type: 1 }], -LANE, 4);
+    const s = L[1].s; S.cam2(s + 4.2, -LANE + 0.3, 0.9, s, -LANE, 0.6, 62); S.still(8);
   } },
   // pause menu (HUD) in Act 1 play
   pause: { act: 1, hud: true, fn: () => { S.follow1(-30, 0, 30); T.tapKey('Escape'); T.ticks(3); S.settle(1); T.renderNow(); } },
@@ -227,7 +247,16 @@ const V_A1BOSS_SRC = V.a1boss.fn.toString();
   await p.evaluate('window.V_A1BOSS = ' + V_A1BOSS_SRC);
   console.log('boot', bootMs, 'ms', JSON.stringify(setup));
   const results = { setup, bootMs };
+  let tag = '';
   for (const name of views) {
+    // pseudo views: q=<preset> switches the preset, sr=0|1 Super Résolution (the next shots get a -<preset>[-sr] suffix)
+    if (/^(q|sr)=/.test(name)) {
+      const [k, val] = name.split('=');
+      const st = await p.evaluate(([k, val]) => { const P = __K.post; if (k === 'q') P.setQuality(val); else P.setSuperRes(val === '1'); return { q: P.quality, sr: P.superRes }; }, [k, val]);
+      tag = '-' + st.q + (st.sr ? '-sr' : '');
+      await p.waitForTimeout(1500); // the full / half texture set follows the preset
+      continue;
+    }
     const v = V[name];
     if (!v) { console.log('unknown view', name); continue; }
     const t1 = Date.now();
@@ -243,9 +272,9 @@ const V_A1BOSS_SRC = V.a1boss.fn.toString();
         return { calls: d.calls, tris: d.tris, frameCalls: d.frameCalls, state: K.game.state, act: K.game.act, mode: K.board && K.board.mode, extra,
           tex: { n: tx.count, loaded: tx.loaded, mb: +(tx.gpuBytes / 1048576).toFixed(1), res: tx.res }, post: { q: ps.quality, sr: ps.superRes, internal: ps.internal, passes: (ps.passes || []).length } };
       }, { act: v.act, hud: !!v.hud || flag('hud'), src: v.fn.toString() });
-      await p.screenshot({ path: path.join(outDir, prefix + name + '.png'), timeout: 240000 });
-      results[name] = res;
-      console.log('[' + name + '] ' + (Date.now() - t1) + ' ms ' + JSON.stringify(res));
+      await p.screenshot({ path: path.join(outDir, prefix + name + tag + '.png'), timeout: 240000 });
+      results[name + tag] = res;
+      console.log('[' + name + tag + '] ' + (Date.now() - t1) + ' ms ' + JSON.stringify(res));
     } catch (e) { console.log('[' + name + '] FAILED ' + String(e).slice(0, 600)); results[name] = { err: String(e).slice(0, 300) }; }
   }
   await p.evaluate(() => S.restore()).catch(() => {});

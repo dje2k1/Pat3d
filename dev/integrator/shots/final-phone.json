@@ -1,0 +1,150 @@
+{
+ "setup": {
+  "q": "medium",
+  "sr": true,
+  "backend": "webgl2",
+  "W": 812,
+  "H": 389,
+  "dpr": 1.5
+ },
+ "bootMs": 8763,
+ "title": {
+  "calls": 77,
+  "tris": 381738,
+  "frameCalls": 96,
+  "state": "title",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 28,
+   "loaded": 28,
+   "mb": 18.7,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": true,
+   "internal": [
+    731,
+    350
+   ],
+   "passes": 9
+  }
+ },
+ "a1run": {
+  "calls": 91,
+  "tris": 534852,
+  "frameCalls": 110,
+  "state": "play",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 28,
+   "loaded": 28,
+   "mb": 18.7,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": true,
+   "internal": [
+    731,
+    350
+   ],
+   "passes": 9
+  }
+ },
+ "a1loop": {
+  "calls": 81,
+  "tris": 545744,
+  "frameCalls": 100,
+  "state": "play",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 28,
+   "loaded": 28,
+   "mb": 18.7,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": true,
+   "internal": [
+    731,
+    350
+   ],
+   "passes": 9
+  }
+ },
+ "a2street": {
+  "calls": 151,
+  "tris": 656475,
+  "frameCalls": 170,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": true,
+   "internal": [
+    731,
+    350
+   ],
+   "passes": 9
+  }
+ },
+ "a2works": {
+  "calls": 97,
+  "tris": 542856,
+  "frameCalls": 116,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": true,
+   "internal": [
+    731,
+    350
+   ],
+   "passes": 9
+  }
+ },
+ "a2orbit": {
+  "calls": 111,
+  "tris": 406314,
+  "frameCalls": 132,
+  "state": "play",
+  "act": 2,
+  "mode": "flight",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": true,
+   "internal": [
+    731,
+    350
+   ],
+   "passes": 9
+  }
+ },
+ "errors": []
+}

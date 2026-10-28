@@ -1,0 +1,26 @@
+boot 7113 ms {"q":"high","sr":false,"backend":"webgl2","W":1248,"H":720,"dpr":1}
+[title] 41172 ms {"calls":95,"tris":951853,"frameCalls":118,"state":"title","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1start] 37293 ms {"calls":111,"tris":1147307,"frameCalls":134,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1loop] 11797 ms {"calls":102,"tris":1356182,"frameCalls":125,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1lakeside] 42051 ms {"calls":102,"tris":1016291,"frameCalls":125,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitface] 64635 ms {"calls":42,"tris":862182,"frameCalls":65,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kit34] 58279 ms {"calls":40,"tris":859188,"frameCalls":63,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitback] 57021 ms {"calls":77,"tris":1099080,"frameCalls":100,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitspinclose] 17443 ms {"calls":0,"tris":0,"frameCalls":0,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1boss] 7607 ms {"calls":129,"tris":866568,"frameCalls":152,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1results] 26556 ms {"calls":46,"tris":690044,"frameCalls":71,"state":"results","act":1,"mode":null,"extra":{"hp":0,"cap":"results","state":"results"},"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2hill] 71918 ms {"calls":193,"tris":1041430,"frameCalls":216,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2street] 36935 ms {"calls":196,"tris":1046004,"frameCalls":219,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2traffic] 44788 ms {"calls":195,"tris":1115396,"frameCalls":218,"state":"play","act":2,"mode":"air","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2works] 48231 ms {"calls":135,"tris":935636,"frameCalls":158,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2pier] 23025 ms {"calls":100,"tris":631124,"frameCalls":127,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2orbit] 5373 ms {"calls":136,"tris":654474,"frameCalls":161,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2flight] 3962 ms {"calls":72,"tris":520418,"frameCalls":99,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2goal] 21662 ms {"calls":53,"tris":495596,"frameCalls":76,"state":"play","act":2,"mode":"land","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitskate] 49278 ms {"calls":78,"tris":693756,"frameCalls":101,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitflight] 22438 ms {"calls":52,"tris":478408,"frameCalls":75,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[vehcars] 38659 ms {"calls":110,"tris":457825,"frameCalls":137,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[vehbig] 49564 ms {"calls":113,"tris":796721,"frameCalls":136,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[vehclose] 62793 ms {"calls":89,"tris":481195,"frameCalls":112,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+ERRORS (0):
+

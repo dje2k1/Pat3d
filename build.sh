@@ -52,7 +52,8 @@ resolve() { # $1 = specifier, $2 = importing file (for relative ones)
     *) echo "UNRESOLVED:$1" ;;
   esac
 }
-specs() { grep -oE "(^|[;}[:space:]])(import|export)[^;'\"]*from[[:space:]]*['\"][^'\"]+['\"]|^[[:space:]]*import[[:space:]]*['\"][^'\"]+['\"]|^[[:space:]]*}[[:space:]]*from[[:space:]]*['\"][^'\"]+['\"]" "$1" | grep -oE "['\"][^'\"]+['\"]$" | tr -d "'\"" | sort -u; }
+# (comment lines are skipped: addons quote import lines in their doc comments, e.g. FSR1Node.js's @three_import)
+specs() { sed -e 's#^[[:space:]]*\*.*##' -e 's#^[[:space:]]*//.*##' "$1" | grep -oE "(^|[;}[:space:]])(import|export)[^;'\"]*from[[:space:]]*['\"][^'\"]+['\"]|^[[:space:]]*import[[:space:]]*['\"][^'\"]+['\"]|^[[:space:]]*}[[:space:]]*from[[:space:]]*['\"][^'\"]+['\"]" | grep -oE "['\"][^'\"]+['\"]$" | tr -d "'\"" | sort -u; }
 seen="$tmp/seen"; : > "$seen"
 queue="$tmp/queue"; specs "$mod" | while read -r s; do resolve "$s" "$mod"; done > "$queue"
 while [ -s "$queue" ]; do

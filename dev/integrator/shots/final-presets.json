@@ -1,0 +1,357 @@
+{
+ "setup": {
+  "q": "high",
+  "sr": false,
+  "backend": "webgl2",
+  "W": 1248,
+  "H": 720,
+  "dpr": 1
+ },
+ "bootMs": 8551,
+ "kitskate": {
+  "calls": 85,
+  "tris": 746864,
+  "frameCalls": 108,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "high",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 11
+  }
+ },
+ "vehcars": {
+  "calls": 101,
+  "tris": 413561,
+  "frameCalls": 128,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "high",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 11
+  }
+ },
+ "vehvans": {
+  "calls": 99,
+  "tris": 719859,
+  "frameCalls": 122,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "high",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 11
+  }
+ },
+ "a2traffic": {
+  "calls": 187,
+  "tris": 1056532,
+  "frameCalls": 210,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "high",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 11
+  }
+ },
+ "a1valley-ultra": {
+  "calls": 153,
+  "tris": 1790017,
+  "frameCalls": 176,
+  "state": "play",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "ultra",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 11
+  }
+ },
+ "a2street-ultra": {
+  "calls": 194,
+  "tris": 1210816,
+  "frameCalls": 217,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "ultra",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 11
+  }
+ },
+ "a1valley-high": {
+  "calls": 132,
+  "tris": 1370445,
+  "frameCalls": 155,
+  "state": "play",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "high",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 11
+  }
+ },
+ "a2street-high": {
+  "calls": 194,
+  "tris": 1043612,
+  "frameCalls": 217,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "high",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 11
+  }
+ },
+ "a1valley-medium": {
+  "calls": 91,
+  "tris": 636945,
+  "frameCalls": 107,
+  "state": "play",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 7
+  }
+ },
+ "a2street-medium": {
+  "calls": 149,
+  "tris": 724955,
+  "frameCalls": 165,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 7
+  }
+ },
+ "a1valley-low": {
+  "calls": 85,
+  "tris": 445068,
+  "frameCalls": 99,
+  "state": "play",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "low",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 5
+  }
+ },
+ "a2street-low": {
+  "calls": 146,
+  "tris": 635385,
+  "frameCalls": 160,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "low",
+   "sr": false,
+   "internal": [
+    1248,
+    720
+   ],
+   "passes": 5
+  }
+ },
+ "a1valley-medium-sr": {
+  "calls": 91,
+  "tris": 636945,
+  "frameCalls": 110,
+  "state": "play",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": true,
+   "internal": [
+    749,
+    432
+   ],
+   "passes": 9
+  }
+ },
+ "a2street-medium-sr": {
+  "calls": 149,
+  "tris": 724955,
+  "frameCalls": 168,
+  "state": "play",
+  "act": 2,
+  "mode": "skate",
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 33.4,
+   "res": "half"
+  },
+  "post": {
+   "q": "medium",
+   "sr": true,
+   "internal": [
+    749,
+    432
+   ],
+   "passes": 9
+  }
+ },
+ "a1valley-ultra-sr": {
+  "calls": 153,
+  "tris": 1787731,
+  "frameCalls": 179,
+  "state": "play",
+  "act": 1,
+  "mode": null,
+  "tex": {
+   "n": 35,
+   "loaded": 35,
+   "mb": 133.7,
+   "res": "full"
+  },
+  "post": {
+   "q": "ultra",
+   "sr": true,
+   "internal": [
+    961,
+    554
+   ],
+   "passes": 13
+  }
+ },
+ "errors": []
+}

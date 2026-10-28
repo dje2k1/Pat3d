@@ -361,6 +361,10 @@ async function desktop(browser) {
       const G = __K.game;
       const t0 = G.score;
       T.ticks(60 * 7);
+      // a coarse fingerprint of the 3D canvas (8 x 8 samples): the Act 2 frames must really reach the screen after the
+      // city is loaded behind the card (its shaders compile in the background while the game runs)
+      window.__fp = () => { const { w, h, px } = T.pixels(), o = []; for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { const i = (Math.floor((y + 0.5) * h / 8) * w + Math.floor((x + 0.5) * w / 8)) * 4; o.push(px[i], px[i + 1], px[i + 2]); } return o; };
+      window.__fpRes = window.__fp();
       return { state: G.state, scoreBefore: t0, score: G.score, done: !!(G.res && G.res.done), time: +G.time.toFixed(2) };
     });
     await shot(page, '10-results');
@@ -370,14 +374,17 @@ async function desktop(browser) {
       T.tapKey('Space'); T.ticks(2); const s1 = G.state;
       const loadAt = T.until(() => G.state === 'card', 300);
       const s2 = G.state;
+      T.ticks(20);
+      const fa = window.__fp(), fr = window.__fpRes;
+      let fpDiff = 0; for (let i = 0; i < fa.length; i++) fpDiff += Math.abs(fa[i] - fr[i]); fpDiff /= fa.length;
       return { s1, s2, loadAt, act: G.act, score0: score, score: G.score, lives0: lives, lives: G.lives, city: K.city.entered, island: K.world.visible, ents: K.entities.active,
-        board: K.board.active, mode: K.board.mode, best: K.store.get('best', null), bestG: G.best };
+        board: K.board.active, mode: K.board.mode, best: K.store.get('best', null), bestG: G.best, fpDiff: +fpDiff.toFixed(1) };
     });
     await ev(page, () => T.ticks(45));
     await shot(page, '14-act1-to-act2-card');
     check('results tally -> Act 2 ("Chargement…" card, SAN FRANCISCO card), score and lives carried, record saved', res.state === 'results' && res.done && res.score > res.scoreBefore &&
       end.s1 === 'loading' && end.s2 === 'card' && end.act === 2 && end.city && !end.island && !end.ents && end.board && end.score === end.score0 && end.lives === end.lives0 &&
-      end.best && end.best.score === res.score, { res, end });
+      end.best && end.best.score === res.score && end.fpDiff > 12, { res, end });
     const back = await ev(page, () => {
       const K = __K, G = K.game, P = K.player;
       T.until(() => G.state === 'play', 300); T.ticks(30);
@@ -394,7 +401,9 @@ async function desktop(browser) {
   // ---------- game over ----------
   const over = await ev(page, () => {
     const K = __K, G = K.game, P = K.player;
-    if (G.state !== 'title') { /* make sure we are on the title */ }
+    // (from wherever the previous blocks left the game: the boss block ends on the title, --only=desktop in Act 1 play)
+    if (G.state !== 'title') T.toTitle();
+    if (G.sel !== 1) { T.key('ArrowLeft', true); T.ticks(3); T.key('ArrowLeft', false); T.ticks(3); }
     T.ticks(40); T.tapKey('Space'); T.ticks(4);
     const s0 = G.state;
     T.until(() => G.state === 'play', 300);
@@ -593,6 +602,24 @@ async function act2(browser) {
     !load.ents && load.board && load.cam === 'external' && play >= 0 && card.calls < 300, { sel, load, play, card });
   await ev(page, () => T.ticks(30));
   await shot(page, '23-a2-hilltop');
+  // v3 vehicles (K.vehicles): v2's collision boxes and walkable tops unchanged, every vehicle of the city drawn by the
+  // LOD pools (traffic + the 224 parked cars), instanced per type
+  const veh = await ev(page, () => {
+    const K = __K, KV = K.vehicles, st = KV.stats(), lerp = (a, b, t) => a + (b - a) * t;
+    const V2 = [[0.93, 0.73, 2.3], [0.93, 0.73, 2.3], [1.0, 1.08, 2.6], [1.3, 1.58, 6.0], [1.25, 1.68, 4.3], [1.35, 1.72, 7.0], [1.2, 0.6, 1.9], [1.0, 1.08, 2.6]];
+    const top2 = (type, lz) => {
+      if (type <= 1) { if (lz > 1.2 || lz < -1.45) return 0.98; if (lz > 0.6) return lerp(1.45, 0.98, (lz - 0.6) / 0.6); if (lz < -0.95) return lerp(1.45, 1.0, (-0.95 - lz) / 0.5); return 1.45; }
+      if (type === 2 || type === 7) return lz > 1.7 ? lerp(2.15, 1.2, (lz - 1.7) / 0.9) : 2.15;
+      if (type === 6) return 1.02;
+      return V2[type][1] * 2;
+    };
+    let vtSame = KV.VT.length === 8, topSame = true;
+    KV.VT.forEach((t, i) => { if (t.hx !== V2[i][0] || t.hy !== V2[i][1] || t.hz !== V2[i][2]) vtSame = false; });
+    for (let t = 0; t < 8; t++) for (let z = -7.5; z <= 7.5; z += 0.05) if (Math.abs(KV.vehicleTop(t, z) - top2(t, z)) > 1e-9) topSame = false;
+    const sum = a => a.reduce((x, y) => x + y, 0), names = K.city.group.children.filter(o => /^veh-/.test(o.name)).map(o => o.name);
+    return { vtSame, topSame, built: st.built, hooked: st.hooked.length, parked: st.parked, near: sum(st.near), far: sum(st.far), dist: sum(st.dist), pools: names.length, cars: K.city.cars.length };
+  });
+  check('Act 2 vehicles: v2 collision boxes and walkable tops unchanged, traffic + 224 parked cars drawn by the instanced LOD pools', veh.vtSame && veh.topSame && veh.built && veh.hooked === 8 && veh.parked === 224 && veh.near > 0 && veh.near + veh.far + veh.dist >= 20 && veh.pools >= 16, veh);
 
   // ollie: Space jumps the board (sparkles at the wheels)
   const ollie = await ev(page, () => {
@@ -806,6 +833,40 @@ async function postChecks(browser) {
   const { page: page2, errors: errors2 } = await open();
   const saved = await ev(page2, () => ({ q: __K.post.quality, sr: __K.post.superRes, ok: __K.post.ok, gfx: __K.gfx.preset }));
   check('graphics settings persist across reloads (K.store gfx / superres)', saved.q === pres.final && saved.gfx === pres.final && saved.sr === true && saved.ok && errors2.length === 0, { saved, final: pres.final });
+  // SPEC3 §3: the passes of each preset (graph only, no frame needed); Ultra's scene pass keeps <= 4 colour outputs
+  // (WebGPU's 32 bytes per sample); Super Résolution renders at the preset's internal scale and upscales with FSR1
+  const graphs = await ev(page2, async () => {
+    const K = __K, P = K.post, out = {};
+    for (let i = 0; i < 100 && !P.stats().passes.some(p => /fsr1/.test(p)) && P.superRes; i++) { await new Promise(r => setTimeout(r, 100)); T.frame(); }
+    for (const q of ['ultra', 'high', 'medium', 'low']) for (const sr of [false, true]) {
+      P.setQuality(q); P.setSuperRes(sr);
+      const st = P.stats();
+      out[q + (sr ? '+sr' : '')] = { passes: st.passes.join(' | '), scale: st.scale, upscale: st.upscale, aa: st.aa, ao: st.ao, ssr: st.ssrOn, outputs: (st.passes[0].match(/^scene\(([^,)]*)/) || ['', ''])[1].split('+').length };
+    }
+    P.setQuality('high'); P.setSuperRes(false); T.frame();
+    return out;
+  });
+  const has = (k, re) => graphs[k] && re.test(graphs[k].passes);
+  check('post presets: Élevé = GTAO + TRAA + SSR + sun shafts + bloom; Ultra adds SSGI (<= 4 scene outputs); Moyen + Super Résolution = x0.6 + FSR1; Économie = FXAA, no TRAA',
+    ['gtao', 'traa', 'ssr', 'godrays', 'bloom'].every(n => has('high', new RegExp(n))) && has('ultra', /ssgi/) && graphs.ultra.outputs <= 4 && graphs['ultra+sr'].outputs <= 4 &&
+    graphs['medium+sr'].scale === 0.6 && graphs['medium+sr'].upscale === 'fsr1' && has('medium', /gtao/) && !has('medium', /ssr\(/) &&
+    has('low', /fxaa/) && !has('low', /traa/) && graphs['low+sr'].upscale === 'fsr1' && graphs['high+sr'].scale === 0.85 && graphs.high.scale === 1, graphs);
+  // switching presets and Super Résolution back and forth allocates nothing new once every combination has been seen
+  const memc = await ev(page2, async () => {
+    const K = __K, P = K.post, cyc = [];
+    for (let c = 0; c < 3; c++) {
+      for (const q of ['ultra', 'high', 'medium', 'low']) for (const sr of [false, true]) { P.setQuality(q); P.setSuperRes(sr); T.frame(); }
+      P.setQuality('high'); P.setSuperRes(false);
+      // the texture set follows the preset (full / half): let the refetched images arrive, then draw
+      for (let i = 0; i < 60 && K.tex.stats().pending > 0; i++) await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 300));
+      T.frame(); T.frame();
+      cyc.push(T.mem());
+    }
+    return { cyc, builds: P.stats().builds, tex: K.tex.stats().res };
+  });
+  const m1 = memc.cyc[1], m2 = memc.cyc[2];
+  check('post presets: switching presets x Super Résolution allocates nothing after the first cycle (geometries, textures, programs)', m1.geo === m2.geo && m1.tex === m2.tex && m1.prog === m2.prog && errors2.length === 0, { memc, errors: errors2.slice(0, 3) });
   await ctx.close();
 
   // v3 intent of the v2 "jsDelivr blocked" fallback: the post pipeline is off (?nopost) -> direct rendering through
@@ -1244,19 +1305,29 @@ async function regressAct2(browser) {
       if (K.post && K.post.ok) K.post.setQuality(q);
       const st = K.level.start; T.teleport(st.pos.x, st.pos.z, st.yaw, 0); K.player.vel.set(0, 0, 0); T.ticks(100);
       T.frame();
-      const { w, h, px } = T.pixelsGL();
-      // mean luma per column over the grass in front of the camera (bottom quarter of the frame, GL rows from the bottom)
-      const y0 = Math.floor(h * 0.03), y1 = Math.floor(h * 0.28), col = x => { let t = 0; for (let y = y0; y < y1; y++) { const i = (y * w + x) * 4; t += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; } return t / (y1 - y0); };
-      const k = Math.max(3, Math.floor(w / 200)), step = x0 => { let a = 0, b = 0; for (let x = x0 - 2 * k; x < x0 - k; x++) a += col(x); for (let x = x0 + k; x < x0 + 2 * k; x++) b += col(x); return Math.abs(a - b) / k; };
+      // mean luma per column over the grass in front of the camera (bottom quarter of the frame, GL rows from the bottom),
+      // averaged over 4 frames: v3's grass blades and the temporal AA / SSGI jitter add frame-to-frame noise to every
+      // column; a real seam is a step that stays at the centre in every frame
+      let cols = null, w = 0;
+      for (let f = 0; f < 4; f++) {
+        if (f) T.ticks(1);
+        const r = T.pixelsGL(), h = r.h, px = r.px; w = r.w;
+        const y0 = Math.floor(h * 0.03), y1 = Math.floor(h * 0.28);
+        if (!cols) cols = new Float64Array(w);
+        for (let x = 0; x < w; x++) { let t = 0; for (let y = y0; y < y1; y++) { const i = (y * w + x) * 4; t += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; } cols[x] += t / (y1 - y0) / 4; }
+      }
+      const k = Math.max(3, Math.floor(w / 200)), step = x0 => { let a = 0, b = 0; for (let x = x0 - 2 * k; x < x0 - k; x++) a += cols[x]; for (let x = x0 + k; x < x0 + 2 * k; x++) b += cols[x]; return Math.abs(a - b) / k; };
       const others = [];
-      for (let x0 = Math.floor(w / 8); x0 < w - w / 8; x0 += Math.floor(w / 12)) if (Math.abs(x0 - w / 2) > w / 10) others.push(step(x0));
+      for (let x0 = Math.floor(w / 8); x0 < w - w / 8; x0 += Math.floor(w / 24)) if (Math.abs(x0 - w / 2) > w / 10) others.push(step(x0));
       others.sort((a, b) => a - b);
-      out[q] = { centre: +step(Math.floor(w / 2)).toFixed(1), others: +others[others.length >> 1].toFixed(1), othersMax: +others[others.length - 1].toFixed(1) };
+      out[q] = { centre: +step(Math.floor(w / 2)).toFixed(1), others: +others[others.length >> 1].toFixed(1), othersP75: +others[Math.floor(others.length * 0.75)].toFixed(1), othersMax: +others[others.length - 1].toFixed(1) };
     }
     if (K.post && K.post.ok) K.post.setQuality('high');
     return out;
   });
-  check('regression: no lawn-stripe seam down the middle of the start valley (centre step like any other column, all presets)', seam.act === 1 && ['ultra', 'high', 'low'].every(q => seam[q] && seam[q].centre < 4.5 && seam[q].centre < seam[q].othersMax + 2), seam);
+  // intent (v2 bug): no lawn-stripe edge at the screen centre. The centre step must be small (< 4.5 levels), or no
+  // larger than the steps the grass texture itself makes elsewhere in the same frame (within its upper quartile)
+  check('regression: no lawn-stripe seam down the middle of the start valley (centre step like any other column, all presets)', seam.act === 1 && ['ultra', 'high', 'low'].every(q => seam[q] && (seam[q].centre < 4.5 || seam[q].centre <= seam[q].othersP75 + 1) && seam[q].centre < seam[q].othersMax + 2), seam);
   // REGRESS2_HOOK
   check('regression Act 2 pages: no page or console errors', errors.length === 0, errors.slice(0, 5));
 }
@@ -1368,9 +1439,31 @@ async function v3Checks(browser) {
     const okU = o => o.ultra.calls <= 350 && o.ultra.tris <= 2.5e6 && o.high.calls <= 350 && o.low.calls <= 350;
     const okM = o => o.medium.calls <= 220 && o.medium.tris <= 8e5;
     check('performance budgets: Ultra / Élevé / Économie <= 350 draw calls, Ultra <= 2.5 M triangles (Act 1 and Act 2 views)', a2.act === 2 && okU(views) && okU(views2) && errors.length === 0, { act1: views, act2: views2, errors: errors.slice(0, 3) });
-    // the placeholder scene is the same on every preset: Moyen's lighter content (decor density, shadow casters, LOD by
-    // K.gfx) is the art roles' work
-    pending('world+city+entities', 'performance budget Moyen: <= 220 draw calls / 800 k triangles (Act 1 and Act 2 views)', okM(views) && okM(views2), { act1: views.medium, act2: views2.medium });
+    // Moyen (the phone default) has lighter content: decor density, grass, shadow casters, LOD by K.gfx
+    check('performance budget Moyen: <= 220 draw calls / 800 k triangles (Act 1 and Act 2 views)', okM(views) && okM(views2) && errors.length === 0, { act1: views.medium, act2: views2.medium });
+    info.budgets = { act1: views, act2: views2 };
+  }
+  // GitHub Pages serves the game from a sub-path (https://dje2k1.github.io/Pat3d/): every URL must be relative
+  {
+    const sub = await serve(ROOT, 0, '/Pat3d/');
+    const ctx = await browser.newContext({ viewport: { width: 960, height: 540 } });
+    const page = await ctx.newPage();
+    const errors = [], bad = [];
+    await preparePage(page, errors);
+    page.on('response', r => { if (r.status() >= 400 && !/fonts\.g/.test(r.url())) bad.push(r.status() + ' ' + r.url().replace(sub.url, '/')); });
+    let st = null;
+    try {
+      await bootPage(page, sub.url + 'Pat3d/test.html?gl');
+      st = await page.evaluate(async () => {
+        const K = __K; T.ticks(20);
+        await K.tex.preloadGroup('act2');
+        const legacy = await fetch('legacy/').then(r => r.status).catch(() => 0);
+        const s = K.tex.stats();
+        return { state: K.game.state, loaded: s.loaded, failed: s.failed, legacy, href: document.querySelector('#fatal a').getAttribute('href') };
+      });
+    } catch (e) { st = { err: String(e).slice(0, 300) }; }
+    await ctx.close(); await sub.close();
+    check('the site works from a sub-path (/Pat3d/, as on GitHub Pages): modules, textures of both acts and the legacy link load', st && st.state === 'title' && st.failed === 0 && st.loaded >= 30 && st.legacy === 200 && st.href === 'legacy/' && bad.length === 0 && errors.length === 0, { st, bad: bad.slice(0, 5), errors: errors.slice(0, 3) });
   }
   // the frozen v2 build in legacy/ still loads (three r128 from the CDN, served here from vendor/)
   {

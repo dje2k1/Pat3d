@@ -1,0 +1,15 @@
+boot 9937 ms {"q":"high","sr":false,"backend":"webgl2","W":1248,"H":720,"dpr":1}
+[kitface] 95060 ms {"calls":41,"tris":862180,"frameCalls":64,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitspinclose] 32830 ms {"calls":0,"tris":0,"frameCalls":0,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2traffic] 101114 ms {"calls":175,"tris":763482,"frameCalls":198,"state":"play","act":2,"mode":"air","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2works] 60392 ms {"calls":135,"tris":927300,"frameCalls":158,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2pier] 32955 ms {"calls":100,"tris":628532,"frameCalls":127,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2orbit2] 9243 ms {"calls":76,"tris":543796,"frameCalls":101,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2flight] 7672 ms {"calls":72,"tris":520542,"frameCalls":99,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2goal] 42439 ms {"calls":53,"tris":495572,"frameCalls":76,"state":"play","act":2,"mode":"land","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitskate] 32116 ms {"calls":86,"tris":743544,"frameCalls":109,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitflight] 8900 ms {"calls":43,"tris":492248,"frameCalls":66,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[vehcars] 67659 ms {"calls":130,"tris":787048,"frameCalls":153,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[vehbig] 52921 ms {"calls":113,"tris":462561,"frameCalls":140,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+ERRORS (0):
+

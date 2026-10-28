@@ -35,6 +35,7 @@ import { taau as postTAAU } from 'three/addons/tsl/display/TAAUNode.js';
 import { sharpen as postSharpen } from 'three/addons/tsl/display/SharpenNode.js';
 import { fxaa as postFXAA } from 'three/addons/tsl/display/FXAANode.js';
 import { lensflare as postLensflare } from 'three/addons/tsl/display/LensflareNode.js';
+import { fsr1 as postFSR1 } from 'three/addons/tsl/display/FSR1Node.js';
 (() => {
 'use strict';
 const { Fn, If, Loop, pass, mrt, texture: ttexture, perspectiveDepthToViewZ, sin: tsin, sqrt: tsqrt, output, normalView, velocity, diffuseColor, roughness, rtt, uniform,
@@ -97,7 +98,7 @@ const post = K.post = {
 
 const S = {
   inited: false, active: false, why: '', cfg: PRESETS.high, pipe: null, G: null, graphs: {}, built: '', builds: 0,
-  scale: 1, frameId: -1, time: 0, clk: -1, dt: 1 / 60, rawDt: 1 / 60, fresh: 0,
+  scale: 1, frameId: -1, time: 0, clk: -1, drawClk: -1, dt: 1 / 60, rawDt: 1 / 60, fresh: 0,
   spd: 0, spdTarget: 0, spdAt: -1,
   flashT: 0, flashDur: 0, flashCol: new THREE.Color(1, 1, 1),
   cine: { on: false, k: 0, letter: true, dof: true, focus: null },
@@ -200,27 +201,9 @@ function overlays(c, u) {
 }
 
 // spatial Super Résolution: AMD FSR 1 (FSR1Node: EASU edge-adaptive upscale + RCAS sharpening) on the anti-aliased,
-// graded low-resolution image. FSR1Node is loaded with a dynamic import (build.sh's static import scanner trips on a
-// doc comment inside that file); until it has arrived (or if it fails) the same recipe runs with a Catmull-Rom
-// reconstruction (5 bilinear taps, the EASU stand-in) + RCAS (SharpenNode), and the graphs built that way are rebuilt
-// with FSR1 as soon as it is there.
-let fsr1Fn = null;
-try {
-  import('three/addons/tsl/display/FSR1Node.js').then(m => {
-    if (!m || typeof m.fsr1 !== 'function') return;
-    fsr1Fn = m.fsr1;
-    // drop the graphs that used the stand-in (the live one is rebuilt at once)
-    for (const k of Object.keys(S.graphs)) {
-      const E = S.graphs[k];
-      if (!E.G.standIn) continue;
-      if (E.G === S.G) { S.pipe = null; S.built = ''; }
-      sleepGraph(E.G); disposeGraph(E.G);
-      try { E.pipe.dispose(); } catch (e) { /* older pipelines */ }
-      delete S.graphs[k];
-    }
-    if (S.active && !S.pipe) buildPipeline();
-  }).catch(e => console.warn('Kit Rush 3D: FSR1 unavailable, Catmull-Rom + RCAS upscale', e));
-} catch (e) { /* no dynamic import: stand-in */ }
+// graded low-resolution image. If FSR1Node were missing, the same recipe runs with a Catmull-Rom reconstruction
+// (5 bilinear taps, the EASU stand-in) + RCAS (SharpenNode).
+const fsr1Fn = typeof postFSR1 === 'function' ? postFSR1 : null;
 function spatialUp(G, src) {
   if (fsr1Fn) {
     const f = track(G, fsr1Fn(src, LOOK.fsrSharp), 'fsr1');
@@ -702,7 +685,10 @@ function frameUniforms(cam) {
   // speed: radial streaks + velocity motion blur (scaled to a 1/60 s shutter whatever the frame interval), CA grows
   U.speed.value = S.spd;
   U.mb.value = c.mb > 0 ? Math.min(1, S.spd * 1.6) * (1 - ck.k) : 0;
-  U.mbVel.value = (1 / 60) / Math.max(1 / 60, S.rawDt);
+  // (the velocity buffer holds the motion since the last frame that was really drawn: a caller that skips the draws
+  // of some frames, like the tests' tick loops, must not get several ticks of motion blur in one image)
+  const gap = S.drawClk < 0 ? S.rawDt : Math.max(S.rawDt, S.clk - S.drawClk);
+  U.mbVel.value = (1 / 60) / Math.max(1 / 60, gap);
   U.ca.value = c.ca > 0 ? LOOK.ca + LOOK.caSpeed * S.spd : 0;
   if (G && G.dyn.shafts) { updateSun(cam); setDyn(G.dyn.shafts, S.sunVis > 0.002); }
   else U.sunVis.value = 0;
@@ -840,13 +826,26 @@ post.render = function (dt) {
   if (nf) { if (nf.frameId === S.frameId) nf.update(); S.frameId = nf.frameId; }
   frameUniforms(cam);
   presize();
+  const inf = r.info.render, c0 = inf.drawCalls;
   S.pipe.render();
+  if (inf.drawCalls !== c0) S.drawClk = S.clk;
 };
 // precompiles the scene materials for the pipeline's scene pass (MRT variants); await it behind a loading card
+// (not PassNode.compileAsync: it keeps the pass's render target and MRT set on the renderer while it awaits the
+// programs, so frames drawn meanwhile — the game keeps running behind the Act 2 card — would render into the pass's own
+// target instead of the screen. The renderer builds the pipelines synchronously for the target set at call time: set
+// it, start the compile, restore at once, then wait.)
 post.compileAsync = async function () {
-  const G = S.G, r = K.view && K.view.renderer;
-  if (!S.active || !G || !G.named.scene || !r) return false;
-  try { await G.named.scene.compileAsync(r); return true; } catch (e) { console.warn('Kit Rush 3D: post compile', e); return false; }
+  const G = S.G, r = K.view && K.view.renderer, sp = G && G.named.scene, V = K.view;
+  if (!S.active || !sp || !r || !sp.renderTarget) return false;
+  const rt0 = r.getRenderTarget(), mrt0 = r.getMRT();
+  let p;
+  try {
+    r.setRenderTarget(sp.renderTarget); r.setMRT(typeof sp.getMRT === "function" ? sp.getMRT() : null);
+    p = r.compileAsync(V.scene, V.camera);
+  } catch (e) { console.warn('Kit Rush 3D: post compile', e); p = null; }
+  finally { r.setRenderTarget(rt0); r.setMRT(mrt0); }
+  try { if (p) await p; return !!p; } catch (e) { console.warn('Kit Rush 3D: post compile', e); return false; }
 };
 post.setQuality = function (q) {
   if (QUALITIES.indexOf(q) < 0) return post.quality;

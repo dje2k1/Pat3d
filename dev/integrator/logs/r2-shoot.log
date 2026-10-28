@@ -1,0 +1,7 @@
+boot 9406 ms {"q":"high","sr":false,"backend":"webgl2","W":1248,"H":720,"dpr":1}
+[a1boss] 28555 ms {"calls":129,"tris":876924,"frameCalls":158,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1results] 39356 ms {"calls":46,"tris":683432,"frameCalls":71,"state":"results","act":1,"mode":null,"extra":{"hp":0,"cap":"results","state":"results"},"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2hill] 118631 ms {"calls":193,"tris":1041430,"frameCalls":216,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2orbit] 10621 ms {"calls":134,"tris":650753,"frameCalls":159,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+ERRORS (0):
+

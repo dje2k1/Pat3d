@@ -9,17 +9,23 @@ const TYPES = {
   '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ktx2': 'image/ktx2', '.bin': 'application/octet-stream',
   '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2', '.wasm': 'application/wasm'
 };
-function serve(root, port) {
+// prefix (optional, e.g. '/Pat3d/'): serve the tree under that sub-path only, like GitHub Pages serves a project site
+function serve(root, port, prefix) {
   root = path.resolve(root || path.join(__dirname, '..'));
   const stats = { requests: 0, bytes: 0, files: Object.create(null) };
   const server = http.createServer((req, res) => {
     let p;
     try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch (e) { res.writeHead(400); res.end(); return; }
+    if (prefix) {
+      if (p + '/' === prefix) { res.writeHead(301, { Location: prefix }); res.end(); return; }
+      if (!p.startsWith(prefix)) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('not found'); return; }
+      p = '/' + p.slice(prefix.length);
+    }
     let f = path.join(root, path.normalize(p).replace(/^([/\\])+/, ''));
     if (f !== root && !f.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
     fs.stat(f, (err, st) => {
       if (!err && st.isDirectory()) {
-        if (!p.endsWith('/')) { res.writeHead(301, { Location: p + '/' }); res.end(); return; }
+        if (!p.endsWith('/')) { res.writeHead(301, { Location: (prefix ? prefix.slice(0, -1) : '') + p + '/' }); res.end(); return; }
         f = path.join(f, 'index.html');
       }
       fs.readFile(f, (err2, data) => {

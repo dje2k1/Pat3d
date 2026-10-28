@@ -1376,7 +1376,9 @@ function frame(now) {
   acc += dt;
   let n = 0;
   if (!fatal) {
-    while (acc >= STEP && n < 4) { ipSnap(); try { step(); } catch (e) { report(e); } acc -= STEP; n++; }
+    // (1 µs of slack: at 120 Hz two refresh periods add up to the step only up to floating-point rounding, and a tick
+    // slipping to the next refresh would show as a judder)
+    while (acc >= STEP - 1e-6 && n < 4) { ipSnap(); try { step(); } catch (e) { report(e); } acc -= STEP; n++; }
     if (n === 4) acc = 0;
   } else { acc = 0; n = 1; G.clock += dt; }
   // blended frames are drawn on every refresh up to about 110 Hz (every other one at 144 Hz and above), so the GPU

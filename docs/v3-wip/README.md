@@ -4,7 +4,7 @@ v3 ports the game to three.js 0.186.1 (WebGPURenderer, WebGL 2 fallback, TSL) an
 The live site (`main`) still serves v2. This branch holds v3 so far. The contract is `docs/SPEC3.md`, including
 its "Foundation notes" section.
 
-## Status (paused at the user's request, 2026-10-28, until usage credits reset)
+## Status (paused at the user's request on 2026-10-28, to resume the following week)
 
 | Step | State | Notes |
 |---|---|---|
@@ -15,7 +15,7 @@ its "Foundation notes" section.
 | Act 2 city (`src/25-city.js`) | done | `dev/city/report.json`, `dev/city/STATUS.md` |
 | Vehicles (`src/26-vehicles.js`) | done | `dev/vehicles/report.json`, `dev/vehicles/STATUS.md` |
 | Entities (`src/40-entities.js`) | done | `dev/entities/report.json`, `dev/entities/STATUS.md` |
-| Integrate | in progress (just started: plan written, small edits in `src/12-tex.js`, `src/90-main.js`) | `dev/integrator/STATUS.md`, prompt `dev/lead/prompt-integrate.md` |
+| Integrate | in progress: K.tex texture-size fix, compileAsync after precompile, results DOF, Act 2 loading bar done in src (to verify); README/SPEC3/e2e/post/city edits under way; checklist in `dev/integrator/STATUS.md` | `dev/integrator/STATUS.md`, prompt `dev/lead/prompt-integrate.md` |
 | Review (gameplay + visual), fix | not started | prompts in `workflow-v3-resume.js` |
 
 ## Resuming

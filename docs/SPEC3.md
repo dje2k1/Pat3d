@@ -149,10 +149,9 @@ Original characters and places only (no names, logos or likenesses from other ga
 
 ## Foundation notes (v3 baseline — read before touching your part)
 
-The foundation ported every part to three.js **0.186.1** `WebGPURenderer` with node materials and TSL. The game boots
-and plays both acts on the WebGL 2 backend and on WebGPU; all v2 gameplay checks are green. Looks are **placeholders
-that reproduce v2** (most v2 GLSL was ported 1:1 to TSL); every one is marked `// PORT(<role>): <what v2 did / what
-v3 wants>`. Your job is to replace them with the SPEC3 §5 art, keeping every API, collider and test intact.
+The foundation ported every part to three.js **0.186.1** `WebGPURenderer` with node materials and TSL; the six
+builders (post, kit, world, city, vehicles, entities) then replaced every placeholder with the SPEC3 §5 art (no
+`PORT(` marker is left) and the integrator wired them together. The sections below describe the final APIs.
 
 ### Files, module, imports
 - Parts (build order): `00-shell.html, 10-core.js, 12-tex.js, 15-post.js, 16-vfx.js, 20-world.js, 25-city.js,
@@ -203,25 +202,44 @@ v3 wants>`. Your job is to replace them with the SPEC3 §5 art, keeping every AP
   `fbm(vec2)` (4 octaves), `checker(p, w)` (box-filtered 0..1), `fw(p)` (pixel footprint, `max(|dFdx|,|dFdy|)`).
 - `K.util.spinY(geometry, angle)` — rotates a (shared, instanced) geometry about its local Y in place (see gotchas).
 
-### K.post + K.gfx (15-post.js — placeholder, owner: post)
-- `THREE.RenderPipeline` with `pass(scene, camera)` → bloom (`BloomNode`, not on Économie) → the v2 grade written in
-  TSL with `outputColorTransform = false` (ACES filmic × exposure 1.04, warm-highlight / cool-shadow tint,
-  saturation 1.12, vignette, sRGB OETF, S-curve 0.2) → flash and letterbox. Super Résolution = `scenePass.setResolutionScale(sr)`
-  (bilinear upscale for now). `K.post.uHDR` is a TSL `uniform` (1 while the pipeline runs): world/city sky shaders use
-  it directly. `?nopost` → `K.post.ok = false`, direct rendering.
-- API kept and callable: `init, ok, render(dt), setQuality(q), quality, setSuperRes(on), superRes, cinematic(on, opts),
-  speed(v), flash(color, s), setSun(dir, hex), refreshEnvironment(pos, {floor, floorOpacity, floorColor, intensity}),
-  stats(), envMap, letterbox (current bar height 0..0.5)`. `speed()`/`cinematic()` only track their values (stats().speed,
-  .cinematic) — the effects (motion blur, DOF, CA, grade, vignette, grain, godrays, lens flare) are the post builder's.
-- `refreshEnvironment` renders a `THREE.CubeCamera` into one reused `CubeRenderTarget` (half float, 128 / 64 px phone,
-  translucent floor under the vantage point, `userData.noEnv` objects hidden) and sets `scene.environment` to it — the
-  node materials' PMREMNode prefilters it (again after each capture); `intensity` → `scene.environmentIntensity`.
+### K.post + K.gfx (15-post.js, owner: post — final)
+- `THREE.RenderPipeline`, one node graph per (preset x Super Résolution x upscaler), built on first use and kept (a
+  graph switched away from frees its render targets). Scene `pass()` with MRT (output + view normal + velocity, the
+  SSR mask packed into velocity.z when SSR and velocity are both on, + albedo on Ultra: at most 4 colour outputs =
+  WebGPU's 32 bytes per sample) → GTAO (Élevé/Moyen) or SSGI AO + GI (Ultra) → SSR on opted-in materials (Ultra x0.75,
+  Élevé x0.5) → TRAA → HDR bloom, lens-flare ghosts, screen-space sun shafts + analytic glare (Ultra/Élevé), cinematic
+  DOF (gather + bokeh fill), velocity motion blur + radial speed streaks → chromatic aberration, gamut compression, ACES
+  + grade, vignette, grain, flash, letterbox. Économie: no MRT / no temporal pass (glow-lite, grade, FXAA).
+- **Super Résolution** = render at the preset's internal scale (Ultra 0.77, Élevé 0.85, Moyen 0.6, Économie 0.75),
+  TRAA + the whole HDR finish there, then FSR1 (EASU + RCAS) to the screen ('auto' = FSR1 on every preset: TAAUNode
+  measured much softer; `K.post.setUpscaler('taau'|'fsr'|'auto')`, persisted 'upscaler').
+- API (unchanged for callers): `init, ok, render(dt), setQuality(q), quality, setSuperRes(on), superRes, upscaler,
+  setUpscaler, cinematic(on, {focus, letterbox, dof}), speed(v), flash(color, s), setSun(dir, hex)` (the shafts also
+  follow the scene's brightest visible DirectionalLight), `refreshEnvironment(pos, {floor, floorOpacity, floorColor,
+  intensity})`, `envMap, letterbox, uHDR` (TSL uniform, 1 while the pipeline runs), `compileAsync()` (precompiles the
+  scene pass's MRT variants; 90-main awaits it after `renderer.compileAsync` at boot and behind the Act 2 card),
+  `stats()` ({ok, quality, superRes, upscaler, upscale, scale, internal, output, aa, ao, ssrOn, passes, cost, builds,
+  gfx, calls, tris, sceneCalls, sceneTris, speed, cinematic, letterbox, sunVis, dof, …}), `look` / `uniforms` (grade
+  numbers, live uniforms), `rebuild()`, `_state` (dev probes). `?nopost` → `K.post.ok = false`, direct rendering.
+- **SSR opt-in (any material):** `K.post.ssr(material, strength = 1, roughness?)` → the strength node (a uniform you
+  may animate, or pass any TSL float node, e.g. a puddle mask); roughness = number / node (default: the material's own
+  roughness). Strength acts like SSR metalness: 0.3–0.6 wet asphalt / glass, 0.8–1 calm water / chrome. Opted in
+  today: island water (world), puddles + bay (city), car paint and glass (vehicles), boss dome (entities).
+- **Scene materials** use `colorNode` / `outputNode`, never `fragmentNode` (it bypasses the MRT outputs: AO / SSR /
+  TAA / motion blur break on that surface). Transparent / additive / depthWrite:false materials don't write
+  normal/velocity unless SSR-opted.
+- **Scene depth for transparent materials:** `K.post.sceneDepth()` → ONE shared `viewportDepthTexture` node (null
+  when the pipeline is off: provide a fallback); view distance = `perspectiveDepthToViewZ(d, cameraNear,
+  cameraFar).negate()`.
+- Motion blur is scaled by the time since the last frame that was really drawn (a caller that skips draws, like the
+  tests' tick loops, does not get several ticks of blur in one image).
 - `K.gfx = { preset, furShells, grass, texRes, shadows, ssr, presets, onChange(fn), offChange(fn), sync() }`, preset
-  table: Ultra `{furShells 16, grass 1, texRes 'full', shadows 'csm', ssr true, sr 0.77}`, Élevé `{10, 0.7, 'full',
-  'csm', true, sr 0.85}`, Moyen `{6, 0.4, 'half', 'single', false, sr 0.6}`, Économie `{0, 0, 'half', 'cheap', false,
-  sr 0.75}`. `grass` is a density factor (0 = no blades), `shadows` one of 'csm' | 'single' | 'cheap'. `onChange(fn)`
-  calls `fn(gfx, previousPreset)` after a preset change (rebuild fur shells, grass, shadow setup there). Defaults:
-  'high' desktop, 'medium' touch; persisted in K.store 'gfx' / 'superres' as in v2.
+  table: Ultra `{furShells 16, grass 1, texRes 'full', shadows 'csm', ssr true}`, Élevé `{10, 0.7, 'full', 'csm',
+  true}`, Moyen `{6, 0.4, 'half', 'single', false}`, Économie `{0, 0, 'half', 'cheap', false}`. `onChange(fn)` calls
+  `fn(gfx, previousPreset)` after a preset change. Listeners: K.tex (full/half set), world (shadows, decor tier,
+  grass), city (shadows; LOD distances read the preset per tick), Kit (fur shells), entities (LOD distances); the
+  vehicles read the preset per frame. Defaults: 'high' desktop, 'medium' + Super Résolution on touch; persisted in
+  K.store 'gfx' / 'superres' / 'upscaler'.
 
 ### K.tex (12-tex.js) and tools/tex/texlib.py
 - Per-role manifests `assets/tex/<role>/manifest.json` (roles: foundation, post, kit, world, city, vehicles,
@@ -232,8 +250,10 @@ v3 wants>`. Your job is to replace them with the SPEC3 §5 art, keeping every AP
   `NoColorSpace`. Images are decoded with `createImageBitmap(…, { imageOrientation: 'flipY' })` and `flipY = false`
   (same UV orientation as a standard three texture on both backends).
 - `K.tex.preload(names, onProgress)`, `K.tex.preloadGroup('act1'|'act2'|'common', onProgress)` (boot preloads `act1`
-  with the progress bar, Act 2's loading card `act2`), `K.tex.group(g)`, `K.tex.has(name)`, `K.tex.set('full'|'half')`
-  (follows `K.gfx.texRes`; loaded textures are re-fetched in place), `K.tex.stats()` → `{ count, loaded, failed,
+  + `common` with the progress bar, Act 2's loading card `act2` with its own progress bar), `K.tex.group(g)`, `K.tex.has(name)`, `K.tex.set('full'|'half')`
+  (follows `K.gfx.texRes`; loaded textures are re-fetched in place; when the image size changes — 1x1 fallback ->
+  WebP after a first draw, full <-> half — the texture is disposed first so the renderer re-creates its GPU storage),
+  `K.tex.stats()` → `{ count, loaded, failed,
   pending, res, gpuBytes (w·h·4·4/3 per loaded texture), fileBytes, names }`.
 - `tools/tex/texlib.py` (numpy + Pillow, everything tiles): `value_noise, gradient_noise, worley (F1, F2, cell id),
   fbm, ridged, domain_warp, blur, sample_wrap, remap, smoothstep, colorize(t, [(pos, '#hex'), …]),
@@ -245,31 +265,52 @@ v3 wants>`. Your job is to replace them with the SPEC3 §5 art, keeping every AP
   Your scripts: `tools/tex/<role>_*.py`, output `assets/tex/<role>/`. Budgets (tested): assets/ ≤ 40 MB, Act 1
   (act1 + common) ≤ 15 MB, Act 2 ≤ 15 MB (manifest `bytes`, full set).
 
-### K.vehicles (26-vehicles.js, extracted from 25-city.js; owner: vehicles)
-- `VT` (8 types: sedan, taxi, van, bus, cable, tram, works, dvan — `{name, hx, hy, hz}` half extents = collision
-  boxes, centre y = hy above the road), `vehicleTop(type, lz)` (walkable roof/hood profile): **unchanged from v2,
-  physics and tests depend on them**. `build(type)` → `{ geometry, material }` in the local frame (+z front, y = 0 road)
-  for an InstancedMesh (25-city.js instances it: counts 16, 6, 6, 3, 2, 1, 3, 3, `setColorAt` = paint); `material()`;
-  `paint(type, i)` / `parkedPaint(type, s)` (THREE.Color, same palette logic as v2); `addTo(mb, type, matrix, paint)`
-  writes a vehicle into a city mesh builder (parked cars are baked into the street chunks with it); `update(dt, t)`
-  (called from K.city.update with the city clock); `PAINT` (30) / `BLINK` (31) surface kinds, `PAINTS` palette.
-- It builds with the city's helpers published as `K.cityLib = { MB, templates, TRS, KIND, lin, hash, U, cityMaterial,
-  C_WHITE, IRON, STEEL, WOOD }` (call time only). The traffic material is `cityMaterial({ vehicle: true })`: kind 30
-  takes the instance colour, kind 31 blinks with the city clock. You may replace geometry/materials freely (detailed
-  near / simple far LOD welcome) as long as the instancing contract above holds.
+### K.world (20-world.js, owner: world — final)
+- API of SPEC.md unchanged (+ `routeInfo`, `spots`, `setVisible(on)`, `visible`, `sunDir`, `seaLevel`, `bounds`).
+  `K.world.sun` is the ACTIVE sun and changes with the preset (cascaded-shadow light on Ultra/Élevé — 3 cascades /
+  200 m Ultra, 2 / 150 m Élevé —, a single map following Kit on Moyen, a 1024 map on Économie); `K.world.hemi`, `fog`.
+- Object layer 5 is reserved for the island's shadow-only terrain proxy (only the island suns' shadow cameras enable
+  it): keep other objects off layer 5. `K.world._dbg()` is a dev probe.
+- Sky: TSL dome with a lit cloud layer (generated `world/sky_noise`); grass blades (2 instanced draws following the
+  camera, density K.gfx.grass); decor per 150 m zone (solid + foliage, near / far versions, lighter on Moyen/Économie).
 
-### Placeholders and PORT markers (grep `PORT(`)
-| file | role | what is a placeholder |
-|---|---|---|
-| 15-post.js | post | whole pipeline (v2: HDR target + MSAA/FXAA, SSAO, light shafts, bloom mips, DOF, ACES+grade+lens, RCAS SR) |
-| 16-vfx.js | vfx->post | particles / ribbons / speed lines ported 1:1 to TSL (vertexNode + premultiplied fragmentNode); no fog, no soft particles |
-| 20-world.js | world | ground (checker/grass/lip TSL, same recipe), palm/flower/bird sway (model space now; sunflower heads no longer spin), sky dome, sea, mist sprites, far islands vertex trick |
-| 25-city.js | city | city surface kinds (no per-kind normal bumps), sky, bay water, lamp/steam/fog billboards, flags, gulls, ring spin on CPU |
-| 26-vehicles.js | vehicles | v2 box cars with glossy paint |
-| 30-player.js | kit | Kit material (vertex colours, per-vertex roughness, rim), shield, invincibility sparkles (sprites) |
-| 40-entities.js | entities | vertex-coloured PBR (aRM roughness/metalness), private sky env map, FX point sprites (now instanced sprites), ring spin on CPU |
-Lights were rebalanced for physical units by multiplying the v2 intensities by π (`LIGHT_PI` in 20-world.js and
-25-city.js): the look matches v2; tune freely.
+### K.city (25-city.js, owner: city — final)
+- API of SPEC2 unchanged; layout, colliders, traffic and timings are v2's (every visual builder keeps the city's
+  random sequence intact: parked 224, solids 230, rings 297, dash 10).
+- `cityMaterial` is a branch-free TSL material on two 18-layer DataArrayTextures (albedo, normal; `city/city_alb`,
+  `city/city_nrm`, generated by tools/tex/city_tex.py) indexed by a per-vertex surface kind. `KIND` gained shop 22
+  (interior-mapped shop glass), manhole 23, concrete 24; `cityMaterial({vehicle: true})` still handles kinds 30
+  (paint = instance colour) / 31 (blinkers). `K.city.stats().buildTris` gives triangles per build stage.
+- Suns: two (CSM 3 cascades / 280 m on Ultra/Élevé, one box following Kit on Moyen/Économie), switched by K.gfx.
+  `K.cityLib = { MB, templates, TRS, KIND, lin, hash, U, cityMaterial, C_WHITE, IRON, STEEL, WOOD }` (call time only).
+
+### K.vehicles (26-vehicles.js, owner: vehicles — final)
+- `VT` (8 types: sedan, taxi, van, bus, cable, tram, works, dvan — `{name, hx, hy, hz}` half extents = collision
+  boxes, centre y = hy above the road) and `vehicleTop(type, lz)`: **unchanged from v2** (an e2e check compares them).
+- Own `MeshPhysicalNodeMaterial` (surface kinds 30-51; 30 = paint from the instance colour, 31 = blinkers on the city
+  clock): clearcoat paint with flakes, tinted glass with a faint cabin, chrome, rubber, HDR lamps, plates/signs from
+  the generated atlas `vehicles/veh_atlas`, SSR opt-in. `build(type)` → the detailed LOD 0 `{geometry, material}`;
+  `buildLOD(type, lod)`, `material()`, `paint`, `parkedPaint`, `addTo`, `update(dt, t)`, `stats()` ({types, near,
+  far, dist, tris, parked, ents, hooked, built}), `PAINT`, `BLINK`, `PAINTS`, `_dbg` (dev).
+- Every city vehicle (traffic + the 224 parked cars) is drawn by K.vehicles' own instanced pools in K.city.group:
+  'veh-near-<t>' (LOD 0), 'veh-shadow-<t>' (LOD 1 in the shadow passes only), 'veh-far-<t>' (LOD 1 with shadows),
+  'veh-dist-<t>' (LOD 1, no shadows); slots are assigned in onBeforeRender (after the frame's updates, so a drawn car
+  is exactly where its collision box is). The city's traffic InstancedMeshes are hidden and only record poses;
+  `addTo()` registers parked cars instead of baking them (so `K.city.stats().buildTris.parked` is 0).
+
+### K.entities (40-entities.js, owner: entities — final)
+- API unchanged (`build, reset, update, homingTarget, scatterRings, bossInfo, stats, setActive, active`) +
+  `K.entities._dbg()` (dev probes only).
+- One InstancedMesh per template part (names `e-*`, `userData.noEnv`); the entity Object3D hierarchies stay outside the
+  scene as transform holders and their world matrices are copied into stable instance slots every tick. Far LOD
+  beyond 30 m (18 m on Moyen / Économie) without shadows; rings never cast shadows (near / far ring pools, lost rings
+  in a 32-slot pool); nothing on object layer 5; materials use scene.environment (private fallback sky only if null).
+- Entity culling and LOD use the camera of the previous tick (they run inside K.entities.update): after moving the
+  camera by hand, tick once before a screenshot.
+
+### Lights
+Light intensities were first rebalanced for physical units by multiplying the v2 intensities by π (`LIGHT_PI` in
+20-world.js and 25-city.js), then tuned by the world and city builders (bright tropical island, golden-hour city).
 
 ### Tests (test/e2e.js)
 - `./build.sh && node test/e2e.js` — every suite on the WebGL 2 backend (`test.html?gl`), Chromium + SwiftShader.
@@ -280,10 +321,13 @@ Lights were rebalanced for physical units by multiplying the v2 intensities by �
 - Typical durations on this sandbox (4 shared CPUs, SwiftShader): desktop,valley,boss ≈ 95 s; v3 ≈ 115 s;
   act2,post,regress,present,regress2,phone ≈ 400 s; fullrun ≈ 30 s; whole default run ≈ 11 min; `--webgpu` ≈ 45 s.
   SwiftShader caches compiled shaders: the first boot after a shader change takes 40 s (WebGL 2) to 3 min (WebGPU),
-  later boots 5–10 s. Foundation baseline: 80/80 checks + 1 builder target pending (WebGL 2), 6/6 (WebGPU).
+  later boots 5–10 s. With the final art the whole default run takes about 30–40 min (SwiftShader, 4 CPUs).
+- v3 checks added by the integrator: Moyen budget (a real check now), post graph per preset (passes, <= 4 scene
+  outputs, Super Résolution scale + FSR1), preset x Super Résolution memory cycle, Act 2 vehicles (v2 `VT` /
+  `vehicleTop` compared, LOD pools, 224 parked cars); the lawn-seam check averages 4 frames (v3 grass + temporal AA
+  add per-frame noise) and accepts a centre step < 4.5 or within the frame's own upper quartile.
 - `test/serve.js` serves the repo on 127.0.0.1 (port 0 = free port; `node test/serve.js 8080` by hand).
-- Builder targets that depend on your work are reported with `pending('<role>', name, met, notes)`: PEND lines never
-  fail the run; turn yours into `check()` when you deliver (e.g. the Moyen draw-call budget).
+- `pending('<role>', name, met, notes)` reports a target that never fails the run (none left).
 - In-page helpers (test/page-helpers.js): `T.ticks(n)`, `T.frame()` (one tick + a drawn frame), `T.renderNow()` (draw
   without ticking), `T.pixels()` / `T.pixelsGL()` (canvas pixels via a 2D canvas copy, top-first / bottom-first),
   `T.glStats()` (mean/std/colours + draw calls), `T.drawStats()`, `T.mem()` (renderer.info.memory: geo/tex/programs),

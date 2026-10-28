@@ -513,7 +513,7 @@ kd(KIND.plank, [LY.planks, 0.5, 0.5, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.metal, [LY.metal, 2, 2, 0, 0.7, 1, 0, 0, 1, 0, 0.6]);
 kd(KIND.glow, [LY.paintwood, 1, 1, 0, 0, 0, 0.35, 0, 0, 0, 0]);
 kd(KIND.leaf, [LY.leaves, 1.1, 1.1, 2, 1, 1, 0, 0, 0, 1, 1]);
-kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.5, 0.0, 0.9, 0, 0, 0.3]);
+kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.45, 0.24, 0.9, 0, 0, 0.3]);
 kd(KIND.dentil, [LY.dentil, 0.65, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.scales, [LY.scales, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.facade, [LY.siding, 0.92, 0.92, 0, 0.8, 1, 0, 0, 0, 0, 1]);
@@ -3513,7 +3513,7 @@ function buildLights() {
   };
   const size = touch ? 1024 : 2048, ext = touch ? 44 : 56;
   const sunS = mkSun(size, ext);
-  ST.shadowExt = ext; ST.shadowSize = size;
+  ST.shadowExt = ST.shadowExt0 = ext; ST.shadowSize = ST.shadowSize0 = size;
   const sunC = mkSun(2048, 60);
   sunC.shadow.bias = -0.0005; sunC.shadow.normalBias = 0.04;
   sunC.visible = false;
@@ -3547,6 +3547,12 @@ function applyShadows(mode) {
   ST.sunC.visible = csm; ST.sunS.visible = !csm;
   ST.sun = csm ? ST.sunC : ST.sunS;
   ST.shadowMode = csm ? 'csm' : mode === 'cheap' ? 'cheap' : 'single';
+  // Économie ('cheap'): a 1024 map over a smaller box round Kit, as on the island
+  const cheap = ST.shadowMode === 'cheap', size = cheap ? 1024 : ST.shadowSize0, ext = cheap ? 36 : ST.shadowExt0;
+  const sh = ST.sunS.shadow, sc = sh.camera;
+  if (sh.mapSize.x !== size) { sh.mapSize.set(size, size); if (sh.map) { sh.map.dispose(); sh.map = null; } }
+  if (ST.shadowExt !== ext) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
+  ST.shadowSize = size; ST.shadowExt = ext;
   ST.csmKey = '';
   placeSun();
 }

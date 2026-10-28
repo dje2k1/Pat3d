@@ -1,0 +1,54 @@
+boot 7917 ms {"q":"high","sr":false,"backend":"webgl2","W":1248,"H":720,"dpr":1}
+[title] 40908 ms {"calls":94,"tris":951851,"frameCalls":117,"state":"title","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1start] 36701 ms {"calls":111,"tris":1147307,"frameCalls":134,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1run] 24919 ms {"calls":120,"tris":1338708,"frameCalls":143,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1loop] 11234 ms {"calls":103,"tris":1371428,"frameCalls":126,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1lake] 46121 ms {"calls":105,"tris":1183477,"frameCalls":128,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1lakeside] 52510 ms {"calls":102,"tris":1017607,"frameCalls":125,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitface] 73283 ms {"calls":42,"tris":862236,"frameCalls":65,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kit34] 55116 ms {"calls":41,"tris":859196,"frameCalls":64,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitback] 59669 ms {"calls":76,"tris":1099076,"frameCalls":99,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitspin] 13293 ms {"calls":0,"tris":0,"frameCalls":0,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1boss] 8836 ms {"calls":129,"tris":866644,"frameCalls":152,"state":"play","act":1,"mode":null,"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a1results] 31067 ms {"calls":48,"tris":698726,"frameCalls":73,"state":"results","act":1,"mode":null,"extra":{"hp":0,"cap":"results","state":"results"},"tex":{"n":28,"loaded":28,"mb":75,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2hill] 65199 ms {"calls":193,"tris":1041430,"frameCalls":216,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2traffic] 59342 ms {"calls":195,"tris":1070048,"frameCalls":218,"state":"play","act":2,"mode":"air","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2works] 10586 ms {"calls":135,"tris":928876,"frameCalls":158,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2pier] 31665 ms {"calls":100,"tris":631124,"frameCalls":127,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2orbit] 14069 ms {"calls":135,"tris":654197,"frameCalls":160,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2flight] 4445 ms {"calls":72,"tris":520438,"frameCalls":99,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[a2goal] 6731 ms {"calls":53,"tris":495604,"frameCalls":76,"state":"play","act":2,"mode":"land","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitskate] 7656 ms {"calls":86,"tris":738688,"frameCalls":109,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[kitflight] 6791 ms {"calls":43,"tris":492224,"frameCalls":66,"state":"play","act":2,"mode":"flight","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[vehcars] 35539 ms {"calls":118,"tris":746832,"frameCalls":141,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+[vehbig] 42287 ms {"calls":103,"tris":432365,"frameCalls":130,"state":"play","act":2,"mode":"skate","tex":{"n":35,"loaded":35,"mb":133.7,"res":"full"},"post":{"q":"high","sr":false,"internal":[1248,720],"passes":11}}
+ERRORS (49):
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.
+---
+warning: [.WebGL-0x16fc00143200] GL_INVALID_OPERATION: glDrawArrays: Feedback loop formed between Framebuffer and active Texture.

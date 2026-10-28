@@ -1041,7 +1041,12 @@ function fetchInto(rec) {
     .then(b => { rec.file = b.size; return createImageBitmap(b, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' }); })
     .then(img => {
       const t = rec.tex, old = t.image;
+      // a GPU texture keeps the storage size of its first upload (texStorage2D on WebGL 2, a fixed-size GPUTexture on
+      // WebGPU): when the size changes (1x1 fallback -> WebP after a first draw, full <-> half on a preset change) the
+      // renderer must drop it and create a new one, else the upload overflows (GL_INVALID_VALUE) or fills a corner only
+      const resized = !old || old.width !== img.width || old.height !== img.height;
       t.image = img;
+      if (resized) t.dispose();
       t.needsUpdate = true;
       if (old && typeof old.close === 'function') { try { old.close(); } catch (x) { /* already closed */ } }
       rec.res = res;
@@ -1127,6 +1132,7 @@ import { taau as postTAAU } from 'three/addons/tsl/display/TAAUNode.js';
 import { sharpen as postSharpen } from 'three/addons/tsl/display/SharpenNode.js';
 import { fxaa as postFXAA } from 'three/addons/tsl/display/FXAANode.js';
 import { lensflare as postLensflare } from 'three/addons/tsl/display/LensflareNode.js';
+import { fsr1 as postFSR1 } from 'three/addons/tsl/display/FSR1Node.js';
 (() => {
 'use strict';
 const { Fn, If, Loop, pass, mrt, texture: ttexture, perspectiveDepthToViewZ, sin: tsin, sqrt: tsqrt, output, normalView, velocity, diffuseColor, roughness, rtt, uniform,
@@ -1189,7 +1195,7 @@ const post = K.post = {
 
 const S = {
   inited: false, active: false, why: '', cfg: PRESETS.high, pipe: null, G: null, graphs: {}, built: '', builds: 0,
-  scale: 1, frameId: -1, time: 0, clk: -1, dt: 1 / 60, rawDt: 1 / 60, fresh: 0,
+  scale: 1, frameId: -1, time: 0, clk: -1, drawClk: -1, dt: 1 / 60, rawDt: 1 / 60, fresh: 0,
   spd: 0, spdTarget: 0, spdAt: -1,
   flashT: 0, flashDur: 0, flashCol: new THREE.Color(1, 1, 1),
   cine: { on: false, k: 0, letter: true, dof: true, focus: null },
@@ -1292,27 +1298,9 @@ function overlays(c, u) {
 }
 
 // spatial Super Résolution: AMD FSR 1 (FSR1Node: EASU edge-adaptive upscale + RCAS sharpening) on the anti-aliased,
-// graded low-resolution image. FSR1Node is loaded with a dynamic import (build.sh's static import scanner trips on a
-// doc comment inside that file); until it has arrived (or if it fails) the same recipe runs with a Catmull-Rom
-// reconstruction (5 bilinear taps, the EASU stand-in) + RCAS (SharpenNode), and the graphs built that way are rebuilt
-// with FSR1 as soon as it is there.
-let fsr1Fn = null;
-try {
-  import('three/addons/tsl/display/FSR1Node.js').then(m => {
-    if (!m || typeof m.fsr1 !== 'function') return;
-    fsr1Fn = m.fsr1;
-    // drop the graphs that used the stand-in (the live one is rebuilt at once)
-    for (const k of Object.keys(S.graphs)) {
-      const E = S.graphs[k];
-      if (!E.G.standIn) continue;
-      if (E.G === S.G) { S.pipe = null; S.built = ''; }
-      sleepGraph(E.G); disposeGraph(E.G);
-      try { E.pipe.dispose(); } catch (e) { /* older pipelines */ }
-      delete S.graphs[k];
-    }
-    if (S.active && !S.pipe) buildPipeline();
-  }).catch(e => console.warn('Kit Rush 3D: FSR1 unavailable, Catmull-Rom + RCAS upscale', e));
-} catch (e) { /* no dynamic import: stand-in */ }
+// graded low-resolution image. If FSR1Node were missing, the same recipe runs with a Catmull-Rom reconstruction
+// (5 bilinear taps, the EASU stand-in) + RCAS (SharpenNode).
+const fsr1Fn = typeof postFSR1 === 'function' ? postFSR1 : null;
 function spatialUp(G, src) {
   if (fsr1Fn) {
     const f = track(G, fsr1Fn(src, LOOK.fsrSharp), 'fsr1');
@@ -1794,7 +1782,10 @@ function frameUniforms(cam) {
   // speed: radial streaks + velocity motion blur (scaled to a 1/60 s shutter whatever the frame interval), CA grows
   U.speed.value = S.spd;
   U.mb.value = c.mb > 0 ? Math.min(1, S.spd * 1.6) * (1 - ck.k) : 0;
-  U.mbVel.value = (1 / 60) / Math.max(1 / 60, S.rawDt);
+  // (the velocity buffer holds the motion since the last frame that was really drawn: a caller that skips the draws
+  // of some frames, like the tests' tick loops, must not get several ticks of motion blur in one image)
+  const gap = S.drawClk < 0 ? S.rawDt : Math.max(S.rawDt, S.clk - S.drawClk);
+  U.mbVel.value = (1 / 60) / Math.max(1 / 60, gap);
   U.ca.value = c.ca > 0 ? LOOK.ca + LOOK.caSpeed * S.spd : 0;
   if (G && G.dyn.shafts) { updateSun(cam); setDyn(G.dyn.shafts, S.sunVis > 0.002); }
   else U.sunVis.value = 0;
@@ -1932,13 +1923,26 @@ post.render = function (dt) {
   if (nf) { if (nf.frameId === S.frameId) nf.update(); S.frameId = nf.frameId; }
   frameUniforms(cam);
   presize();
+  const inf = r.info.render, c0 = inf.drawCalls;
   S.pipe.render();
+  if (inf.drawCalls !== c0) S.drawClk = S.clk;
 };
 // precompiles the scene materials for the pipeline's scene pass (MRT variants); await it behind a loading card
+// (not PassNode.compileAsync: it keeps the pass's render target and MRT set on the renderer while it awaits the
+// programs, so frames drawn meanwhile — the game keeps running behind the Act 2 card — would render into the pass's own
+// target instead of the screen. The renderer builds the pipelines synchronously for the target set at call time: set
+// it, start the compile, restore at once, then wait.)
 post.compileAsync = async function () {
-  const G = S.G, r = K.view && K.view.renderer;
-  if (!S.active || !G || !G.named.scene || !r) return false;
-  try { await G.named.scene.compileAsync(r); return true; } catch (e) { console.warn('Kit Rush 3D: post compile', e); return false; }
+  const G = S.G, r = K.view && K.view.renderer, sp = G && G.named.scene, V = K.view;
+  if (!S.active || !sp || !r || !sp.renderTarget) return false;
+  const rt0 = r.getRenderTarget(), mrt0 = r.getMRT();
+  let p;
+  try {
+    r.setRenderTarget(sp.renderTarget); r.setMRT(typeof sp.getMRT === "function" ? sp.getMRT() : null);
+    p = r.compileAsync(V.scene, V.camera);
+  } catch (e) { console.warn('Kit Rush 3D: post compile', e); p = null; }
+  finally { r.setRenderTarget(rt0); r.setMRT(mrt0); }
+  try { if (p) await p; return !!p; } catch (e) { console.warn('Kit Rush 3D: post compile', e); return false; }
 };
 post.setQuality = function (q) {
   if (QUALITIES.indexOf(q) < 0) return post.quality;
@@ -6903,7 +6907,7 @@ kd(KIND.plank, [LY.planks, 0.5, 0.5, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.metal, [LY.metal, 2, 2, 0, 0.7, 1, 0, 0, 1, 0, 0.6]);
 kd(KIND.glow, [LY.paintwood, 1, 1, 0, 0, 0, 0.35, 0, 0, 0, 0]);
 kd(KIND.leaf, [LY.leaves, 1.1, 1.1, 2, 1, 1, 0, 0, 0, 1, 1]);
-kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.5, 0.0, 0.9, 0, 0, 0.3]);
+kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.45, 0.24, 0.9, 0, 0, 0.3]);
 kd(KIND.dentil, [LY.dentil, 0.65, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.scales, [LY.scales, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.facade, [LY.siding, 0.92, 0.92, 0, 0.8, 1, 0, 0, 0, 0, 1]);
@@ -9903,7 +9907,7 @@ function buildLights() {
   };
   const size = touch ? 1024 : 2048, ext = touch ? 44 : 56;
   const sunS = mkSun(size, ext);
-  ST.shadowExt = ext; ST.shadowSize = size;
+  ST.shadowExt = ST.shadowExt0 = ext; ST.shadowSize = ST.shadowSize0 = size;
   const sunC = mkSun(2048, 60);
   sunC.shadow.bias = -0.0005; sunC.shadow.normalBias = 0.04;
   sunC.visible = false;
@@ -9937,6 +9941,12 @@ function applyShadows(mode) {
   ST.sunC.visible = csm; ST.sunS.visible = !csm;
   ST.sun = csm ? ST.sunC : ST.sunS;
   ST.shadowMode = csm ? 'csm' : mode === 'cheap' ? 'cheap' : 'single';
+  // Économie ('cheap'): a 1024 map over a smaller box round Kit, as on the island
+  const cheap = ST.shadowMode === 'cheap', size = cheap ? 1024 : ST.shadowSize0, ext = cheap ? 36 : ST.shadowExt0;
+  const sh = ST.sunS.shadow, sc = sh.camera;
+  if (sh.mapSize.x !== size) { sh.mapSize.set(size, size); if (sh.map) { sh.map.dispose(); sh.map = null; } }
+  if (ST.shadowExt !== ext) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
+  ST.shadowSize = size; ST.shadowExt = ext;
   ST.csmKey = '';
   placeSun();
 }
@@ -19089,12 +19099,12 @@ function act2Ready() {
 }
 function vfxOn() { return !!(K.vfx && K.vfx.ready); }
 function postOn() { return !!(K.post && K.post.ok); }
-// the results tally plays in letterbox (no depth of field: the confetti and the panel would only blur Kit)
+// the results tally plays in letterbox with a shallow depth of field on Kit (the HUD panel is 2D, never blurred)
 function cine(on) {
   if (!postOn()) return;
   try { K.post.cinematic(!!on, on ? CINE_OPTS : undefined); } catch (e) { /* optional */ }
 }
-const CINE_OPTS = { focus: () => K.player.center(), letterbox: true, dof: false };
+const CINE_OPTS = { focus: () => K.player.center(), letterbox: true, dof: true };
 function checkpoints() {
   if (G.act === 2) return (K.city && Array.isArray(K.city.checkpoints)) ? K.city.checkpoints : [];
   const L = K.level;
@@ -19212,7 +19222,9 @@ function precompile() {
   if (!r || typeof r.compileAsync !== 'function') return Promise.resolve();
   let p;
   try { p = r.compileAsync(V.scene, V.camera); } catch (e) { return Promise.resolve(); }
-  return Promise.resolve(p).catch(e => console.warn('Kit Rush 3D: precompile', e));
+  // then the render pipeline's scene pass (its MRT outputs are other variants of every material)
+  return Promise.resolve(p).then(() => (postOn() && typeof K.post.compileAsync === 'function' ? K.post.compileAsync() : null))
+    .catch(e => console.warn('Kit Rush 3D: precompile', e));
 }
 function toTitle() {
   setAct(1);
@@ -20155,7 +20167,11 @@ function drawLoading() {
   c.lineWidth = 6; c.strokeStyle = NAVY; c.beginPath(); c.ellipse(0, 0, 11, 13, 0, 0, TAU); c.stroke();
   c.lineWidth = 3.5; c.strokeStyle = GOLD; c.beginPath(); c.ellipse(0, 0, 11, 13, 0, 0, TAU); c.stroke();
   c.restore();
-  txt('Chargement…', LW / 2, LH * 0.78, 16, WHITE, 'center');
+  // progress: the city is built at once, then its textures stream in and its shaders compile
+  const p = clamp(0.15 + 0.65 * clamp(num(G.loadP, 0), 0, 1) + (G.compileDone ? 0.2 : 0), 0, 1), bw = Math.min(220, LW - 60), bx = LW / 2 - bw / 2, by = LH * 0.725;
+  c.fillStyle = 'rgba(255,255,255,.14)'; rrect(c, bx, by, bw, 8, 4); c.fill();
+  if (G.loadBusy) { c.fillStyle = GOLD; rrect(c, bx, by, Math.max(8, bw * p), 8, 4); c.fill(); }
+  txt('Chargement…', LW / 2, LH * 0.82, 16, WHITE, 'center');
 }
 const pauseRects = [];
 for (let i = 0; i < PAUSE_ROWS; i++) pauseRects.push({ x: 0, y: 0, w: 0, h: 0 });
@@ -20493,7 +20509,14 @@ async function bootAsync(data) {
   const T = K.tex;
   if (T && typeof T.init === 'function') { try { await T.init(); } catch (e) { console.warn('Kit Rush 3D: textures', e); } }
   if (T && typeof T.preloadGroup === 'function') {
-    try { await T.preloadGroup('act1', p => { G.bootP = 0.15 + 0.6 * p; needDraw = true; }); } catch (e) { console.warn('Kit Rush 3D: textures', e); }
+    // the island's textures and the shared ones ('common'), with the progress bar
+    try {
+      const n1 = T.group('act1').length, n2 = T.group('common').length, n = Math.max(1, n1 + n2);
+      await Promise.all([
+        T.preloadGroup('act1', p => { G.bootA = p * n1 / n; G.bootP = 0.15 + 0.6 * ((G.bootA || 0) + (G.bootC || 0)); needDraw = true; }),
+        T.preloadGroup('common', p => { G.bootC = p * n2 / n; G.bootP = 0.15 + 0.6 * ((G.bootA || 0) + (G.bootC || 0)); needDraw = true; })
+      ]);
+    } catch (e) { console.warn('Kit Rush 3D: textures', e); }
   }
   G.bootP = 0.75;
   try {
