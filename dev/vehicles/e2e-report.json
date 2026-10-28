@@ -1,0 +1,242 @@
+{
+ "results": [
+  {
+   "name": "renderer backend: ?gl forces WebGL 2, no WebGPU in the browser -> automatic WebGL 2 fallback, pause menu has \"Version classique\" + \"Rendu\"",
+   "pass": true,
+   "notes": "{\"b1\":{\"backend\":\"webgl2\",\"forceGL\":true,\"ok\":true},\"b2\":{\"backend\":\"webgl2\",\"forceGL\":false,\"state\":\"title\",\"mean\":145,\"label\":true},\"pause\":{\"paused\":true,\"rows\":5},\"errors\":[]}"
+  },
+  {
+   "name": "textures: K.tex loads the generated WebP sample (sRGB albedo / linear normal), 1x1 fallback first, half and full sets swap in place",
+   "pass": true,
+   "notes": "{\"tx\":{\"names\":38,\"fallback\":{\"w\":1,\"cs\":\"srgb\"},\"full\":{\"w\":256,\"h\":256,\"cs\":true,\"ncs\":true,\"nw\":256},\"half\":{\"w\":128,\"nw\":128},\"back\":256,\"stats\":{\"count\":30,\"loaded\":30,\"failed\":0,\"gpuBytes\":75147938,\"res\":\"full\"}},\"errors\":[]}"
+  },
+  {
+   "name": "assets budget: assets/ <= 40 MB, Act 1 initial <= 15 MB, Act 2 extra <= 15 MB",
+   "pass": true,
+   "notes": "{\"totalMB\":9.66,\"act1MB\":4.25,\"act2MB\":2.99,\"groups\":{\"act2\":3140304,\"act1\":4460796,\"none\":45860}}"
+  },
+  {
+   "name": "no GLSL left (TSL only) and no external URL but Google Fonts in index.html",
+   "pass": true,
+   "notes": "{\"bad\":[],\"ext\":[]}"
+  },
+  {
+   "name": "performance budgets: Ultra / Élevé / Économie <= 350 draw calls, Ultra <= 2.5 M triangles (Act 1 and Act 2 views)",
+   "pass": true,
+   "notes": "{\"act1\":{\"ultra\":{\"calls\":155,\"tris\":1813259},\"high\":{\"calls\":135,\"tris\":1390237},\"medium\":{\"calls\":99,\"tris\":676601},\"low\":{\"calls\":95,\"tris\":483080}},\"act2\":{\"ultra\":{\"calls\":174,\"tris\":817687},\"high\":{\"calls\":165,\"tris\":844302},\"medium\":{\"calls\":138,\"tris\":575932},\"low\":{\"calls\":138,\"tris\":529348}},\"errors\":[]}"
+  },
+  {
+   "name": "performance budget Moyen: <= 220 draw calls / 800 k triangles (Act 1 and Act 2 views)",
+   "pass": true,
+   "pending": "world+city+entities",
+   "met": true,
+   "notes": "{\"act1\":{\"calls\":99,\"tris\":676601},\"act2\":{\"calls\":138,\"tris\":575932}}"
+  },
+  {
+   "name": "legacy/ (frozen v2, three r128) loads and draws its title screen without errors",
+   "pass": true,
+   "notes": "{\"st\":{\"title\":\"Kit Rush 3D\",\"three\":\"128\",\"hud\":0.74,\"gl\":true},\"errs\":[]}"
+  },
+  {
+   "name": "Act 2: title act select -> \"Chargement…\" card -> SAN FRANCISCO card -> play",
+   "pass": true,
+   "notes": "{\"sel\":2,\"load\":{\"s1\":\"loading\",\"at\":239,\"ms\":7928,\"act\":2,\"city\":{\"built\":true,\"entered\":true,\"buildMs\":1031,\"len\":2420,\"rings\":297,\"ringsLeft\":297,\"flightRings\":34,\"cars\":0,\"parked\":224,\"cp\":-1,\"cps\":3,\"s\":30,\"solids\":230,\"dash\":10,\"chunks\":17,\"lamps\":339,\"buildTris\":{\"surface\":[42894,0,0,0],\"tracks\":[28044,0,0,0],\"crossings\":[3726,32672,0,0],\"corners\":[540,13230,48,2232],\"summit\":[638,1656,0,1212],\"sideStreets\":[26170,0,0,0],\"routeHouses\":[0,179260,4620,0],\"routeProps\":[0,65976,0,11544],\"construction\":[596,3624,0,0],\"rail\":[3200,0,0,0],\"waterfront\":[4373,2718,104,2336],\"pier\":[13648,14400,0,0],\"manholes\":[768,0,0,0],\"parked\":[0,0,0,0]}},\"island\":false,\"ents\":false,\"cam\":\"external\",\"board\":true},\"play\":111,\"card\":{\"calls\":189,\"tris\":1041028,\"frameCalls\":217,\"frameTris\":1041056}}"
+  },
+  {
+   "name": "Act 2: Space = ollie (board leaves the street, lands, sparkles burst)",
+   "pass": true,
+   "notes": "{\"at\":1,\"back\":43,\"rise\":2.97,\"ollies\":1,\"sparks\":57,\"wipe\":false,\"dead\":false}"
+  },
+  {
+   "name": "Act 2: a car hit hurts with rings (scattered rings bounce on the street), no death",
+   "pass": true,
+   "notes": "{\"at\":30,\"rings\":0,\"lives0\":3,\"lives\":3,\"dead\":false,\"lost\":12,\"onStreet\":12,\"invT\":1.52,\"carHits\":1,\"s\":278}"
+  },
+  {
+   "name": "Act 2: ollie over a car (clears it or rides its roof, no hit)",
+   "pass": true,
+   "notes": "{\"car\":{\"s0\":736.3,\"s1\":741.3,\"d\":6.35},\"fired\":true,\"passed\":108,\"overRoof\":3.17,\"lane\":0.51,\"hurt\":0,\"ollies\":1,\"wipe\":false,\"dead\":false}"
+  },
+  {
+   "name": "Act 2: a death respawns at the Act 2 checkpoint on the board",
+   "pass": true,
+   "notes": "{\"cp\":0,\"cardAt\":91,\"lives0\":3,\"lives\":2,\"act\":2,\"dist\":0,\"board\":true,\"mode\":\"skate\",\"alive\":true,\"rings\":0,\"cam\":\"external\"}"
+  },
+  {
+   "name": "Act 2: the skate bot rides the whole descent to the bumper (real game, no teleports)",
+   "pass": true,
+   "notes": "{\"time\":93.82,\"tw\":{\"n\":0,\"max\":0,\"at\":null,\"sweep\":375.8,\"orbitTicks\":216,\"cine\":1},\"deaths\":1,\"stats\":{\"active\":true,\"mode\":\"land\",\"v\":25.09,\"speed\":0,\"s\":0,\"d\":0,\"grounded\":false,\"grind\":false,\"wipe\":false,\"combo\":0,\"trickScore\":650,\"flightU\":1,\"timeScale\":1,\"orbitSweep\":360.1,\"orbiting\":false,\"touch\":true,\"completed\":true,\"trickOn\":false,\"airT\":0.93,\"ollies\":12,\"tricks\":2,\"landed\":2,\"wipes\":1,\"carHits\":1,\"hoops\":7,\"grinds\":0,\"grindT\":0,\"roofs\":0,\"airMax\":1.4},\"events\":[[\"crest\",412,227],[\"trick\",426,0,0.71],[\"ollieBlock\",504],[\"trick\",624,1,0.94],[\"ollieCar\",774,6.9,22.6,1],[\"cleared\",811,1],[\"crest\",885,528],[\"ollieSweep\",1078,651],[\"ollieBlock\",1247],[\"crest\",2518,1321],[\"ollieBlock\",2996],[\"ollieBlock\",3085],[\"ollieBlock\",3665]]}"
+  },
+  {
+   "name": "Act 2: tricks score points (trick events, combo chain, FIGURES total)",
+   "pass": true,
+   "notes": "{\"landed\":2,\"tricks\":2,\"trickScore\":650,\"events\":13}"
+  },
+  {
+   "name": "Act 2: bumper -> slow motion -> the camera orbits 360° around Kit (cinematic letterbox) -> flight",
+   "pass": true,
+   "notes": "{\"tw\":{\"n\":0,\"max\":0,\"at\":null,\"sweep\":375.8,\"orbitTicks\":216,\"cine\":1},\"post\":true}"
+  },
+  {
+   "name": "Act 2: goal -> results (FIGURES row) -> end screen -> title, Act 2 record saved",
+   "pass": true,
+   "notes": "{\"runEnd\":{\"st\":\"results\",\"time\":93.82,\"score\":1650},\"fin\":{\"st\":\"results\",\"act\":2,\"tricks\":650,\"s1\":\"end\"},\"fin2\":{\"s2\":\"title\",\"act\":1,\"island\":true,\"city\":false,\"best2\":{\"time\":93.818543,\"score\":31450},\"best1\":null}}"
+  },
+  {
+   "name": "Act 2: draw calls under budget in every view, no page/console errors",
+   "pass": true,
+   "notes": "{\"shots\":{\"traffic\":{\"calls\":196,\"tris\":1008135,\"frameCalls\":219,\"frameTris\":1008158},\"trick\":{\"calls\":201,\"tris\":1041872,\"frameCalls\":224,\"frameTris\":1041895},\"air\":{\"calls\":201,\"tris\":1038396,\"frameCalls\":224,\"frameTris\":1038419},\"pier\":{\"calls\":105,\"tris\":626712,\"frameCalls\":132,\"frameTris\":626739},\"orbit1\":{\"calls\":103,\"tris\":574054,\"frameCalls\":132,\"frameTris\":574083},\"orbit2\":{\"calls\":181,\"tris\":740523,\"frameCalls\":206,\"frameTris\":740548},\"orbit3\":{\"calls\":125,\"tris\":650310,\"frameCalls\":150,\"frameTris\":650335},\"orbit4\":{\"calls\":75,\"tris\":542912,\"frameCalls\":100,\"frameTris\":542937},\"flight\":{\"calls\":72,\"tris\":525354,\"frameCalls\":99,\"frameTris\":525381},\"goal\":{\"calls\":51,\"tris\":448076,\"frameCalls\":74,\"frameTris\":448099},\"results\":{\"calls\":45,\"tris\":440804,\"frameCalls\":68,\"frameTris\":440827},\"end\":{\"calls\":44,\"tris\":437564,\"frameCalls\":67,\"frameTris\":437587}},\"errors\":[]}"
+  },
+  {
+   "name": "regression: every cross street is carved out of the hill (no land over its asphalt, each street runs >= 100 m)",
+   "pass": true,
+   "notes": "{\"lines\":{\"iA1L\":\".......................\",\"iA1R\":\".......................\",\"iA2L\":\".......................\",\"iA2R\":\".......................\",\"iA4L\":\".......................\",\"iA4R\":\".......................\",\"iBL\":\".......................\",\"iBR\":\"..........BB.BBTTTTTTTT\",\"iC1L\":\".............BB.BBTTT..\",\"iC1R\":\".......................\",\"iC2L\":\".......................\",\"iC2R\":\".......................\",\"iC3L\":\".......................\",\"iC3R\":\".......................\",\"iWL\":\".............BB.BBTTTTT\"},\"buried\":0,\"short\":[]}"
+  },
+  {
+   "name": "regression: no background slab or land over the route corridor (|d| <= 10, start -> pier)",
+   "pass": true,
+   "notes": "{\"n\":5781,\"bad\":0,\"worst\":0,\"samples\":[],\"bgMeshes\":37}"
+  },
+  {
+   "name": "regression: the bumper kicks Kit over its dome (never inside the bumper, never hidden from the orbit camera)",
+   "pass": true,
+   "notes": "[{\"d\":0,\"at\":158,\"n\":216,\"minClear\":0.01,\"lowNear\":0,\"minRhoLow\":4.8,\"occl\":0,\"inside\":0,\"sweep\":360},{\"d\":2.5,\"at\":159,\"n\":216,\"minClear\":0.01,\"lowNear\":0,\"minRhoLow\":4.83,\"occl\":0,\"inside\":0,\"sweep\":360},{\"d\":-2.5,\"at\":159,\"n\":216,\"minClear\":0.01,\"lowNear\":0,\"minRhoLow\":4.83,\"occl\":0,\"inside\":0,\"sweep\":360}]"
+  },
+  {
+   "name": "regression: barriers close the top of the route (Kit stops at s = 0 along the facades, no 6-12 m snap back)",
+   "pass": true,
+   "notes": "[{\"d\":10.2,\"minBack\":0.45,\"maxJump\":0.42,\"dead\":false},{\"d\":-10.2,\"minBack\":0.45,\"maxJump\":0.42,\"dead\":false},{\"d\":6,\"minBack\":0.45,\"maxJump\":0.42,\"dead\":false}]"
+  },
+  {
+   "name": "regression: the turn 2 / turn 3 ring arcs run on Kit's side of the street (clear of the oncoming cable car lane)",
+   "pass": true,
+   "notes": "[{\"bend\":\"t2a\",\"n\":7,\"onSide\":7,\"inside\":0},{\"bend\":\"t3a\",\"n\":8,\"onSide\":7,\"inside\":0}]"
+  },
+  {
+   "name": "regression: shaded Act 2 streets stay readable (road luma p10 >= 30, median 35-60 on Élevé and Économie)",
+   "pass": true,
+   "notes": "{\"high640\":{\"p10\":31,\"med\":41},\"high1120\":{\"p10\":47,\"med\":53},\"low640\":{\"p10\":39,\"med\":42},\"low1120\":{\"p10\":47,\"med\":51}}"
+  },
+  {
+   "name": "regression: Act 2 has centre-line threats (works islands, double-parked vans, pull-outs, a stop-sign runner): holding forward takes hits, no hands-off grind, no runner replay after a respawn",
+   "pass": true,
+   "notes": "{\"fixed\":[{\"t\":6,\"s\":292,\"d\":0},{\"t\":6,\"s\":1395,\"d\":0},{\"t\":6,\"s\":1900,\"d\":0},{\"t\":7,\"s\":762,\"d\":3.1},{\"t\":7,\"s\":1065,\"d\":3.1},{\"t\":7,\"s\":1700,\"d\":3.1}],\"hits\":[{\"s\":290,\"what\":\"works\",\"rings\":16},{\"s\":372,\"what\":\"cross\",\"rings\":4},{\"s\":666,\"what\":\"runner\",\"rings\":0},{\"s\":763,\"what\":\"pullout\",\"rings\":27},{\"s\":1066,\"what\":\"pullout\",\"rings\":13},{\"s\":1393,\"what\":\"works\",\"rings\":25},{\"s\":1702,\"what\":\"pullout\",\"rings\":25},{\"s\":1899,\"what\":\"works\",\"rings\":16}],\"flight\":6541,\"res\":840,\"state\":\"results\",\"deaths\":1,\"grinds\":0,\"time\":113.5}"
+  },
+  {
+   "name": "regression: no lawn-stripe seam down the middle of the start valley (centre step like any other column, all presets)",
+   "pass": true,
+   "notes": "{\"act\":1,\"ultra\":{\"centre\":3.1,\"others\":3,\"othersMax\":6},\"high\":{\"centre\":1.9,\"others\":1.1,\"othersMax\":3.2},\"low\":{\"centre\":1.9,\"others\":0.7,\"othersMax\":1.8}}"
+  },
+  {
+   "name": "regression Act 2 pages: no page or console errors",
+   "pass": true,
+   "notes": "[]"
+  }
+ ],
+ "info": {
+  "shots": {
+   "36-pause-renderer": {
+    "calls": 112,
+    "tris": 1145071,
+    "frameCalls": 135,
+    "frameTris": 1145094
+   },
+   "20-a2-title-select": {
+    "calls": 95,
+    "tris": 964576,
+    "frameCalls": 124,
+    "frameTris": 964605
+   },
+   "21-a2-loading": {
+    "calls": 95,
+    "tris": 964576,
+    "frameCalls": 124,
+    "frameTris": 964605
+   },
+   "22-a2-card": {
+    "calls": 189,
+    "tris": 1041028,
+    "frameCalls": 217,
+    "frameTris": 1041056
+   },
+   "23-a2-hilltop": {
+    "calls": 189,
+    "tris": 1043964,
+    "frameCalls": 212,
+    "frameTris": 1043987
+   },
+   "24-a2-traffic": {
+    "calls": 196,
+    "tris": 1008135,
+    "frameCalls": 219,
+    "frameTris": 1008158
+   },
+   "26-a2-trick": {
+    "calls": 201,
+    "tris": 1041872,
+    "frameCalls": 224,
+    "frameTris": 1041895
+   },
+   "25-a2-intersection-air": {
+    "calls": 201,
+    "tris": 1038396,
+    "frameCalls": 224,
+    "frameTris": 1038419
+   },
+   "27-a2-pier-bumper": {
+    "calls": 105,
+    "tris": 626712,
+    "frameCalls": 132,
+    "frameTris": 626739
+   },
+   "28-a2-orbit-1": {
+    "calls": 103,
+    "tris": 574054,
+    "frameCalls": 132,
+    "frameTris": 574083
+   },
+   "28-a2-orbit-2": {
+    "calls": 181,
+    "tris": 740523,
+    "frameCalls": 206,
+    "frameTris": 740548
+   },
+   "28-a2-orbit-3": {
+    "calls": 125,
+    "tris": 650310,
+    "frameCalls": 150,
+    "frameTris": 650335
+   },
+   "28-a2-orbit-4": {
+    "calls": 75,
+    "tris": 542912,
+    "frameCalls": 100,
+    "frameTris": 542937
+   },
+   "29-a2-flight": {
+    "calls": 72,
+    "tris": 525354,
+    "frameCalls": 99,
+    "frameTris": 525381
+   },
+   "30-a2-goal": {
+    "calls": 51,
+    "tris": 448076,
+    "frameCalls": 74,
+    "frameTris": 448099
+   },
+   "31-a2-results": {
+    "calls": 45,
+    "tris": 440804,
+    "frameCalls": 68,
+    "frameTris": 440827
+   },
+   "32-a2-end": {
+    "calls": 44,
+    "tris": 437564,
+    "frameCalls": 67,
+    "frameTris": 437587
+   }
+  }
+ }
+}

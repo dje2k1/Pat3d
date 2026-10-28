@@ -1,0 +1,69 @@
+{
+ "role": "vehicles",
+ "summary": "src/26-vehicles.js was rewritten for v3, keeping VT, vehicleTop() and every collision value unchanged. Every vehicle type now has a real model at two levels of detail (LOD 0 near, LOD 1 far): sedan, taxi, van, delivery van with hazard lights, bus, cable car, tram and road-works barriers. Bodies are lofted (rounded plan and sides, wheel arches, separate inset glass behind rubber seals). Bumpers, lamps, grilles, plates, door handles, mirrors and wipers are added; tyres have tread and sidewall detail on 5-spoke alloys or steel wheels. They share one MeshPhysicalNodeMaterial: clearcoat paint with metal flakes, per-instance colour (metallic or solid), panel seams, tinted glass with a faint cabin and HDR head/tail lamps that bloom. Blinkers run on the city clock, plates and signs come from a generated atlas, and the material opts into SSR. All city vehicles (traffic and the 224 parked cars) are drawn by K.vehicles' own LOD pools, instanced per type: near, near-shadow proxy, far with shadows, and distant without shadows. Slots are assigned in onBeforeRender after the frame's updates, so a drawn car always matches its collision box. The city's own traffic meshes are hidden and only record poses. On the final code, the WebGL 2 e2e suites act2, regress2 and v3 passed 25/25, plus the Moyen budget target. On WebGPU the suite passed 6/6, run just before a last tweak of lamp brightness constants. ./build.sh passes. The models look clearly better than v2's boxes at the old v2 viewpoints (shots/final-v2-vs-v3.png). Nothing was committed.",
+ "files": [
+  "src/26-vehicles.js",
+  "tools/tex/vehicles_tex.py",
+  "assets/tex/vehicles/veh_atlas.webp",
+  "assets/tex/vehicles/veh_atlas_half.webp",
+  "assets/tex/vehicles/manifest.json",
+  "index.html (rebuilt by ./build.sh)",
+  "dev/vehicles/STATUS.md",
+  "dev/vehicles/report.json",
+  "dev/vehicles/mkbuild.sh, shoot.js, mke2e.sh, e2e-private.js, e2e-base.js, geotest.mjs, kinds.mjs, compat.mjs, raydbg.mjs, grid.py (harness, gitignored)"
+ ],
+ "tests": [
+  {
+   "name": "WebGL 2 private e2e --only=act2,regress2,v3 (final code)",
+   "pass": true,
+   "notes": "25/25 checks passed, plus the builder target '[world+city+entities] Moyen <= 220 calls / 800 k' (Act 2 Moyen 138 calls / 576k, Act 1 99 / 677k; Ultra Act 2 174 / 818k). Took 403 s. Log: dev/vehicles/e2e-final.log"
+  },
+  {
+   "name": "WebGPU private e2e (--webgpu)",
+   "pass": true,
+   "notes": "6/6 passed in 190 s: boot, Act 1, Act 2 city + traffic, presets + Super Résolution, K.tex, no console errors. Log: dev/vehicles/e2e-gpu1.log. This run used the code from just before the last tweak, which changed lamp emission constants only. WebGPU screenshots taken on the final code: dev/vehicles/shots/final-webgpu.png, 0 console errors."
+  },
+  {
+   "name": "regress2 'no lawn-stripe seam' (Act 1, world area)",
+   "pass": true,
+   "notes": "Flaky. It failed in my first run and also fails on a baseline build with the v2 vehicles (same numbers: ultra centre 6.2 vs 6.7). It passed in the final run. Act 1 has no vehicles."
+  },
+  {
+   "name": "Budgets by preset (dev/vehicles/shoot.js, scene pass incl. shadows, hilltop/traffic/parked/works views)",
+   "pass": true,
+   "notes": "Moyen desktop max 779k tris / 156 calls (with the v2 vehicles: 745k), phone Moyen max 712k / 155, Élevé max 1.18M / 194, Ultra max 1.36M / 194, Économie max 683k / 154. Each vehicle-type's draw call happens only when its pool has instances (count 0 = no draw)."
+  },
+  {
+   "name": "Model checks in Node (dev/vehicles/geotest.mjs, compat.mjs)",
+   "pass": true,
+   "notes": "Every type and LOD builds with no NaN; the bounds match the VT boxes (only mirrors stick out 2-6 cm sideways; the tram's trolley pole sits above, as in v2). Triangles: sedan 4.5k/0.49k, taxi 4.8k/0.61k, van 7.0k/0.44k, bus 8.6k/0.45k, cable 7.2k/0.25k, tram 9.3k/0.53k, works 1.6k/0.7k, delivery van 5.9k/0.47k. addTo() with a plain mesh builder still writes the far model with the city's kinds."
+  },
+  {
+   "name": "./build.sh at the root",
+   "pass": true,
+   "notes": "Built index.html (1109757 B) with the current working tree."
+  }
+ ],
+ "screenshots": [
+  "dev/vehicles/shots/final-lineups.png",
+  "dev/vehicles/shots/final-close.png",
+  "dev/vehicles/shots/final-v2-vs-v3.png",
+  "dev/vehicles/shots/final-phone.png",
+  "dev/vehicles/shots/final-webgpu.png",
+  "dev/vehicles/shots/v2b-grid.png"
+ ],
+ "integration_todo": [
+  "Commit src/26-vehicles.js and the rebuilt index.html (tools/tex/vehicles_tex.py and assets/tex/vehicles/ are already in the a58d2bf checkpoint).",
+  "Update the K.vehicles paragraph in the SPEC3 Foundation notes. Vehicles now use their own MeshPhysicalNodeMaterial (kinds 30-51, with 30 and 31 keeping their meaning) instead of cityMaterial({vehicle:true}). New API: buildLOD(type, lod) and stats(). The vehicles draw their own instanced pools in K.city.group (veh-near/shadow/far/dist-*). addTo() registers parked cars, so K.city.stats().buildTris.parked is 0.",
+  "Optional: add an act2 e2e check that K.vehicles.stats() is built, all 8 types are hooked and the pools hold instances. The pending Moyen budget target can become a check() (it passes for Act 2).",
+  "Optional (25-city.js comment only): bakeParked's comment still says the parked cars are baked into the street chunks."
+ ],
+ "known_issues": [
+  "Wheels do not turn (static rims, as in v2).",
+  "When a vehicle changes LOD pool, its new slot can carry one frame of wrong motion vectors (TRAA / motion blur). Slots stay stable while a car keeps its LOD, so this happens rarely and at 16-170 m.",
+  "The sedan silhouette is held by vehicleTop(): a long flat roof from z -0.95 to 0.6 at 1.45 m, which gives a slightly long greenhouse.",
+  "The far cable car (LOD 1) is a plain-box version; the far tram and bus are coarse lofts.",
+  "In daylight the head and tail lamps bloom strongly at very close range (tuned down; still bright on Ultra).",
+  "The regress2 Act 1 lawn-seam check is flaky (world area, not vehicles)."
+ ]
+}

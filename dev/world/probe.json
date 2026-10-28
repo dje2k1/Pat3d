@@ -1,0 +1,23 @@
+{
+ "cam": [
+  3,
+  21.2,
+  -8
+ ],
+ "origin": [
+  [
+   -9,
+   -21
+  ],
+  [
+   -24,
+   -36
+  ]
+ ],
+ "kit": [
+  0,
+  20,
+  0
+ ],
+ "vsTop": "#version 300 es\n\n// Three.js r186 - Node System\n\n\n// extensions\n\n\n// precision\n\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\nprecision highp sampler3D;\nprecision highp samplerCube;\nprecision highp sampler2DArray;\n\nprecision highp usampler2D;\nprecision highp usampler3D;\nprecision highp usamplerCube;\nprecision highp usampler2DArray;\n\nprecision highp isampler2D;\nprecision highp isampler3D;\nprecision highp isamplerCube;\nprecision highp isampler2DArray;\n\nprecision highp sampler2DShadow;\nprecision highp sampler2DArrayShadow;\nprecision highp samplerCubeShadow;\n\n\n// structs\n\n\n\n\n\n// uniforms\n\nlayout( std140 ) uniform object {\n\tvec2 nodeUniform0;\n\tuint nodeUniform2;\n\tfloat nodeUniform5;\n\tuint nodeUniform6;\n\tvec3 nodeUniform7;\n\tvec3 nodeUniform8;\n\tvec3 nodeUniform9;\n\tuint nodeUniform11;\n\tfloat nodeUniform12;\n\tfloat nodeUniform13;\n\tmat3 nodeUniform15;\n\tvec3 nodeUniform16;\n\tfloat nodeUniform17;\n\tmat4 nodeUniform20;\n\tuint nodeUniform21;\n\tuint nodeUniform38;\n\tuint nodeUniform39;\n\tuint nodeUniform40;\n\tuint nodeUniform41;\n\tuint nodeUniform42;\n\tuint nodeUniform51;\n\tuint nodeUniform52;\n\tuint nodeUniform53;\n\tuint nodeUniform54;\n\tuint nodeUniform55;\n\tuint nodeUniform64;\n\tuint nodeUniform65;\n\tuint nodeUniform66;\n\tuint nodeUniform67;\n\tuint nodeUniform68;\n\tfloat nodeUniform70;\n\tmat4 nodeUniform71;\n\tfloat nodeUniform73;\n\tfloat nodeUniform74;\n\tuint nodeUniform76;\n\tuint nodeUniform77;\n\tfloat nodeUniform78;\n\tuint nodeUniform79;\n\tuint nodeUniform80;\n};\n\nlayout( std140 ) uniform render {\n\tmat4 cameraProjectionMatrix;\n\tmat4 cameraViewMatrix;\n\tvec3 cameraPosition;\n\tvec3 nodeUniform23;\n\tvec3 nodeUniform24;\n\tvec3 nodeUniform22;\n\tvec3 nodeUniform27;\n\tvec3 nodeUniform25;\n\tvec3 nodeUniform26;\n\tvec3 nodeUniform81;\n\tfloat nodeUniform82;\n\tfloat nodeUniform83;\n\tmat4 nodeUniform31;\n\tfloat nodeUniform32;\n\tfloat nodeUniform33;\n\tfloat nodeUniform43;\n\tmat4 nodeUniform44;\n\tfloat nodeUniform45;\n\tfloat nodeUniform46;\n\tfloat nodeUniform56;\n\tmat4 nodeUniform57;\n\tfloat nodeUniform58;\n\tfloat nodeUniform59;\n\tfloat nodeUniform69;\n\tmat4 cameraWorldMatrix;\n\tfloat shadowFar;\n\tfloat nodeUniform29;\n\tvec2 nodeUniform35;\n\tfloat nodeUniform36;\n\tvec2 nodeUniform37;\n\tvec2 nodeUniform48;\n\tfloat nodeUniform49;\n\tvec2 nodeUniform50;\n\tvec2 nodeUniform61;\n\tfloat nodeUniform62;\n\tvec2 nodeUniform63;\n};\nuniform sampler2D nodeUniform1;\nuniform sampler2D nodeUniform4;\n\n// varyings\nvec3 positionLocal;\nvec4 v_modelViewProjection;\nout vec3 v_positionView;\nout vec3 nodeVarying3;\nout vec2 nodeVarying4;\nout float nodeVarying5;\nout float nodeVarying6;\nout vec3 v_normalViewGeometry;\nout vec3 nodeVarying8;\nout vec3 v_positionViewDirection;\nout vec3 v_positionWorld;\nvec4 VERTEX_v_modelViewProjection;\n\n\n// attributes\nlayout( location = 0 ) in vec3 position;\nlayout( location = 1 ) in vec4 aB;\nlayout( location = 2 ) in vec3 normal;\n\n\n// vars\nvec2 nodeVar0;\nvec2 nodeVar1;\nvec2 nodeVar2;\nfloat nodeVar3;\nfloat nodeVar4;\nvec2 nodeVar5;\nfloat nodeVar6;\nvec2 nodeVar7;\nvec2 nodeVar8;\nvec2 nodeVar9;\nbool nodeVar10;\n"
+}

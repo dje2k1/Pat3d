@@ -1,0 +1,172 @@
+{
+ "setup": 1,
+ "stress": [
+  {
+   "cycle": 0,
+   "builds": 11,
+   "geo": 157,
+   "tex": 124,
+   "prog": 932,
+   "rt": 92,
+   "texMB": 120.7
+  },
+  {
+   "cycle": 1,
+   "builds": 11,
+   "geo": 157,
+   "tex": 125,
+   "prog": 933,
+   "rt": 92,
+   "texMB": 120.8
+  },
+  {
+   "cycle": 2,
+   "builds": 11,
+   "geo": 157,
+   "tex": 125,
+   "prog": 933,
+   "rt": 92,
+   "texMB": 120.8
+  }
+ ],
+ "sharp": {
+  "native": {
+   "internal": [
+    1248,
+    720
+   ],
+   "aa": "traa",
+   "sharp": 7.438,
+   "psnrVsNative": null
+  },
+  "taau85": {
+   "internal": [
+    1061,
+    612
+   ],
+   "aa": "taau",
+   "sharp": 7.07,
+   "psnrVsNative": 41.17
+  },
+  "fsr85": {
+   "internal": [
+    1061,
+    612
+   ],
+   "aa": "traa",
+   "sharp": 7.401,
+   "psnrVsNative": 35.37
+  },
+  "taau60": {
+   "internal": [
+    749,
+    432
+   ],
+   "aa": "taau",
+   "sharp": 5.906,
+   "psnrVsNative": 38.9
+  },
+  "fsr60": {
+   "internal": [
+    749,
+    432
+   ],
+   "aa": "traa",
+   "sharp": 6.128,
+   "psnrVsNative": 35.48
+  },
+  "low75": {
+   "internal": [
+    936,
+    540
+   ],
+   "aa": "fxaa",
+   "sharp": 2.11,
+   "psnrVsNative": 39.29
+  },
+  "lownative": {
+   "internal": [
+    1248,
+    720
+   ],
+   "aa": "fxaa",
+   "sharp": 1.962,
+   "psnrVsNative": 39.71
+  }
+ },
+ "ghost": {
+  "high": {
+   "trail": {
+    "mean": 0.08,
+    "max": 1,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.09,
+    "max": 1,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.23,
+    "max": 21.7,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "medium": {
+   "trail": {
+    "mean": 0.12,
+    "max": 1,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.12,
+    "max": 1,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.46,
+    "max": 44.3,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "ultra": {
+   "trail": {
+    "mean": 0.18,
+    "max": 1,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.18,
+    "max": 1.3,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.36,
+    "max": 16.7,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "low": {
+   "trail": {
+    "mean": 0,
+    "max": 0,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0,
+    "max": 0,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0,
+    "max": 0,
+    "n": 143712
+   },
+   "maskPx": 8260
+  }
+ },
+ "cost": "STEP ERROR: page.evaluate: Target page, context or browser has been closed"
+}

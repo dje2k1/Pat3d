@@ -1,0 +1,14 @@
+const K = __K, G = K.game;
+T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'play', 300);
+T.ticks(10);
+const D = K.world._dbg(), GR = D.GR;
+const cam = K.view.camera;
+K.camera.update = () => {};
+const p = K.level.start.pos;
+cam.position.set(p.x + 3, p.y + 1.2, p.z - 8); cam.lookAt(p.x + 4, p.y, p.z - 14); cam.updateMatrixWorld();
+T.ticks(2);
+for (let i = 0; i < 4; i++) T.renderNow();
+const out = { cam: cam.position.toArray(), origin: GR.meshes.map(g => g.origin.value.toArray()), kit: GR.kit.value.toArray() };
+const sh = await K.view.renderer.debug.getShaderAsync(K.view.scene, K.view.camera, GR.meshes[0].mesh);
+out.vsTop = sh.vertexShader.slice(0, 3000);
+return out;

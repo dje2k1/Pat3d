@@ -1,0 +1,462 @@
+{
+ "results": [
+  {
+   "name": "page loads without errors",
+   "pass": true,
+   "notes": "{\"bootMs\":7525,\"errors\":[]}"
+  },
+  {
+   "name": "title renders (3D scene + HUD logo)",
+   "pass": true,
+   "notes": "{\"gl\":{\"w\":1248,\"h\":720,\"mean\":143.4,\"std\":53.1,\"dark\":0,\"colors\":161,\"calls\":188,\"tris\":551155,\"frameCalls\":217},\"hud\":{\"w\":1248,\"h\":720,\"cover\":0.74}}"
+  },
+  {
+   "name": "world solids registered once (monitors, resets)",
+   "pass": true,
+   "notes": "{\"n0\":115,\"n1\":115,\"uniq\":115,\"monitors\":7,\"monitorDefs\":7}"
+  },
+  {
+   "name": "Space starts the act (title -> card -> play)",
+   "pass": true,
+   "notes": "{\"card\":{\"s\":\"card\",\"lives\":3,\"rings\":0},\"ticksToPlay\":95}"
+  },
+  {
+   "name": "holding W runs forward and gains speed",
+   "pass": true,
+   "notes": "{\"dz\":-16.7,\"sp\":[5.6,11.2,16.5,18.9,20,20],\"ground\":true,\"rings\":3,\"state\":\"peel\"}"
+  },
+  {
+   "name": "rings are collected along the start",
+   "pass": true,
+   "notes": "{\"rings\":6,\"z\":-27}"
+  },
+  {
+   "name": "jump leaves the ground and lands again",
+   "pass": true,
+   "notes": "{\"g0\":true,\"left\":1,\"back\":22,\"rise\":2.08,\"alive\":true}"
+  },
+  {
+   "name": "VFX: a jump bursts into golden sparkles (K.vfx particles spawned and alive)",
+   "pass": true,
+   "notes": "{\"ready\":true,\"spawned\":44,\"live\":95,\"glow\":91}"
+  },
+  {
+   "name": "pause menu (Esc) freezes and resumes",
+   "pass": true,
+   "notes": "{\"p1\":true,\"frozen\":true,\"p2\":false}"
+  },
+  {
+   "name": "valley run at speed (bot follows the route)",
+   "pass": true,
+   "notes": "{\"valley\":{\"st\":{\"gs\":\"play\",\"p\":[-13.37,19.18,-85.73],\"v\":29.99,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":7,\"lives\":3,\"cp\":-1,\"score\":100,\"time\":3.37,\"cam\":\"follow\"},\"maxSp\":30.2},\"valley2\":{\"st\":{\"gs\":\"play\",\"p\":[-16.64,18.6,-111.62],\"v\":23.93,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":10,\"lives\":3,\"cp\":-1,\"score\":100,\"time\":4.38,\"cam\":\"follow\"},\"dashes\":1}}"
+  },
+  {
+   "name": "loop 1 completes when entered with speed",
+   "pass": true,
+   "notes": "{\"inLoop\":true,\"camLoop\":true,\"rise\":14,\"along\":6.5,\"lat\":5,\"shift\":5,\"dead\":false,\"ground\":true,\"mid\":{\"gs\":\"play\",\"p\":[-1.33,16.16,-181.5],\"v\":33.04,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":true,\"rings\":13,\"lives\":3,\"cp\":-1,\"score\":100,\"time\":4.97,\"cam\":\"loop\"}}"
+  },
+  {
+   "name": "loop 2 completes when entered with speed",
+   "pass": true,
+   "notes": "{\"inLoop\":true,\"camLoop\":true,\"rise\":14.2,\"along\":6,\"lat\":5,\"shift\":5,\"dead\":false,\"ground\":true,\"mid\":{\"gs\":\"play\",\"p\":[-1.33,16.16,-181.5],\"v\":33.04,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":true,\"rings\":13,\"lives\":3,\"cp\":-1,\"score\":100,\"time\":4.97,\"cam\":\"loop\"}}"
+  },
+  {
+   "name": "springs fire (launch with dir*power)",
+   "pass": true,
+   "notes": "[{\"z\":-204,\"power\":36,\"hit\":19,\"vy\":33.7,\"want\":33.7,\"landedAt\":[0,26,-218.22],\"dead\":false,\"ticksAir\":69},{\"z\":-527,\"power\":33,\"hit\":19,\"vy\":21.3,\"want\":21.3,\"landedAt\":[20.96,7,-551.12],\"dead\":false,\"ticksAir\":57},{\"z\":-557.5,\"power\":28.5,\"hit\":19,\"vy\":27.6,\"want\":27.6,\"landedAt\":[33.27,14.78,-562.77],\"dead\":false,\"ticksAir\":51}]"
+  },
+  {
+   "name": "spring gate lands Kit on the upper cliff",
+   "pass": true,
+   "notes": "{\"z\":-204,\"power\":36,\"hit\":19,\"vy\":33.7,\"want\":33.7,\"landedAt\":[0,26,-218.22],\"dead\":false,\"ticksAir\":69}"
+  },
+  {
+   "name": "1UP pillar spring reaches the pillar top",
+   "pass": true,
+   "notes": "{\"z\":-557.5,\"power\":28.5,\"hit\":19,\"vy\":27.6,\"want\":27.6,\"landedAt\":[33.27,14.78,-562.77],\"dead\":false,\"ticksAir\":51}"
+  },
+  {
+   "name": "dash panels fire (speed boost)",
+   "pass": true,
+   "notes": "[{\"z\":-82,\"want\":30,\"hit\":16,\"best\":30.1},{\"z\":-124,\"want\":30,\"hit\":16,\"best\":30.2},{\"z\":-164,\"want\":34,\"hit\":16,\"best\":34},{\"z\":-296,\"want\":32,\"hit\":16,\"best\":32.3},{\"z\":-327,\"want\":34,\"hit\":16,\"best\":34.9},{\"z\":-355,\"want\":36,\"hit\":16,\"best\":36.2},{\"z\":-363,\"want\":32,\"hit\":16,\"best\":32},{\"z\":-363,\"want\":32,\"hit\":16,\"best\":32},{\"z\":-363,\"want\":32,\"hit\":16,\"best\":32},{\"z\":-496,\"want\":34,\"hit\":18,\"best\":34}]"
+  },
+  {
+   "name": "each checkpoint activates in order (passing beside the post)",
+   "pass": true,
+   "notes": "[{\"i\":0,\"t\":30,\"cp\":0,\"cpTime\":20.25},{\"i\":1,\"t\":31,\"cp\":1,\"cpTime\":20.93},{\"i\":2,\"t\":31,\"cp\":2,\"cpTime\":21.62}]"
+  },
+  {
+   "name": "falling into the chasm kills and respawns at the checkpoint",
+   "pass": true,
+   "notes": "{\"spot\":[-1,-238],\"died\":74,\"cardAt\":91,\"lives0\":3,\"lives\":2,\"rings\":0,\"time\":50,\"distToCp\":0,\"alive\":true,\"y\":26}"
+  },
+  {
+   "name": "descent: bot keeps running downhill alive",
+   "pass": true,
+   "notes": "{\"gs\":\"play\",\"p\":[20.48,8.99,-393.11],\"v\":33.55,\"g\":false,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":16,\"lives\":2,\"cp\":0,\"score\":100,\"time\":53.18,\"cam\":\"follow\"}"
+  },
+  {
+   "name": "bridge crossing (solid planks over water)",
+   "pass": true,
+   "notes": "{\"gs\":\"play\",\"p\":[20.96,4,-462.44],\"v\":20,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":16,\"lives\":2,\"cp\":0,\"score\":100,\"time\":54.93,\"cam\":\"follow\"}"
+  },
+  {
+   "name": "boss triggers when entering the arena",
+   "pass": true,
+   "notes": "{\"t\":101,\"active\":true,\"hp\":8,\"max\":8,\"cam\":\"boss\",\"music\":\"boss\",\"st\":{\"gs\":\"play\",\"p\":[12.22,12,-614.33],\"v\":20,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":20,\"lives\":2,\"cp\":2,\"score\":100,\"time\":56.62,\"cam\":\"boss\"}}"
+  },
+  {
+   "name": "boss defeated by the scripted bot (8 hits)",
+   "pass": true,
+   "notes": "{\"fight\":{\"tries\":4,\"hits\":2,\"log\":[3.3,4.7],\"deaths\":0,\"k\":355,\"boss\":\"fight\",\"hp\":6},\"fight2\":{\"tries\":6,\"hits\":6,\"log\":[0.6,2,3.4,4.8,7.8,9.2],\"deaths\":0,\"k\":549,\"boss\":\"dying\",\"hp\":0},\"seconds\":15.1}"
+  },
+  {
+   "name": "capsule lands, opens on the button and results appear",
+   "pass": true,
+   "notes": "{\"defeatedAt\":151,\"landedAt\":81,\"jumps\":4,\"opened\":375,\"resultsAt\":182,\"capsule\":\"done\",\"state\":\"results\",\"onCapsule\":1}"
+  },
+  {
+   "name": "results tally -> Act 2 (\"Chargement…\" card, SAN FRANCISCO card), score and lives carried, record saved",
+   "pass": true,
+   "notes": "{\"res\":{\"state\":\"results\",\"scoreBefore\":1100,\"score\":14700,\"done\":true,\"time\":81.8},\"end\":{\"s1\":\"loading\",\"s2\":\"card\",\"loadAt\":240,\"act\":2,\"score0\":14700,\"score\":14700,\"lives0\":9,\"lives\":9,\"city\":true,\"island\":false,\"ents\":false,\"board\":true,\"mode\":\"skate\",\"best\":{\"time\":81.800636,\"score\":14700},\"bestG\":{\"time\":81.800636,\"score\":14700}}}"
+  },
+  {
+   "name": "Act 2 pause menu \"Retour au titre\" brings the island back (city hidden, board off)",
+   "pass": true,
+   "notes": "{\"sel\":3,\"state\":\"title\",\"act\":1,\"city\":false,\"island\":true,\"ents\":true,\"board\":false,\"ext\":false,\"cam\":\"title\",\"fog\":true,\"far\":900}"
+  },
+  {
+   "name": "game over path (last life lost -> GAME OVER -> title)",
+   "pass": true,
+   "notes": "{\"s0\":\"card\",\"overAt\":157,\"music\":\"over\",\"after\":\"title\",\"lives\":0}"
+  },
+  {
+   "name": "frame time measured (headless SwiftShader, CPU rendering)",
+   "pass": true,
+   "notes": "{\"avgFrameMs\":2338.2,\"medianFrameMs\":1909.4,\"simTickMs\":0.093,\"calls\":192,\"tris\":769813,\"dpr\":1,\"W\":1248,\"H\":720,\"nan\":0,\"ticks\":5801}"
+  },
+  {
+   "name": "no NaN in player/camera state during the run",
+   "pass": true,
+   "notes": "{\"nan\":0,\"ticks\":5801}"
+  },
+  {
+   "name": "draw calls under budget (< 300) in every screenshot view",
+   "pass": true,
+   "notes": "{\"01-title\":{\"calls\":188,\"tris\":551155,\"frameCalls\":211,\"frameTris\":551178},\"02-card\":{\"calls\":192,\"tris\":768244,\"frameCalls\":215,\"frameTris\":768267},\"03-start\":{\"calls\":205,\"tris\":775811,\"frameCalls\":228,\"frameTris\":775834},\"04-valley-speed\":{\"calls\":229,\"tris\":811930,\"frameCalls\":252,\"frameTris\":811953},\"05-loop\":{\"calls\":161,\"tris\":756206,\"frameCalls\":184,\"frameTris\":756229},\"06-chasm\":{\"calls\":212,\"tris\":807929,\"frameCalls\":235,\"frameTris\":807952},\"07-descent\":{\"calls\":185,\"tris\":728709,\"frameCalls\":208,\"frameTris\":728732},\"08-bridge\":{\"calls\":190,\"tris\":690447,\"frameCalls\":213,\"frameTris\":690470},\"09-boss-fight\":{\"calls\":95,\"tris\":353521,\"frameCalls\":118,\"frameTris\":353544},\"10-results\":{\"calls\":78,\"tris\":535426,\"frameCalls\":101,\"frameTris\":535449},\"14-act1-to-act2-card\":{\"calls\":124,\"tris\":675467,\"frameCalls\":147,\"frameTris\":675490},\"15-back-to-title\":{\"calls\":137,\"tris\":415401,\"frameCalls\":160,\"frameTris\":415424}}"
+  },
+  {
+   "name": "no page errors or console errors during the desktop run",
+   "pass": true,
+   "notes": "[]"
+  },
+  {
+   "name": "Act 2: title act select -> \"Chargement…\" card -> SAN FRANCISCO card -> play",
+   "pass": true,
+   "notes": "{\"sel\":2,\"load\":{\"s1\":\"loading\",\"at\":239,\"ms\":2980,\"act\":2,\"city\":{\"built\":true,\"entered\":true,\"buildMs\":516,\"len\":2420,\"rings\":297,\"ringsLeft\":297,\"flightRings\":34,\"cars\":0,\"parked\":224,\"cp\":-1,\"cps\":3,\"s\":30,\"solids\":230,\"dash\":10,\"chunks\":17,\"lamps\":311},\"island\":false,\"ents\":false,\"cam\":\"external\",\"board\":true},\"play\":111,\"card\":{\"calls\":124,\"tris\":675467,\"frameCalls\":152,\"frameTris\":675495}}"
+  },
+  {
+   "name": "Act 2: Space = ollie (board leaves the street, lands, sparkles burst)",
+   "pass": true,
+   "notes": "{\"at\":1,\"back\":43,\"rise\":2.97,\"ollies\":1,\"sparks\":57,\"wipe\":false,\"dead\":false}"
+  },
+  {
+   "name": "Act 2: a car hit hurts with rings (scattered rings bounce on the street), no death",
+   "pass": true,
+   "notes": "{\"at\":30,\"rings\":0,\"lives0\":3,\"lives\":3,\"dead\":false,\"lost\":12,\"onStreet\":12,\"invT\":1.52,\"carHits\":1,\"s\":278}"
+  },
+  {
+   "name": "Act 2: ollie over a car (clears it or rides its roof, no hit)",
+   "pass": true,
+   "notes": "{\"car\":{\"s0\":736.3,\"s1\":741.3,\"d\":6.35},\"fired\":true,\"passed\":108,\"overRoof\":3.17,\"lane\":0.51,\"hurt\":0,\"ollies\":1,\"wipe\":false,\"dead\":false}"
+  },
+  {
+   "name": "Act 2: a death respawns at the Act 2 checkpoint on the board",
+   "pass": true,
+   "notes": "{\"cp\":0,\"cardAt\":91,\"lives0\":3,\"lives\":2,\"act\":2,\"dist\":0,\"board\":true,\"mode\":\"skate\",\"alive\":true,\"rings\":0,\"cam\":\"external\"}"
+  },
+  {
+   "name": "Act 2: the skate bot rides the whole descent to the bumper (real game, no teleports)",
+   "pass": true,
+   "notes": "{\"time\":93.82,\"tw\":{\"n\":0,\"max\":0,\"at\":null,\"sweep\":375.8,\"orbitTicks\":216,\"cine\":1},\"deaths\":1,\"stats\":{\"active\":true,\"mode\":\"land\",\"v\":25.09,\"speed\":0,\"s\":0,\"d\":0,\"grounded\":false,\"grind\":false,\"wipe\":false,\"combo\":0,\"trickScore\":650,\"flightU\":1,\"timeScale\":1,\"orbitSweep\":360.1,\"orbiting\":false,\"touch\":true,\"completed\":true,\"trickOn\":false,\"airT\":0.93,\"ollies\":12,\"tricks\":2,\"landed\":2,\"wipes\":1,\"carHits\":1,\"hoops\":7,\"grinds\":0,\"grindT\":0,\"roofs\":0,\"airMax\":1.4},\"events\":[[\"crest\",412,227],[\"trick\",426,0,0.71],[\"ollieBlock\",504],[\"trick\",624,1,0.94],[\"ollieCar\",774,6.9,22.6,1],[\"cleared\",811,1],[\"crest\",885,528],[\"ollieSweep\",1078,651],[\"ollieBlock\",1247],[\"crest\",2518,1321],[\"ollieBlock\",2996],[\"ollieBlock\",3085],[\"ollieBlock\",3665]]}"
+  },
+  {
+   "name": "Act 2: tricks score points (trick events, combo chain, FIGURES total)",
+   "pass": true,
+   "notes": "{\"landed\":2,\"tricks\":2,\"trickScore\":650,\"events\":13}"
+  },
+  {
+   "name": "Act 2: bumper -> slow motion -> the camera orbits 360° around Kit (cinematic letterbox) -> flight",
+   "pass": true,
+   "notes": "{\"tw\":{\"n\":0,\"max\":0,\"at\":null,\"sweep\":375.8,\"orbitTicks\":216,\"cine\":1},\"post\":true}"
+  },
+  {
+   "name": "Act 2: goal -> results (FIGURES row) -> end screen -> title, Act 2 record saved",
+   "pass": true,
+   "notes": "{\"runEnd\":{\"st\":\"results\",\"time\":93.82,\"score\":1650},\"fin\":{\"st\":\"results\",\"act\":2,\"tricks\":650,\"s1\":\"end\"},\"fin2\":{\"s2\":\"title\",\"act\":1,\"island\":true,\"city\":false,\"best2\":{\"time\":93.818543,\"score\":31450},\"best1\":null}}"
+  },
+  {
+   "name": "Act 2: draw calls under budget in every view, no page/console errors",
+   "pass": true,
+   "notes": "{\"shots\":{\"traffic\":{\"calls\":123,\"tris\":648531,\"frameCalls\":146,\"frameTris\":648554},\"trick\":{\"calls\":126,\"tris\":667528,\"frameCalls\":149,\"frameTris\":667551},\"air\":{\"calls\":126,\"tris\":668296,\"frameCalls\":149,\"frameTris\":668319},\"pier\":{\"calls\":70,\"tris\":431012,\"frameCalls\":97,\"frameTris\":431039},\"orbit1\":{\"calls\":72,\"tris\":410658,\"frameCalls\":101,\"frameTris\":410687},\"orbit2\":{\"calls\":126,\"tris\":568427,\"frameCalls\":151,\"frameTris\":568452},\"orbit3\":{\"calls\":90,\"tris\":486004,\"frameCalls\":115,\"frameTris\":486029},\"orbit4\":{\"calls\":51,\"tris\":387690,\"frameCalls\":76,\"frameTris\":387715},\"flight\":{\"calls\":60,\"tris\":391432,\"frameCalls\":87,\"frameTris\":391459},\"goal\":{\"calls\":53,\"tris\":368230,\"frameCalls\":76,\"frameTris\":368253},\"results\":{\"calls\":49,\"tris\":361282,\"frameCalls\":72,\"frameTris\":361305},\"end\":{\"calls\":48,\"tris\":358042,\"frameCalls\":71,\"frameTris\":358065}},\"errors\":[]}"
+  },
+  {
+   "name": "post pipeline: RenderPipeline (scene pass + bloom + ACES grade) active, desktop default \"Élevé\", env map",
+   "pass": true,
+   "notes": "{\"ok\":true,\"hdr\":true,\"quality\":\"high\",\"superRes\":false,\"passes\":[\"scene(output+normal+velocity/ssr)\",\"gtao(x0.5)\",\"ssr(opt-in,x0.5)\",\"composite\",\"traa\",\"bloom(hdr,x0.5)\",\"lensflare(ghosts)\",\"godrays(screen-space,x0.25)\",\"sun-glare\",\"dof(cinematic,x0.5,gather+fill)\",\"finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)\"],\"env\":true,\"calls\":187,\"gfx\":{\"preset\":\"high\",\"furShells\":10,\"grass\":0.7,\"texRes\":\"full\",\"shadows\":\"csm\",\"ssr\":true}}"
+  },
+  {
+   "name": "quality presets switch from the pause menu (Ultra/Élevé/Moyen/Économie + K.gfx knobs, Super Résolution) without errors",
+   "pass": true,
+   "notes": "{\"pres\":{\"out\":[{\"sel\":1,\"q\":\"medium\",\"stored\":\"medium\",\"hdr\":true,\"passes\":[\"scene(output+normal+velocity)\",\"gtao(x0.5)\",\"composite\",\"traa\",\"bloom(hdr,x0.5)\",\"dof(cinematic,x0.5,gather+fill)\",\"finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)\"],\"calls\":192,\"mean\":149.9,\"gfx\":{\"preset\":\"medium\",\"furShells\":6,\"grass\":0.4,\"texRes\":\"half\",\"shadows\":\"single\",\"ssr\":false},\"texRes\":\"half\"},{\"sel\":1,\"q\":\"low\",\"stored\":\"low\",\"hdr\":true,\"passes\":[\"scene(output)\",\"glow-lite(x0.25)\",\"aces-grade\",\"fxaa\",\"overlays(grain+letterbox+flash)\"],\"calls\":191,\"mean\":150.9,\"gfx\":{\"preset\":\"low\",\"furShells\":0,\"grass\":0,\"texRes\":\"half\",\"shadows\":\"cheap\",\"ssr\":false},\"texRes\":\"half\"},{\"sel\":1,\"q\":\"ultra\",\"stored\":\"ultra\",\"hdr\":true,\"passes\":[\"scene(output+normal+velocity/ssr+diffuse)\",\"ssgi(ao+gi)\",\"ssr(opt-in,x0.75)\",\"composite\",\"traa\",\"bloom(hdr,x0.5)\",\"lensflare(ghosts)\",\"godrays(screen-space,x0.5)\",\"sun-glare\",\"dof(cinematic,x0.5,gather+fill)\",\"finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)\"],\"calls\":192,\"mean\":139.4,\"gfx\":{\"preset\":\"ultra\",\"furShells\":16,\"grass\":1,\"texRes\":\"full\",\"shadows\":\"csm\",\"ssr\":true},\"texRes\":\"full\"},{\"sel\":1,\"q\":\"high\",\"stored\":\"high\",\"hdr\":true,\"passes\":[\"scene(output+normal+velocity/ssr)\",\"gtao(x0.5)\",\"ssr(opt-in,x0.5)\",\"composite\",\"traa\",\"bloom(hdr,x0.5)\",\"lensflare(ghosts)\",\"godrays(screen-space,x0.25)\",\"sun-glare\",\"dof(cinematic,x0.5,gather+fill)\",\"finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)\"],\"calls\":192,\"mean\":145.9,\"gfx\":{\"preset\":\"high\",\"furShells\":10,\"grass\":0.7,\"texRes\":\"full\",\"shadows\":\"csm\",\"ssr\":true},\"texRes\":\"full\"}],\"sr\":{\"sel\":2,\"on\":true,\"stored\":true,\"scale\":0.85,\"internal\":[1061,612],\"mean\":147.2},\"final\":\"ultra\",\"paused\":true},\"errors\":[]}"
+  },
+  {
+   "name": "graphics settings persist across reloads (K.store gfx / superres)",
+   "pass": true,
+   "notes": "{\"saved\":{\"q\":\"ultra\",\"sr\":true,\"ok\":true,\"gfx\":\"ultra\"},\"final\":\"ultra\"}"
+  },
+  {
+   "name": "post fallback: pipeline off (?nopost) -> direct rendering, Act 1 and Act 2 still play without errors",
+   "pass": true,
+   "notes": "{\"fb1\":{\"ok\":false,\"why\":\"disabled (?nopost): direct rendering\",\"vfx\":true,\"z\":-22.7,\"mean\":156.1,\"std\":47.9},\"fb2\":{\"act\":2,\"state\":\"play\",\"s\":95.9,\"mode\":\"skate\",\"mean\":126.1,\"std\":63.4,\"env\":true},\"errs\":[]}"
+  },
+  {
+   "name": "full run: bot plays start -> boss arena through the real game (no teleports)",
+   "pass": true,
+   "notes": "{\"deaths\":[],\"progress\":[\"10:0:20:0\",\"15:-74:21:20\",\"20:-180:16:33\",\"25:-228:26:7\",\"30:-255:26:7\",\"35:-353:7:29\",\"40:-492:7:17\",\"45:-572:10:18\"],\"cps\":[{\"cp\":0,\"t\":32.3},{\"cp\":1,\"t\":39.4},{\"cp\":2,\"t\":45.9}],\"jumps\":5,\"homing\":8,\"maxS\":658,\"ticks\":2234,\"arena\":true,\"time\":47.3,\"rings\":39,\"lives\":3,\"state\":\"play\",\"score\":1100}"
+  },
+  {
+   "name": "full run: boss beaten and results reached without help",
+   "pass": true,
+   "notes": "{\"boss\":{\"tries\":9,\"hits\":8,\"log\":[3.3,4.8,6.5,7.8,9.3,10.7,13.1,15.4],\"deaths\":0,\"k\":923,\"boss\":\"dying\",\"hp\":0},\"cap\":{\"defeatedAt\":151,\"landedAt\":81,\"jumps\":6,\"opened\":537,\"resultsAt\":182,\"capsule\":\"done\",\"state\":\"results\",\"onCapsule\":1}}"
+  },
+  {
+   "name": "VFX: no leak (full run + 2 min effect stress: particles under the cap, GPU geometries/textures/programs unchanged)",
+   "pass": true,
+   "notes": "{\"mem0\":{\"geo\":158,\"tex\":64,\"prog\":296,\"live\":0,\"cap\":6000,\"dropped\":0,\"spawned\":0,\"ribbons\":0},\"mem1\":{\"geo\":161,\"tex\":65,\"prog\":302,\"live\":0,\"cap\":6000,\"dropped\":0,\"spawned\":7520,\"ribbons\":0},\"stress\":{\"m0\":{\"geo\":161,\"tex\":66,\"prog\":304},\"mA\":{\"geo\":161,\"tex\":66,\"prog\":312},\"m1\":{\"geo\":161,\"tex\":66,\"prog\":312},\"maxLive\":1263,\"cap\":6000,\"maxRib\":5,\"dropped\":0,\"spawned\":190248,\"afterReset\":0,\"frames\":8},\"simSeconds\":37}"
+  },
+  {
+   "name": "full run: no NaN and no page/console errors",
+   "pass": true,
+   "notes": "{\"fin\":{\"state\":\"results\",\"time\":75.45,\"score\":12400,\"rings\":3,\"lives\":3,\"nan\":0},\"errors\":[]}"
+  }
+ ],
+ "info": {
+  "bootMs": 7525,
+  "shots": {
+   "01-title": {
+    "calls": 188,
+    "tris": 551155,
+    "frameCalls": 211,
+    "frameTris": 551178
+   },
+   "02-card": {
+    "calls": 192,
+    "tris": 768244,
+    "frameCalls": 215,
+    "frameTris": 768267
+   },
+   "03-start": {
+    "calls": 205,
+    "tris": 775811,
+    "frameCalls": 228,
+    "frameTris": 775834
+   },
+   "04-valley-speed": {
+    "calls": 229,
+    "tris": 811930,
+    "frameCalls": 252,
+    "frameTris": 811953
+   },
+   "05-loop": {
+    "calls": 161,
+    "tris": 756206,
+    "frameCalls": 184,
+    "frameTris": 756229
+   },
+   "06-chasm": {
+    "calls": 212,
+    "tris": 807929,
+    "frameCalls": 235,
+    "frameTris": 807952
+   },
+   "07-descent": {
+    "calls": 185,
+    "tris": 728709,
+    "frameCalls": 208,
+    "frameTris": 728732
+   },
+   "08-bridge": {
+    "calls": 190,
+    "tris": 690447,
+    "frameCalls": 213,
+    "frameTris": 690470
+   },
+   "09-boss-fight": {
+    "calls": 95,
+    "tris": 353521,
+    "frameCalls": 118,
+    "frameTris": 353544
+   },
+   "10-results": {
+    "calls": 78,
+    "tris": 535426,
+    "frameCalls": 101,
+    "frameTris": 535449
+   },
+   "14-act1-to-act2-card": {
+    "calls": 124,
+    "tris": 675467,
+    "frameCalls": 147,
+    "frameTris": 675490
+   },
+   "15-back-to-title": {
+    "calls": 137,
+    "tris": 415401,
+    "frameCalls": 160,
+    "frameTris": 415424
+   },
+   "20-a2-title-select": {
+    "calls": 186,
+    "tris": 542959,
+    "frameCalls": 215,
+    "frameTris": 542988
+   },
+   "21-a2-loading": {
+    "calls": 186,
+    "tris": 542959,
+    "frameCalls": 215,
+    "frameTris": 542988
+   },
+   "22-a2-card": {
+    "calls": 124,
+    "tris": 675467,
+    "frameCalls": 152,
+    "frameTris": 675495
+   },
+   "23-a2-hilltop": {
+    "calls": 124,
+    "tris": 675467,
+    "frameCalls": 147,
+    "frameTris": 675490
+   },
+   "24-a2-traffic": {
+    "calls": 123,
+    "tris": 648531,
+    "frameCalls": 146,
+    "frameTris": 648554
+   },
+   "26-a2-trick": {
+    "calls": 126,
+    "tris": 667528,
+    "frameCalls": 149,
+    "frameTris": 667551
+   },
+   "25-a2-intersection-air": {
+    "calls": 126,
+    "tris": 668296,
+    "frameCalls": 149,
+    "frameTris": 668319
+   },
+   "27-a2-pier-bumper": {
+    "calls": 70,
+    "tris": 431012,
+    "frameCalls": 97,
+    "frameTris": 431039
+   },
+   "28-a2-orbit-1": {
+    "calls": 72,
+    "tris": 410658,
+    "frameCalls": 101,
+    "frameTris": 410687
+   },
+   "28-a2-orbit-2": {
+    "calls": 126,
+    "tris": 568427,
+    "frameCalls": 151,
+    "frameTris": 568452
+   },
+   "28-a2-orbit-3": {
+    "calls": 90,
+    "tris": 486004,
+    "frameCalls": 115,
+    "frameTris": 486029
+   },
+   "28-a2-orbit-4": {
+    "calls": 51,
+    "tris": 387690,
+    "frameCalls": 76,
+    "frameTris": 387715
+   },
+   "29-a2-flight": {
+    "calls": 60,
+    "tris": 391432,
+    "frameCalls": 87,
+    "frameTris": 391459
+   },
+   "30-a2-goal": {
+    "calls": 53,
+    "tris": 368230,
+    "frameCalls": 76,
+    "frameTris": 368253
+   },
+   "31-a2-results": {
+    "calls": 49,
+    "tris": 361282,
+    "frameCalls": 72,
+    "frameTris": 361305
+   },
+   "32-a2-end": {
+    "calls": 48,
+    "tris": 358042,
+    "frameCalls": 71,
+    "frameTris": 358065
+   },
+   "33-pause-graphics": {
+    "calls": 192,
+    "tris": 847426,
+    "frameCalls": 223,
+    "frameTris": 847457
+   },
+   "34-fallback-act1": {
+    "calls": 169,
+    "tris": 595688,
+    "frameCalls": 169,
+    "frameTris": 595688
+   },
+   "35-fallback-act2": {
+    "calls": 113,
+    "tris": 601478,
+    "frameCalls": 113,
+    "frameTris": 601478
+   }
+  },
+  "perf": {
+   "avgFrameMs": 2338.2,
+   "medianFrameMs": 1909.4,
+   "simTickMs": 0.093,
+   "calls": 192,
+   "tris": 769813,
+   "dpr": 1,
+   "W": 1248,
+   "H": 720,
+   "nan": 0,
+   "ticks": 5801
+  },
+  "fullRun": {
+   "run": {
+    "time": 47.3,
+    "deaths": 0,
+    "rings": 39
+   },
+   "final": {
+    "state": "results",
+    "time": 75.45,
+    "score": 12400,
+    "rings": 3,
+    "lives": 3,
+    "nan": 0
+   }
+  }
+ }
+}

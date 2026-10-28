@@ -42,12 +42,12 @@ function act2Ready() {
 }
 function vfxOn() { return !!(K.vfx && K.vfx.ready); }
 function postOn() { return !!(K.post && K.post.ok); }
-// the results tally plays in letterbox (no depth of field: the confetti and the panel would only blur Kit)
+// the results tally plays in letterbox with a shallow depth of field on Kit (the HUD panel is 2D, never blurred)
 function cine(on) {
   if (!postOn()) return;
   try { K.post.cinematic(!!on, on ? CINE_OPTS : undefined); } catch (e) { /* optional */ }
 }
-const CINE_OPTS = { focus: () => K.player.center(), letterbox: true, dof: false };
+const CINE_OPTS = { focus: () => K.player.center(), letterbox: true, dof: true };
 function checkpoints() {
   if (G.act === 2) return (K.city && Array.isArray(K.city.checkpoints)) ? K.city.checkpoints : [];
   const L = K.level;
@@ -165,7 +165,9 @@ function precompile() {
   if (!r || typeof r.compileAsync !== 'function') return Promise.resolve();
   let p;
   try { p = r.compileAsync(V.scene, V.camera); } catch (e) { return Promise.resolve(); }
-  return Promise.resolve(p).catch(e => console.warn('Kit Rush 3D: precompile', e));
+  // then the render pipeline's scene pass (its MRT outputs are other variants of every material)
+  return Promise.resolve(p).then(() => (postOn() && typeof K.post.compileAsync === 'function' ? K.post.compileAsync() : null))
+    .catch(e => console.warn('Kit Rush 3D: precompile', e));
 }
 function toTitle() {
   setAct(1);
@@ -1108,7 +1110,11 @@ function drawLoading() {
   c.lineWidth = 6; c.strokeStyle = NAVY; c.beginPath(); c.ellipse(0, 0, 11, 13, 0, 0, TAU); c.stroke();
   c.lineWidth = 3.5; c.strokeStyle = GOLD; c.beginPath(); c.ellipse(0, 0, 11, 13, 0, 0, TAU); c.stroke();
   c.restore();
-  txt('Chargement…', LW / 2, LH * 0.78, 16, WHITE, 'center');
+  // progress: the city is built at once, then its textures stream in and its shaders compile
+  const p = clamp(0.15 + 0.65 * clamp(num(G.loadP, 0), 0, 1) + (G.compileDone ? 0.2 : 0), 0, 1), bw = Math.min(220, LW - 60), bx = LW / 2 - bw / 2, by = LH * 0.725;
+  c.fillStyle = 'rgba(255,255,255,.14)'; rrect(c, bx, by, bw, 8, 4); c.fill();
+  if (G.loadBusy) { c.fillStyle = GOLD; rrect(c, bx, by, Math.max(8, bw * p), 8, 4); c.fill(); }
+  txt('Chargement…', LW / 2, LH * 0.82, 16, WHITE, 'center');
 }
 const pauseRects = [];
 for (let i = 0; i < PAUSE_ROWS; i++) pauseRects.push({ x: 0, y: 0, w: 0, h: 0 });
@@ -1446,7 +1452,14 @@ async function bootAsync(data) {
   const T = K.tex;
   if (T && typeof T.init === 'function') { try { await T.init(); } catch (e) { console.warn('Kit Rush 3D: textures', e); } }
   if (T && typeof T.preloadGroup === 'function') {
-    try { await T.preloadGroup('act1', p => { G.bootP = 0.15 + 0.6 * p; needDraw = true; }); } catch (e) { console.warn('Kit Rush 3D: textures', e); }
+    // the island's textures and the shared ones ('common'), with the progress bar
+    try {
+      const n1 = T.group('act1').length, n2 = T.group('common').length, n = Math.max(1, n1 + n2);
+      await Promise.all([
+        T.preloadGroup('act1', p => { G.bootA = p * n1 / n; G.bootP = 0.15 + 0.6 * ((G.bootA || 0) + (G.bootC || 0)); needDraw = true; }),
+        T.preloadGroup('common', p => { G.bootC = p * n2 / n; G.bootP = 0.15 + 0.6 * ((G.bootA || 0) + (G.bootC || 0)); needDraw = true; })
+      ]);
+    } catch (e) { console.warn('Kit Rush 3D: textures', e); }
   }
   G.bootP = 0.75;
   try {

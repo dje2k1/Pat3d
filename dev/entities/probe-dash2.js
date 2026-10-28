@@ -1,0 +1,14 @@
+const K = __K, G = K.game, P = K.player, W = K.world, R = K.view.renderer;
+T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'play', 300);
+const L = K.level.dashPanels[0];
+T.teleport(L.pos.x, L.pos.z + 8, 0, 0); T.ticks(20);
+const cam = K.view.camera;
+K.camera.update = () => {};
+cam.position.set(L.pos.x + 1, L.pos.y + 3, L.pos.z + 4); cam.lookAt(L.pos.x, L.pos.y, L.pos.z); cam.updateMatrixWorld();
+T.ticks(1);
+const drawn = {};
+const be = R.backend, draw0 = be.draw.bind(be);
+be.draw = function (ro, info) { const n = ro.object.name || ro.object.type; if (n.startsWith('e-')) drawn[n] = (drawn[n] || 0) + 1; return draw0(ro, info); };
+for (let i = 0; i < 4; i++) T.renderNow();
+be.draw = draw0;
+return drawn;

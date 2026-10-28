@@ -1,0 +1,243 @@
+{
+ "results": [
+  {
+   "name": "page loads without errors",
+   "pass": true,
+   "notes": "{\"bootMs\":4015,\"errors\":[]}"
+  },
+  {
+   "name": "title renders (3D scene + HUD logo)",
+   "pass": true,
+   "notes": "{\"gl\":{\"w\":1248,\"h\":720,\"mean\":145,\"std\":56.1,\"dark\":0.001,\"colors\":165,\"calls\":95,\"tris\":964576,\"frameCalls\":124},\"hud\":{\"w\":1248,\"h\":720,\"cover\":0.74}}"
+  },
+  {
+   "name": "world solids registered once (monitors, resets)",
+   "pass": true,
+   "notes": "{\"n0\":115,\"n1\":115,\"uniq\":115,\"monitors\":7,\"monitorDefs\":7}"
+  },
+  {
+   "name": "Space starts the act (title -> card -> play)",
+   "pass": true,
+   "notes": "{\"card\":{\"s\":\"card\",\"lives\":3,\"rings\":0},\"ticksToPlay\":95}"
+  },
+  {
+   "name": "holding W runs forward and gains speed",
+   "pass": true,
+   "notes": "{\"dz\":-16.7,\"sp\":[5.6,11.2,16.5,18.9,20,20],\"ground\":true,\"rings\":3,\"state\":\"peel\"}"
+  },
+  {
+   "name": "rings are collected along the start",
+   "pass": true,
+   "notes": "{\"rings\":6,\"z\":-27}"
+  },
+  {
+   "name": "jump leaves the ground and lands again",
+   "pass": true,
+   "notes": "{\"g0\":true,\"left\":1,\"back\":22,\"rise\":2.08,\"alive\":true}"
+  },
+  {
+   "name": "VFX: a jump bursts into golden sparkles (K.vfx particles spawned and alive)",
+   "pass": true,
+   "notes": "{\"ready\":true,\"spawned\":44,\"live\":93,\"glow\":89}"
+  },
+  {
+   "name": "pause menu (Esc) freezes and resumes",
+   "pass": true,
+   "notes": "{\"p1\":true,\"frozen\":true,\"p2\":false}"
+  },
+  {
+   "name": "valley run at speed (bot follows the route)",
+   "pass": true,
+   "notes": "{\"valley\":{\"st\":{\"gs\":\"play\",\"p\":[-13.37,19.18,-85.73],\"v\":29.99,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":7,\"lives\":3,\"cp\":-1,\"score\":100,\"time\":3.37,\"cam\":\"follow\"},\"maxSp\":30.2},\"valley2\":{\"st\":{\"gs\":\"play\",\"p\":[-16.64,18.6,-111.62],\"v\":23.93,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":10,\"lives\":3,\"cp\":-1,\"score\":100,\"time\":4.38,\"cam\":\"follow\"},\"dashes\":1}}"
+  },
+  {
+   "name": "loop 1 completes when entered with speed",
+   "pass": true,
+   "notes": "{\"inLoop\":true,\"camLoop\":true,\"rise\":14,\"along\":6.5,\"lat\":5,\"shift\":5,\"dead\":false,\"ground\":true,\"mid\":{\"gs\":\"play\",\"p\":[-1.33,16.16,-181.5],\"v\":33.04,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":true,\"rings\":13,\"lives\":3,\"cp\":-1,\"score\":100,\"time\":4.97,\"cam\":\"loop\"}}"
+  },
+  {
+   "name": "loop 2 completes when entered with speed",
+   "pass": true,
+   "notes": "{\"inLoop\":true,\"camLoop\":true,\"rise\":14.2,\"along\":6,\"lat\":5,\"shift\":5,\"dead\":false,\"ground\":true,\"mid\":{\"gs\":\"play\",\"p\":[-1.33,16.16,-181.5],\"v\":33.04,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":true,\"rings\":13,\"lives\":3,\"cp\":-1,\"score\":100,\"time\":4.97,\"cam\":\"loop\"}}"
+  },
+  {
+   "name": "springs fire (launch with dir*power)",
+   "pass": true,
+   "notes": "[{\"z\":-204,\"power\":36,\"hit\":19,\"vy\":33.7,\"want\":33.7,\"landedAt\":[0,26,-218.22],\"dead\":false,\"ticksAir\":69},{\"z\":-527,\"power\":33,\"hit\":19,\"vy\":21.3,\"want\":21.3,\"landedAt\":[20.96,7,-551.12],\"dead\":false,\"ticksAir\":57},{\"z\":-557.5,\"power\":28.5,\"hit\":19,\"vy\":27.6,\"want\":27.6,\"landedAt\":[33.27,14.78,-562.77],\"dead\":false,\"ticksAir\":51}]"
+  },
+  {
+   "name": "spring gate lands Kit on the upper cliff",
+   "pass": true,
+   "notes": "{\"z\":-204,\"power\":36,\"hit\":19,\"vy\":33.7,\"want\":33.7,\"landedAt\":[0,26,-218.22],\"dead\":false,\"ticksAir\":69}"
+  },
+  {
+   "name": "1UP pillar spring reaches the pillar top",
+   "pass": true,
+   "notes": "{\"z\":-557.5,\"power\":28.5,\"hit\":19,\"vy\":27.6,\"want\":27.6,\"landedAt\":[33.27,14.78,-562.77],\"dead\":false,\"ticksAir\":51}"
+  },
+  {
+   "name": "dash panels fire (speed boost)",
+   "pass": true,
+   "notes": "[{\"z\":-82,\"want\":30,\"hit\":16,\"best\":30.1},{\"z\":-124,\"want\":30,\"hit\":16,\"best\":30.2},{\"z\":-164,\"want\":34,\"hit\":16,\"best\":34},{\"z\":-296,\"want\":32,\"hit\":16,\"best\":32.3},{\"z\":-327,\"want\":34,\"hit\":16,\"best\":34.9},{\"z\":-355,\"want\":36,\"hit\":16,\"best\":36.2},{\"z\":-363,\"want\":32,\"hit\":16,\"best\":32},{\"z\":-363,\"want\":32,\"hit\":16,\"best\":32},{\"z\":-363,\"want\":32,\"hit\":16,\"best\":32},{\"z\":-496,\"want\":34,\"hit\":18,\"best\":34}]"
+  },
+  {
+   "name": "each checkpoint activates in order (passing beside the post)",
+   "pass": true,
+   "notes": "[{\"i\":0,\"t\":30,\"cp\":0,\"cpTime\":20.25},{\"i\":1,\"t\":31,\"cp\":1,\"cpTime\":20.93},{\"i\":2,\"t\":31,\"cp\":2,\"cpTime\":21.62}]"
+  },
+  {
+   "name": "falling into the chasm kills and respawns at the checkpoint",
+   "pass": true,
+   "notes": "{\"spot\":[-1,-238],\"died\":74,\"cardAt\":91,\"lives0\":3,\"lives\":2,\"rings\":0,\"time\":50,\"distToCp\":0,\"alive\":true,\"y\":26}"
+  },
+  {
+   "name": "descent: bot keeps running downhill alive",
+   "pass": true,
+   "notes": "{\"gs\":\"play\",\"p\":[20.48,8.99,-393.11],\"v\":33.55,\"g\":false,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":16,\"lives\":2,\"cp\":0,\"score\":100,\"time\":53.18,\"cam\":\"follow\"}"
+  },
+  {
+   "name": "bridge crossing (solid planks over water)",
+   "pass": true,
+   "notes": "{\"gs\":\"play\",\"p\":[20.96,4,-462.44],\"v\":20,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":16,\"lives\":2,\"cp\":0,\"score\":100,\"time\":54.93,\"cam\":\"follow\"}"
+  },
+  {
+   "name": "boss triggers when entering the arena",
+   "pass": true,
+   "notes": "{\"t\":101,\"active\":true,\"hp\":8,\"max\":8,\"cam\":\"boss\",\"music\":\"boss\",\"st\":{\"gs\":\"play\",\"p\":[12.22,12,-614.33],\"v\":20,\"g\":true,\"ball\":false,\"dead\":false,\"loop\":false,\"rings\":20,\"lives\":2,\"cp\":2,\"score\":100,\"time\":56.62,\"cam\":\"boss\"}}"
+  },
+  {
+   "name": "boss defeated by the scripted bot (8 hits)",
+   "pass": true,
+   "notes": "{\"fight\":{\"tries\":4,\"hits\":2,\"log\":[3.3,4.7],\"deaths\":0,\"k\":355,\"boss\":\"fight\",\"hp\":6},\"fight2\":{\"tries\":6,\"hits\":6,\"log\":[0.6,2,3.4,4.8,7.8,9.2],\"deaths\":0,\"k\":549,\"boss\":\"dying\",\"hp\":0},\"seconds\":15.1}"
+  },
+  {
+   "name": "capsule lands, opens on the button and results appear",
+   "pass": true,
+   "notes": "{\"defeatedAt\":151,\"landedAt\":81,\"jumps\":4,\"opened\":375,\"resultsAt\":182,\"capsule\":\"done\",\"state\":\"results\",\"onCapsule\":1}"
+  },
+  {
+   "name": "results tally -> Act 2 (\"Chargement…\" card, SAN FRANCISCO card), score and lives carried, record saved",
+   "pass": true,
+   "notes": "{\"res\":{\"state\":\"results\",\"scoreBefore\":1100,\"score\":14800,\"done\":true,\"time\":81.8},\"end\":{\"s1\":\"loading\",\"s2\":\"card\",\"loadAt\":240,\"act\":2,\"score0\":14800,\"score\":14800,\"lives0\":9,\"lives\":9,\"city\":true,\"island\":false,\"ents\":false,\"board\":true,\"mode\":\"skate\",\"best\":{\"time\":81.800636,\"score\":14800},\"bestG\":{\"time\":81.800636,\"score\":14800}}}"
+  },
+  {
+   "name": "Act 2 pause menu \"Retour au titre\" brings the island back (city hidden, board off)",
+   "pass": true,
+   "notes": "{\"sel\":3,\"state\":\"title\",\"act\":1,\"city\":false,\"island\":true,\"ents\":true,\"board\":false,\"ext\":false,\"cam\":\"title\",\"fog\":true,\"far\":900}"
+  },
+  {
+   "name": "game over path (last life lost -> GAME OVER -> title)",
+   "pass": true,
+   "notes": "{\"s0\":\"card\",\"overAt\":157,\"music\":\"over\",\"after\":\"title\",\"lives\":0}"
+  },
+  {
+   "name": "frame time measured (headless SwiftShader, CPU rendering)",
+   "pass": true,
+   "notes": "{\"avgFrameMs\":3274.3,\"medianFrameMs\":3241.1,\"simTickMs\":0.191,\"calls\":116,\"tris\":1190631,\"dpr\":1,\"W\":1248,\"H\":720,\"nan\":0,\"ticks\":5801}"
+  },
+  {
+   "name": "no NaN in player/camera state during the run",
+   "pass": true,
+   "notes": "{\"nan\":0,\"ticks\":5801}"
+  },
+  {
+   "name": "draw calls under budget (< 300) in every screenshot view",
+   "pass": true,
+   "notes": "{\"01-title\":{\"calls\":95,\"tris\":964576,\"frameCalls\":118,\"frameTris\":964599},\"02-card\":{\"calls\":111,\"tris\":1145067,\"frameCalls\":134,\"frameTris\":1145090},\"03-start\":{\"calls\":124,\"tris\":1222529,\"frameCalls\":147,\"frameTris\":1222552},\"04-valley-speed\":{\"calls\":137,\"tris\":1319292,\"frameCalls\":160,\"frameTris\":1319315},\"05-loop\":{\"calls\":102,\"tris\":1358101,\"frameCalls\":125,\"frameTris\":1358124},\"06-chasm\":{\"calls\":132,\"tris\":1406962,\"frameCalls\":155,\"frameTris\":1406985},\"07-descent\":{\"calls\":119,\"tris\":1265177,\"frameCalls\":142,\"frameTris\":1265200},\"08-bridge\":{\"calls\":110,\"tris\":1113876,\"frameCalls\":133,\"frameTris\":1113899},\"09-boss-fight\":{\"calls\":79,\"tris\":645346,\"frameCalls\":102,\"frameTris\":645369},\"10-results\":{\"calls\":67,\"tris\":817371,\"frameCalls\":90,\"frameTris\":817394},\"14-act1-to-act2-card\":{\"calls\":189,\"tris\":1041028,\"frameCalls\":212,\"frameTris\":1041051},\"15-back-to-title\":{\"calls\":100,\"tris\":937009,\"frameCalls\":123,\"frameTris\":937032}}"
+  },
+  {
+   "name": "no page errors or console errors during the desktop run",
+   "pass": true,
+   "notes": "[]"
+  }
+ ],
+ "info": {
+  "bootMs": 4015,
+  "shots": {
+   "01-title": {
+    "calls": 95,
+    "tris": 964576,
+    "frameCalls": 118,
+    "frameTris": 964599
+   },
+   "02-card": {
+    "calls": 111,
+    "tris": 1145067,
+    "frameCalls": 134,
+    "frameTris": 1145090
+   },
+   "03-start": {
+    "calls": 124,
+    "tris": 1222529,
+    "frameCalls": 147,
+    "frameTris": 1222552
+   },
+   "04-valley-speed": {
+    "calls": 137,
+    "tris": 1319292,
+    "frameCalls": 160,
+    "frameTris": 1319315
+   },
+   "05-loop": {
+    "calls": 102,
+    "tris": 1358101,
+    "frameCalls": 125,
+    "frameTris": 1358124
+   },
+   "06-chasm": {
+    "calls": 132,
+    "tris": 1406962,
+    "frameCalls": 155,
+    "frameTris": 1406985
+   },
+   "07-descent": {
+    "calls": 119,
+    "tris": 1265177,
+    "frameCalls": 142,
+    "frameTris": 1265200
+   },
+   "08-bridge": {
+    "calls": 110,
+    "tris": 1113876,
+    "frameCalls": 133,
+    "frameTris": 1113899
+   },
+   "09-boss-fight": {
+    "calls": 79,
+    "tris": 645346,
+    "frameCalls": 102,
+    "frameTris": 645369
+   },
+   "10-results": {
+    "calls": 67,
+    "tris": 817371,
+    "frameCalls": 90,
+    "frameTris": 817394
+   },
+   "14-act1-to-act2-card": {
+    "calls": 189,
+    "tris": 1041028,
+    "frameCalls": 212,
+    "frameTris": 1041051
+   },
+   "15-back-to-title": {
+    "calls": 100,
+    "tris": 937009,
+    "frameCalls": 123,
+    "frameTris": 937032
+   }
+  },
+  "perf": {
+   "avgFrameMs": 3274.3,
+   "medianFrameMs": 3241.1,
+   "simTickMs": 0.191,
+   "calls": 116,
+   "tris": 1190631,
+   "dpr": 1,
+   "W": 1248,
+   "H": 720,
+   "nan": 0,
+   "ticks": 5801
+  }
+ }
+}

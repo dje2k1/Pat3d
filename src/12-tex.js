@@ -106,7 +106,12 @@ function fetchInto(rec) {
     .then(b => { rec.file = b.size; return createImageBitmap(b, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' }); })
     .then(img => {
       const t = rec.tex, old = t.image;
+      // a GPU texture keeps the storage size of its first upload (texStorage2D on WebGL 2, a fixed-size GPUTexture on
+      // WebGPU): when the size changes (1x1 fallback -> WebP after a first draw, full <-> half on a preset change) the
+      // renderer must drop it and create a new one, else the upload overflows (GL_INVALID_VALUE) or fills a corner only
+      const resized = !old || old.width !== img.width || old.height !== img.height;
       t.image = img;
+      if (resized) t.dispose();
       t.needsUpdate = true;
       if (old && typeof old.close === 'function') { try { old.close(); } catch (x) { /* already closed */ } }
       rec.res = res;

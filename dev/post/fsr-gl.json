@@ -1,0 +1,51 @@
+{
+ "setup": 1,
+ "paths": [
+  {
+   "q": "low",
+   "up": "auto",
+   "upscale": "fsr1",
+   "aa": "fxaa",
+   "internal": "936x540",
+   "passes": "scene(output,x0.75) | glow-lite(x0.25) | aces-grade | fxaa(x0.75) | fsr1(easu+rcas) | overlays(grain+letterbox+flash)"
+  },
+  {
+   "q": "high",
+   "up": "fsr",
+   "upscale": "fsr1",
+   "aa": "traa",
+   "internal": "1061x612",
+   "passes": "scene(output+normal+velocity+ssr,x0.85) | gtao(x0.42) | ssr(opt-in,x0.42) | composite | traa(x0.85) | bloom(hdr,x0.5) | lensflare(ghosts) | godrays(screen-space,x0.25) | sun-glare | dof(cinematic,x0.5,gather+fill) | aces-grade | fsr1(easu+rcas)"
+  },
+  {
+   "q": "medium",
+   "up": "fsr",
+   "upscale": "fsr1",
+   "aa": "traa",
+   "internal": "749x432",
+   "passes": "scene(output+normal+velocity,x0.6) | gtao(x0.3) | composite | traa(x0.6) | bloom(hdr,x0.5) | dof(cinematic,x0.5,gather+fill) | aces-grade | fsr1(easu+rcas)"
+  },
+  {
+   "q": "medium",
+   "up": "auto",
+   "upscale": "taau",
+   "aa": "taau",
+   "internal": "749x432",
+   "passes": "scene(output+normal+velocity,x0.6) | gtao(x0.3) | composite | taau(x0.6->1) | bloom(hdr,x0.5) | dof(cinematic,x0.5,gather+fill) | finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)"
+  },
+  {
+   "q": "ultra",
+   "up": "auto",
+   "upscale": "taau",
+   "aa": "taau",
+   "internal": "961x554",
+   "passes": "scene(output+normal+velocity+ssr+diffuse,x0.77) | ssgi(ao+gi) | ssr(opt-in,x0.58) | composite | taau(x0.77->1) | bloom(hdr,x0.5) | lensflare(ghosts) | godrays(screen-space,x0.5) | sun-glare | dof(cinematic,x0.5,gather+fill) | finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)"
+  }
+ ],
+ "low-native": "none",
+ "low-fsr": "fsr1",
+ "high-native": "none",
+ "high-fsr": "fsr1",
+ "high-taau": "taau",
+ "sharp": "STEP ERROR: page.evaluate: Target page, context or browser has been closed"
+}

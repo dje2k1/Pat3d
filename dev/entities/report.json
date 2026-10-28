@@ -1,0 +1,41 @@
+{
+ "role": "entities",
+ "summary": "Entities (src/40-entities.js) rebuilt for v3: every PORT(entities) placeholder is gone and gameplay code is untouched (same positions, radii, timings, boss pattern, solids, K.entities / K.fx API; stats() fields kept). Rendering: (1) instanced part pools: each template part (bug body, wheels, wasp body/abdomen/wings, fish parts, springs, dash panels, monitors, screens, star posts, animals, boss parts, bombs, chain, capsule) is ONE InstancedMesh named e-*; the entity Object3D hierarchies stay outside the scene as transform holders and flush() copies their world matrices into stable instance slots every tick (zero-scale when hidden; pool bounding sphere = visible instances, so the camera and each shadow cascade cull whole pools). (2) far LOD: templates are built twice (lodTpl, fewer segments, small details dropped); beyond 30 m (18 m on Moyen/Économie) the far twin is drawn and casts no shadow. (3) rings: new superellipse-profile polished gold ring, near (<26 m) / far pools, spin in the instance matrix, never cast shadows, halo sprites only away from the camera, lost rings in a 32-slot InstancedMesh. (4) unique static geometry (spring pedestals, spike beds) baked per 100 m chunk. Materials (TSL): one shared MeshPhysicalNodeMaterial with per-vertex surface kinds (clearcoated paint with orange-peel bump, brushed metal, chrome, pebbled rubber, glossy plastic, sheen for skin/cloth/animals, hull panels with seams, HDR emissive eyes/LEDs/lamps) + a generated triplanar detail texture (tools/tex/entities_tex.py -> assets/tex/entities/detail.webp, 0.52 MB lossless), per-instance tint (post lamp red/blue, boss lens, boss hit flash, monitor icon/static); gold ring material (env reflections + view-space studio bands + fresnel glow), CRT monitor screens (icon atlas, scanlines, barrel, roll bar, static), procedural scrolling dash chevrons (additive HDR), iridescent wasp wings, glass dome (SSR opt-in). Everything reflects scene.environment (private fallback sky only if absent). Budgets: Ultra Act 1 worst 156 draw calls / 1.81 M tris (was 287-301 / 1.91 M), Moyen Act 1 99 calls / 677 k (was 154 / 751 k): the SPEC3 Moyen target now passes.",
+ "files": [
+  "src/40-entities.js",
+  "tools/tex/entities_tex.py",
+  "assets/tex/entities/detail.webp",
+  "assets/tex/entities/detail_half.webp",
+  "assets/tex/entities/manifest.json"
+ ],
+ "tests": [
+  {"name": "./build.sh", "pass": true, "notes": "index.html 1109757 B, test.html 1109795 B, no GLSL, imports vendored"},
+  {"name": "e2e WebGL 2 --only=desktop,valley,boss (private build = HEAD a58d2bf parts)", "pass": true, "notes": "30/30 in 168 s on the final build (dev/entities/e2e-final-d.log): rings collected, springs, dash panels, checkpoints, chasm respawn, boss triggers and is defeated by the bot (8 hits), capsule opens, results, game over, no console errors, every screenshot view < 300 calls (max 137)"},
+  {"name": "e2e WebGL 2 --only=fullrun,regress,present,regress2,phone", "pass": true, "notes": "30/30 in 702 s (dev/entities/e2e-r1.log)"},
+  {"name": "e2e WebGL 2 --only=act2,post", "pass": true, "notes": "14/14 in 317 s (dev/entities/e2e-a2.log): entities hidden in Act 2 except lost rings/FX, presets switch without errors"},
+  {"name": "e2e WebGL 2 --only=v3 (backend, K.tex, assets budget, no GLSL, performance budgets, legacy)", "pass": true, "notes": "7/7 (dev/entities/e2e-v3.log). Act 1: ultra 156 calls / 1.81 M tris, high 134 / 1.39 M, medium 99 / 677 k, low 95 / 483 k; Act 2: ultra 174 / 996 k, medium 138 / 629 k. The pending Moyen target [world+city+entities] is met (PASS). Assets 9.66 MB, Act 1 4.25 MB."},
+  {"name": "e2e --webgpu", "pass": true, "notes": "6/6 in 167 s (dev/entities/e2e-gpu.log): boot, Act 1, Act 2, presets + Super Résolution, K.tex, no console errors"},
+  {"name": "Draw-call tally per object at the budget spots (dev/entities/tally.js)", "pass": true, "notes": "Ultra, valley (-6,-100): entities 32 main + 14 shadow draws (was ~87 + ~119); worst Ultra spot 156 calls total. Moyen worst 744 k tris at the chasm with entities ~173 k (before trims/LOD-per-preset), 677 k at the e2e spots after."},
+  {"name": "Screenshots (Élevé WebGL 2, phone Moyen, WebGPU)", "pass": true, "notes": "close-ups of rings, ladybug and wasp robots, fish, springs, dash panel, monitors, star post, spikes, boss fight, capsule; before/after sheets; phone and WebGPU render the same with no console errors"}
+ ],
+ "screenshots": [
+  "dev/entities/shots/fin-grid1.png",
+  "dev/entities/shots/fin-grid2.png",
+  "dev/entities/shots/sbs-1.png",
+  "dev/entities/shots/sbs-2.png",
+  "dev/entities/shots/ph-grid.png",
+  "dev/entities/shots/gpu-grid.png",
+  "dev/entities/shots/e2e-grid1.png"
+ ],
+ "integration_todo": [
+  "test/e2e.js v3 suite: turn pending('world+city+entities', 'performance budget Moyen ...') into a check() (it passes: Act 1 99 calls / 677 k tris, Act 2 138 / 629 k).",
+  "docs/SPEC3.md Foundation notes, K.entities: API unchanged + K.entities._dbg() (dev probes only); entity meshes are InstancedMesh pools named e-* (userData.noEnv), far LOD beyond 30 m (18 m Moyen/Économie) without shadows, rings never cast shadows, nothing on object layer 5; materials use scene.environment.",
+  "Note for test/probe authors: entity distance culling (every 6 ticks) and LOD use the camera of the previous tick (they run inside K.entities.update); after moving the camera by hand, tick a few times before rendering a screenshot."
+ ],
+ "known_issues": [
+  "Gameplay culling of entities beyond 235 m still runs every 6 ticks (unchanged from v2), so right after a camera cut a far-away entity can appear up to 0.1 s late.",
+  "Instance slots are stable while an entity stays visible; when a slot is reused by another entity the post pipeline's motion vectors are wrong for that one frame (only far, newly visible entities).",
+  "The far LOD and the shadow cut-off at 30 m (18 m on Moyen) can be noticed on a large still screen as a small shadow appearing under a robot as it comes closer.",
+  "The boss and the capsule have no far LOD (they are only drawn at the arena)."
+ ]
+}

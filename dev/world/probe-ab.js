@@ -1,0 +1,11 @@
+const K = __K, G = K.game;
+T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'play', 300); T.ticks(5);
+const W = K.world, cam = K.view.camera;
+const at = (z, d) => { let x = 0; for (let i = 0; i < 6; i++) { const ri = W.routeInfo(x, z); x -= ri.right.x * ri.d; } const ri = W.routeInfo(x, z); return { x: x + ri.right.x * d, z: z + ri.right.z * d }; };
+K.camera.update = () => {};
+const a = at(-366, -9), b = at(-392, 4);
+cam.position.set(a.x, Math.max(W.terrainY(a.x, a.z), 0) + 6, a.z); cam.lookAt(b.x, Math.max(W.terrainY(b.x, b.z), 0), b.z); cam.updateMatrixWorld();
+const hide = (window.__hide || '').split(',').filter(Boolean);
+K.view.scene.traverse(o => { if (hide.includes(o.name)) o.visible = false; });
+for (let i = 0; i < 4; i++) T.renderNow();
+return hide;

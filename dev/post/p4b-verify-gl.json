@@ -1,0 +1,256 @@
+{
+ "setup": 1,
+ "sharp": {
+  "native": {
+   "internal": [
+    1248,
+    720
+   ],
+   "aa": "traa",
+   "sharp": 14.493,
+   "psnrVsNative": null
+  },
+  "taau85": {
+   "internal": [
+    1061,
+    612
+   ],
+   "aa": "traa",
+   "sharp": 16.089,
+   "psnrVsNative": 36.66
+  },
+  "fsr85": {
+   "internal": [
+    1061,
+    612
+   ],
+   "aa": "traa",
+   "sharp": 16.835,
+   "psnrVsNative": 36.2
+  },
+  "taau60": {
+   "internal": [
+    749,
+    432
+   ],
+   "aa": "traa",
+   "sharp": 11.337,
+   "psnrVsNative": 33.44
+  },
+  "fsr60": {
+   "internal": [
+    749,
+    432
+   ],
+   "aa": "traa",
+   "sharp": 11.763,
+   "psnrVsNative": 33.39
+  },
+  "low75": {
+   "internal": [
+    936,
+    540
+   ],
+   "aa": "fxaa",
+   "sharp": 11.717,
+   "psnrVsNative": 26.18
+  },
+  "lownative": {
+   "internal": [
+    1248,
+    720
+   ],
+   "aa": "fxaa",
+   "sharp": 11.644,
+   "psnrVsNative": 26.56
+  }
+ },
+ "ghost": {
+  "high": {
+   "trail": {
+    "mean": 0.82,
+    "max": 23.3,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.88,
+    "max": 26.7,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.64,
+    "max": 32,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "medium": {
+   "trail": {
+    "mean": 0.93,
+    "max": 17.7,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.99,
+    "max": 22,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.9,
+    "max": 57.7,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "ultra": {
+   "trail": {
+    "mean": 0.77,
+    "max": 17.7,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.78,
+    "max": 26.7,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.73,
+    "max": 36.3,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "low": {
+   "trail": {
+    "mean": 0,
+    "max": 0,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0,
+    "max": 0.3,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0,
+    "max": 0,
+    "n": 143712
+   },
+   "maskPx": 8260
+  }
+ },
+ "cost": {
+  "ultra": {
+   "passes": 11,
+   "list": "scene(output+normal+velocity/ssr+diffuse) | ssgi(ao+gi) | ssr(opt-in,x0.75) | composite | traa | bloom(hdr,x0.5) | lensflare(ghosts) | godrays(screen-space,x0.5) | sun-glare | dof(cinematic,x0.5,gather+fill) | finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)",
+   "internal": "1248x720",
+   "output": "1248x720",
+   "aa": "traa",
+   "ao": "ssgi",
+   "ssr": true,
+   "costMPx": 19.38,
+   "swiftshaderMs": 3125.1,
+   "sceneCalls": 213,
+   "frameCalls": 236,
+   "sceneTris": 883502
+  },
+  "ultra+SR": {
+   "passes": 13,
+   "list": "scene(output+normal+velocity/ssr+diffuse,x0.77) | ssgi(ao+gi) | ssr(opt-in,x0.58) | composite | traa(x0.77) | bloom(hdr,x0.5) | lensflare(ghosts) | godrays(screen-space,x0.5) | sun-glare | dof(cinematic,x0.5,gather+fill) | finish(ca+motionblur+streaks+aces-grade+vignette,x0.77) | fsr1(easu+rcas) | overlays(grain+letterbox+flash)",
+   "internal": "961x554",
+   "output": "1248x720",
+   "aa": "traa",
+   "ao": "ssgi",
+   "ssr": true,
+   "costMPx": 17.41,
+   "swiftshaderMs": 2313.3,
+   "sceneCalls": 213,
+   "frameCalls": 239,
+   "sceneTris": 883502
+  },
+  "high": {
+   "passes": 11,
+   "list": "scene(output+normal+velocity/ssr) | gtao(x0.5) | ssr(opt-in,x0.5) | composite | traa | bloom(hdr,x0.5) | lensflare(ghosts) | godrays(screen-space,x0.25) | sun-glare | dof(cinematic,x0.5,gather+fill) | finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)",
+   "internal": "1248x720",
+   "output": "1248x720",
+   "aa": "traa",
+   "ao": "gtao",
+   "ssr": true,
+   "costMPx": 10.84,
+   "swiftshaderMs": 2313.5,
+   "sceneCalls": 213,
+   "frameCalls": 236,
+   "sceneTris": 804320
+  },
+  "high+SR": {
+   "passes": 13,
+   "list": "scene(output+normal+velocity/ssr,x0.85) | gtao(x0.42) | ssr(opt-in,x0.42) | composite | traa(x0.85) | bloom(hdr,x0.5) | lensflare(ghosts) | godrays(screen-space,x0.25) | sun-glare | dof(cinematic,x0.5,gather+fill) | finish(ca+motionblur+streaks+aces-grade+vignette,x0.85) | fsr1(easu+rcas) | overlays(grain+letterbox+flash)",
+   "internal": "1061x612",
+   "output": "1248x720",
+   "aa": "traa",
+   "ao": "gtao",
+   "ssr": true,
+   "costMPx": 10.62,
+   "swiftshaderMs": 1855.4,
+   "sceneCalls": 213,
+   "frameCalls": 239,
+   "sceneTris": 804320
+  },
+  "medium": {
+   "passes": 7,
+   "list": "scene(output+normal+velocity) | gtao(x0.5) | composite | traa | bloom(hdr,x0.5) | dof(cinematic,x0.5,gather+fill) | finish(ca+motionblur+streaks+aces-grade+vignette+grain+letterbox+flash)",
+   "internal": "1248x720",
+   "output": "1248x720",
+   "aa": "traa",
+   "ao": "gtao",
+   "ssr": false,
+   "costMPx": 8.99,
+   "swiftshaderMs": 2169.4,
+   "sceneCalls": 213,
+   "frameCalls": 229,
+   "sceneTris": 751532
+  },
+  "medium+SR": {
+   "passes": 9,
+   "list": "scene(output+normal+velocity,x0.6) | gtao(x0.3) | composite | traa(x0.6) | bloom(hdr,x0.5) | dof(cinematic,x0.5,gather+fill) | finish(ca+motionblur+streaks+aces-grade+vignette,x0.6) | fsr1(easu+rcas) | overlays(grain+letterbox+flash)",
+   "internal": "749x432",
+   "output": "1248x720",
+   "aa": "traa",
+   "ao": "gtao",
+   "ssr": false,
+   "costMPx": 6.15,
+   "swiftshaderMs": 1065.9,
+   "sceneCalls": 213,
+   "frameCalls": 232,
+   "sceneTris": 751532
+  },
+  "low": {
+   "passes": 5,
+   "list": "scene(output) | glow-lite(x0.25) | aces-grade | fxaa | overlays(grain+letterbox+flash)",
+   "internal": "1248x720",
+   "output": "1248x720",
+   "aa": "fxaa",
+   "ao": "",
+   "ssr": false,
+   "costMPx": 2.86,
+   "swiftshaderMs": 1703.6,
+   "sceneCalls": 212,
+   "frameCalls": 226,
+   "sceneTris": 672350
+  },
+  "low+SR": {
+   "passes": 6,
+   "list": "scene(output,x0.75) | glow-lite(x0.25) | aces-grade | fxaa(x0.75) | fsr1(easu+rcas) | overlays(grain+letterbox+flash)",
+   "internal": "936x540",
+   "output": "1248x720",
+   "aa": "fxaa",
+   "ao": "",
+   "ssr": false,
+   "costMPx": 3.57,
+   "swiftshaderMs": 1139.2,
+   "sceneCalls": 212,
+   "frameCalls": 229,
+   "sceneTris": 672350
+  }
+ }
+}

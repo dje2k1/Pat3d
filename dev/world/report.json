@@ -1,0 +1,50 @@
+{
+  "role": "world (Act 1 island, src/20-world.js)",
+  "summary": "The Act 1 island is finished and verified. Nothing was committed (the lead commits). ./build.sh passes. The full private e2e run on WebGL 2 passes 80/80, including the Moyen budget target that was pending. The WebGPU suite passes 6/6. Gameplay is unchanged: no collider, level position or K.world API was moved; all gameplay checks pass. Side-by-side shots against v2 show a clear improvement.\n\nWhat changed (src/20-world.js and tools/tex/world_tex.py only):\n1. **Sky.** A TSL dome with a cloud layer driven by a new generated texture (world/sky_noise): clouds lit from the sun side with bright edges, plus the sun disc. The old mesh clouds are gone. The environment capture picks up the sky, so PBR materials reflect it.\n2. **Sun and shadows per preset.** Ultra: cascaded shadow maps (3 cascades, 200 m). Élevé: 2 cascades, 150 m. Moyen: a single map that follows Kit. Économie: a small 1024 map. The terrain casts shadows through a coarse 2 m proxy that only the shadow cameras see. Ambient light was rebalanced so shaded checker walls stay brown.\n3. **Terrain.** Textured PBR grass, sandstone checker squares (the level's identity is kept), a dirt path and beach sand. Grass, soil and sand blend two texture lookups so no tiling shows. Mowing stripes change with the view angle and have no centre seam.\n4. **Grass blades.** Instanced blades in 2 draw calls, following the camera. They bend with the wind, part around Kit and avoid paths, sand, slopes, pads and platforms. Density comes from K.gfx.grass (none on Économie). The mown lane keeps fewer, shorter blades.\n5. **Vegetation and props.** One solid and one foliage mesh per 150 m zone, each with a near and a far version. Palms have bark and 12-14 textured fronds with light showing through the leaves. Also sunflowers, flower tufts, leafy bushes, smooth rocks (more of them along wall feet and the shore) and totems with wood grain. Everything sways with the wind. Moyen and Économie draw a lighter subset.\n6. **Water.** Detail wave normals, a sandy bottom with caustics fading with depth, sky and cloud reflections, glints, shoreline foam, and screen-space reflections on Ultra/Élevé (K.post.ssr). Waterfalls are TSL streak materials.\n7. **Structures.** Loops have a grass running surface and chrome rails. The bridge uses textured wood.\n8. Every K.gfx preset change rebuilds what depends on it. No PORT(world) markers are left.",
+  "files": [
+    "src/20-world.js",
+    "tools/tex/world_tex.py",
+    "assets/tex/world/sky_noise.webp",
+    "assets/tex/world/sky_noise_half.webp",
+    "assets/tex/world/manifest.json",
+    "dev/world/STATUS.md (gitignored notes)",
+    "dev/world/{mkbuild.sh, mke2e.sh, shoot.js, run.js, tally3.js, tally.py, probe-seam.js, e2e-seam.js, sbs.py} (gitignored harness)",
+    "index.html (rebuilt by ./build.sh)"
+  ],
+  "tests": [
+    {"name": "./build.sh", "pass": true, "notes": "index.html 1011188 bytes, 18 vendored module files; the no-GLSL and import checks pass."},
+    {"name": "e2e WebGL 2, all suites (dev/world/e2e-private.js = test/e2e.js pointed at the world build: HEAD fc7dfe5 parts + working 20-world.js)", "pass": true, "notes": "80/80 in 1784 s (dev/world/e2e-final.log). Includes desktop, valley, boss, v3, act2, post, fullrun, regress, present, regress2 and phone. Shot views on Élevé stay under 300 calls (max 242). Lawn seam: Ultra 2.9 / Élevé 2.0 / Économie 1.9 (limit 4.5). Average frame time on headless SwiftShader was 5.0 s, on a shared, loaded CPU."},
+    {"name": "Performance budgets (e2e v3 spots)", "pass": true, "notes": "Act 1 Ultra: 287 calls / 1.91 M triangles. Élevé: 243 / 1.47 M. Moyen: 153 / 721 k, which meets the pending Moyen target of 220 calls / 800 k. Économie: 148 / 528 k."},
+    {"name": "e2e WebGPU suite (--webgpu)", "pass": true, "notes": "6/6 in 115 s (dev/world/e2e-gpu-final.log). WebGPU shots at Élevé and Ultra render like WebGL 2 (dev/world/shots/gpu1-grid.png, gpu2-*.png; backend reported as 'webgpu')."},
+    {"name": "Visual: v2 vs v3 side by side, desktop Élevé (start, valley, loop1, loop1side, cliffs, chasm, descent, lake, bridge, loop2, arena, overview)", "pass": true, "notes": "Comparison sheets: dev/world/shots/sbs-1..4.png. Final shots: final-grid.png. Ultra and Économie: q-grid.png."},
+    {"name": "Visual: phone Moyen (844x390 touch, dpr 3)", "pass": true, "notes": "dev/world/shots/ph1-grid.png. 127-163 draw calls, 345-595 k triangles, 18.4 MB of half-size textures."},
+    {"name": "Texture budget", "pass": true, "notes": "World set: 25 textures, 3.7 MB on disk at full size and 1.2 MB at half size. Estimated GPU memory: 72 MB at full size, 18 MB at half size (Moyen). The whole assets/ folder is 9.3 MB."}
+  ],
+  "screenshots": [
+    "dev/world/shots/final-grid.png",
+    "dev/world/shots/sbs-1.png",
+    "dev/world/shots/sbs-2.png",
+    "dev/world/shots/sbs-3.png",
+    "dev/world/shots/sbs-4.png",
+    "dev/world/shots/ph1-grid.png",
+    "dev/world/shots/gpu1-grid.png",
+    "dev/world/shots/q-grid.png",
+    "dev/world/shots/b4-sunflower.png",
+    "dev/world/shots/b3-lakeside.png",
+    "dev/world/shots/a6-loop1side.png"
+  ],
+  "integration_todo": [
+    "test/e2e.js (v3 suite): the Moyen budget now passes for Act 1 (153 calls / 721 k triangles) and Act 2 (142 / 523 k). Turn pending('world+city+entities', ...) into check() once city and entities agree.",
+    "Entities (40-entities.js): rings, enemies and monitors are drawn one mesh at a time and all cast shadows. On Ultra (3 cascades) that is 80-85 main draws plus 110-125 shadow draws in Act 1 valley and lake views, about two thirds of the calls; the island itself uses about 30 main and 45 shadow draws. Instancing the rings, or castShadow = false on them, would free headroom: the worst Ultra Act 1 view measured 297-335 calls against a limit of 350.",
+    "SPEC3 Foundation notes: object layer 5 is reserved for the island's shadow-only terrain proxy. K.world.sun is the active sun and changes with the preset (cascaded-shadow light on Ultra/Élevé, single-map light on Moyen/Économie). K.world._dbg() is a dev probe only.",
+    "Optional: switching to the other desktop preset compiles its shadow-light material variants on first use (a one-time stall in the pause menu). Calling K.post.compileAsync() after a preset change would hide it."
+  ],
+  "known_issues": [
+    "The lawn-seam test is limited by noise on Ultra. Grass blades plus screen-space GI make column brightness vary: on the saved test frames about a quarter of random columns exceed the 4.5 limit on Ultra, against about 7% on Élevé. The centre stayed under the limit in the last three runs (2.9-3.6), and the saved frames show no actual seam (dev/world/shots/seam-e2e-*.png). Still, it may fail now and then on Ultra.",
+    "The checker cliffs keep v2's per-axis projection, so slanted faces still show the triangular checker patches. This is intended as the level's identity.",
+    "Water depth comes from the island heightfield, not the scene depth buffer: the sea is opaque and shows a generated sand bottom. This keeps it consistent across presets and with ?nopost. Reflections of the island itself appear only where screen-space reflections run (Ultra/Élevé).",
+    "The free aerial 'overview' camera (not a gameplay view) reaches 301 draw calls on Élevé. All gameplay and e2e views stay under 300.",
+    "All timings are headless SwiftShader on a shared 4-CPU machine and only useful for comparison. Grass blades and the sky clouds have not been profiled on a real GPU or phone.",
+    "lakeview in dev/world/shoot.js frames the ravine above the lake, not the lake itself; the same framing was used for v2. The lake is covered by the 'lake' and 'lakeside' views."
+  ]
+}

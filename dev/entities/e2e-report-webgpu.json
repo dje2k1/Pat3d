@@ -1,0 +1,56 @@
+{
+ "results": [
+  {
+   "name": "WebGPU: the game boots on the WebGPU backend (title drawn)",
+   "pass": true,
+   "notes": "{\"bootMs\":8739,\"b\":{\"backend\":\"webgpu\",\"state\":\"title\",\"mean\":145.5,\"std\":55.6,\"colors\":147,\"post\":true}}"
+  },
+  {
+   "name": "WebGPU: Act 1 plays a few seconds (run, rings, jump sparkles) and draws",
+   "pass": true,
+   "notes": "{\"state\":\"play\",\"z\":-134.7,\"rings\":8,\"rose\":3.12,\"vfx\":246,\"mean\":162,\"std\":53.4,\"dead\":false}"
+  },
+  {
+   "name": "WebGPU: Act 2 (city, skateboard, traffic) plays a few seconds and draws",
+   "pass": true,
+   "notes": "{\"a2\":{\"state\":\"play\",\"act\":2},\"a2s\":{\"act\":2,\"state\":\"play\",\"s\":72.9,\"mode\":\"skate\",\"mean\":103.7,\"std\":70}}"
+  },
+  {
+   "name": "WebGPU: presets and Super Résolution switch and draw",
+   "pass": true,
+   "notes": "[{\"q\":\"ultra\",\"passes\":11,\"mean\":98.6},{\"q\":\"medium\",\"passes\":7,\"mean\":106.5},{\"q\":\"low\",\"passes\":5,\"mean\":110.3},{\"q\":\"high\",\"passes\":11,\"mean\":107},{\"q\":\"sr\",\"scale\":0.85,\"mean\":111.2}]"
+  },
+  {
+   "name": "WebGPU: K.tex texture upload (sample albedo, sRGB)",
+   "pass": true,
+   "notes": "{\"w\":256,\"cs\":true,\"failed\":0}"
+  },
+  {
+   "name": "WebGPU: no page errors or console errors",
+   "pass": true,
+   "notes": "[]"
+  }
+ ],
+ "info": {
+  "shots": {
+   "gpu-01-title": {
+    "calls": 96,
+    "tris": 964132,
+    "frameCalls": 124,
+    "frameTris": 964160
+   },
+   "gpu-02-act1": {
+    "calls": 119,
+    "tris": 1074307,
+    "frameCalls": 142,
+    "frameTris": 1074330
+   },
+   "gpu-03-act2": {
+    "calls": 189,
+    "tris": 1103784,
+    "frameCalls": 212,
+    "frameTris": 1103807
+   }
+  }
+ }
+}

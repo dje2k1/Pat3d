@@ -1,0 +1,171 @@
+{
+ "setup": 1,
+ "stress": [
+  {
+   "cycle": 0,
+   "builds": 11,
+   "geo": 157,
+   "tex": 163,
+   "prog": 902,
+   "rt": 122,
+   "texMB": 182.6
+  },
+  {
+   "cycle": 1,
+   "builds": 11,
+   "geo": 157,
+   "tex": 164,
+   "prog": 903,
+   "rt": 122,
+   "texMB": 182.7
+  },
+  {
+   "cycle": 2,
+   "builds": 11,
+   "geo": 157,
+   "tex": 164,
+   "prog": 903,
+   "rt": 122,
+   "texMB": 182.7
+  }
+ ],
+ "sharp": {
+  "native": {
+   "internal": [
+    1248,
+    720
+   ],
+   "aa": "traa",
+   "sharp": 18.26,
+   "psnrVsNative": null
+  },
+  "taau85": {
+   "internal": [
+    1061,
+    612
+   ],
+   "aa": "taau",
+   "sharp": 7.222,
+   "psnrVsNative": 32.17
+  },
+  "fsr85": {
+   "internal": [
+    1061,
+    612
+   ],
+   "aa": "traa",
+   "sharp": 19.712,
+   "psnrVsNative": 36.81
+  },
+  "taau60": {
+   "internal": [
+    749,
+    432
+   ],
+   "aa": "taau",
+   "sharp": 5.957,
+   "psnrVsNative": 31.28
+  },
+  "fsr60": {
+   "internal": [
+    749,
+    432
+   ],
+   "aa": "traa",
+   "sharp": 12.071,
+   "psnrVsNative": 34.48
+  },
+  "low75": {
+   "internal": [
+    936,
+    540
+   ],
+   "aa": "fxaa",
+   "sharp": 14.368,
+   "psnrVsNative": 33.45
+  },
+  "lownative": {
+   "internal": [
+    1248,
+    720
+   ],
+   "aa": "fxaa",
+   "sharp": 13.794,
+   "psnrVsNative": 36.87
+  }
+ },
+ "ghost": {
+  "high": {
+   "trail": {
+    "mean": 0.67,
+    "max": 4,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.7,
+    "max": 3.3,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.65,
+    "max": 24.7,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "medium": {
+   "trail": {
+    "mean": 0.46,
+    "max": 2.3,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.31,
+    "max": 2.3,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.76,
+    "max": 48,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "ultra": {
+   "trail": {
+    "mean": 0.63,
+    "max": 2.7,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0.66,
+    "max": 3.3,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0.69,
+    "max": 18.3,
+    "n": 143712
+   },
+   "maskPx": 8260
+  },
+  "low": {
+   "trail": {
+    "mean": 0,
+    "max": 0,
+    "n": 8260
+   },
+   "trailVsBg": {
+    "mean": 0,
+    "max": 0,
+    "n": 8260
+   },
+   "whole": {
+    "mean": 0,
+    "max": 0,
+    "n": 143712
+   },
+   "maskPx": 8260
+  }
+ }
+}
