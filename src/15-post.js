@@ -831,22 +831,12 @@ post.render = function (dt) {
   if (inf.drawCalls !== c0) S.drawClk = S.clk;
 };
 // precompiles the scene materials for the pipeline's scene pass (MRT variants); await it behind a loading card
-// (not PassNode.compileAsync: it keeps the pass's render target and MRT set on the renderer while it awaits the
-// programs, so frames drawn meanwhile — the game keeps running behind the Act 2 card — would render into the pass's own
-// target instead of the screen. The renderer builds the pipelines synchronously for the target set at call time: set
-// it, start the compile, restore at once, then wait.)
-post.compileAsync = async function () {
-  const G = S.G, r = K.view && K.view.renderer, sp = G && G.named.scene, V = K.view;
-  if (!S.active || !sp || !r || !sp.renderTarget) return false;
-  const rt0 = r.getRenderTarget(), mrt0 = r.getMRT();
-  let p;
-  try {
-    r.setRenderTarget(sp.renderTarget); r.setMRT(typeof sp.getMRT === "function" ? sp.getMRT() : null);
-    p = r.compileAsync(V.scene, V.camera);
-  } catch (e) { console.warn('Kit Rush 3D: post compile', e); p = null; }
-  finally { r.setRenderTarget(rt0); r.setMRT(mrt0); }
-  try { if (p) await p; return !!p; } catch (e) { console.warn('Kit Rush 3D: post compile', e); return false; }
-};
+// Precompiling the scene pass's MRT variants does not work in three r186: renderer.compileAsync() builds the pipelines
+// for the render context of call depth 0, while the scene pass renders at call depth 1 inside the pipeline (another
+// context: on WebGPU those pipelines lack the depth format and fail), and PassNode.compileAsync() keeps the pass's
+// target bound while it awaits (frames drawn meanwhile go to that target: the canvas freezes). 90-main draws one
+// warm-up frame through the pipeline behind the loading screen instead. Kept so callers need no change.
+post.compileAsync = function () { return Promise.resolve(false); };
 post.setQuality = function (q) {
   if (QUALITIES.indexOf(q) < 0) return post.quality;
   post.quality = q;

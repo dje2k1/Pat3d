@@ -216,8 +216,10 @@ builders (post, kit, world, city, vehicles, entities) then replaced every placeh
 - API (unchanged for callers): `init, ok, render(dt), setQuality(q), quality, setSuperRes(on), superRes, upscaler,
   setUpscaler, cinematic(on, {focus, letterbox, dof}), speed(v), flash(color, s), setSun(dir, hex)` (the shafts also
   follow the scene's brightest visible DirectionalLight), `refreshEnvironment(pos, {floor, floorOpacity, floorColor,
-  intensity})`, `envMap, letterbox, uHDR` (TSL uniform, 1 while the pipeline runs), `compileAsync()` (precompiles the
-  scene pass's MRT variants; 90-main awaits it after `renderer.compileAsync` at boot and behind the Act 2 card),
+  intensity})`, `envMap, letterbox, uHDR` (TSL uniform, 1 while the pipeline runs), `compileAsync()` (kept for callers,
+  resolves false: in r186 `renderer.compileAsync` builds pipelines for the render context of call depth 0 while the
+  scene pass renders at depth 1, and `PassNode.compileAsync` keeps its target bound across its awaits, which froze the
+  canvas; 90-main instead draws one warm-up frame through the pipeline behind the boot loading screen),
   `stats()` ({ok, quality, superRes, upscaler, upscale, scale, internal, output, aa, ao, ssrOn, passes, cost, builds,
   gfx, calls, tris, sceneCalls, sceneTris, speed, cinematic, letterbox, sunVis, dof, …}), `look` / `uniforms` (grade
   numbers, live uniforms), `rebuild()`, `_state` (dev probes). `?nopost` → `K.post.ok = false`, direct rendering.

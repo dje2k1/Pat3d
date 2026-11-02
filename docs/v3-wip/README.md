@@ -15,7 +15,7 @@ its "Foundation notes" section.
 | Act 2 city (`src/25-city.js`) | done | `dev/city/report.json`, `dev/city/STATUS.md` |
 | Vehicles (`src/26-vehicles.js`) | done | `dev/vehicles/report.json`, `dev/vehicles/STATUS.md` |
 | Entities (`src/40-entities.js`) | done | `dev/entities/report.json`, `dev/entities/STATUS.md` |
-| Integrate | in progress: K.tex texture-size fix, compileAsync after precompile, results DOF, Act 2 loading bar done in src (to verify); README/SPEC3/e2e/post/city edits under way; checklist in `dev/integrator/STATUS.md` | `dev/integrator/STATUS.md`, prompt `dev/lead/prompt-integrate.md` |
+| Integrate | done (see `dev/integrator/report.json`, `dev/integrator/STATUS.md`): requests resolved, e2e WebGL 2 + WebGPU green, budgets measured, README / screenshots / SPEC3 notes updated | `dev/integrator/STATUS.md`, prompt `dev/lead/prompt-integrate.md` |
 | Review (gameplay + visual), fix | not started | prompts in `workflow-v3-resume.js` |
 
 ## Resuming

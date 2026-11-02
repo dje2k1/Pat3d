@@ -162,6 +162,7 @@ const V = {
   a2orbit: { act: 2, fn: () => { S.toFlight(); T.ticks(70); S.settle(2); } },
   a2orbit2: { act: 2, fn: () => { S.toFlight(); T.ticks(150); S.settle(2); } },
   a2flight: { act: 2, fn: () => { S.toFlight(); T.until(() => __K.board.timeScale >= 1 && __K.board.stats().flightU > 0.38, 3000); S.settle(2); } },
+  a2flight2: { act: 2, fn: () => { S.toFlight(); T.until(() => __K.board.timeScale >= 1 && __K.board.stats().flightU > 0.62, 4000); S.settle(2); } },
   a2goal: { act: 2, fn: () => { S.toFlight(); T.until(() => __K.board.mode === 'land' || __K.game.state !== 'play', 6000); T.ticks(40); S.settle(); } },
   a2waterfront: { act: 2, fn: () => { S.place(S.f('t3b') + 40, 0, 12); T.ticks(30); S.settle(); } },
   a2skysun: { act: 2, fn: () => { const K = __K; S.place(S.f('iA0') + 20, 0); T.ticks(5); S.freeze2(); const a = K.city.routePoint(S.f('iA0') + 20, -10, 8), d = K.city.sunDir; S.camXYZ([a.x, a.y, a.z], [a.x + d.x * 100, a.y + 14, a.z + d.z * 100], 70); S.still(); } },

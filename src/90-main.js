@@ -165,9 +165,7 @@ function precompile() {
   if (!r || typeof r.compileAsync !== 'function') return Promise.resolve();
   let p;
   try { p = r.compileAsync(V.scene, V.camera); } catch (e) { return Promise.resolve(); }
-  // then the render pipeline's scene pass (its MRT outputs are other variants of every material)
-  return Promise.resolve(p).then(() => (postOn() && typeof K.post.compileAsync === 'function' ? K.post.compileAsync() : null))
-    .catch(e => console.warn('Kit Rush 3D: precompile', e));
+  return Promise.resolve(p).catch(e => console.warn('Kit Rush 3D: precompile', e));
 }
 function toTitle() {
   setAct(1);
@@ -1376,9 +1374,12 @@ function frame(now) {
   acc += dt;
   let n = 0;
   if (!fatal) {
-    // (1 µs of slack: at 120 Hz two refresh periods add up to the step only up to floating-point rounding, and a tick
-    // slipping to the next refresh would show as a judder)
-    while (acc >= STEP - 1e-6 && n < 4) { ipSnap(); try { step(); } catch (e) { report(e); } acc -= STEP; n++; }
+    // (without blending — refresh rates that are multiples of the tick, like 120 Hz — 1 µs of slack: two refresh periods
+    // add up to the step only up to floating-point rounding, and a tick slipping to the next refresh would judder; with
+    // blending the remainder must stay exact, it is the blend factor)
+    const slack = IP.on ? 0 : 1e-6;
+    while (acc >= STEP - slack && n < 4) { ipSnap(); try { step(); } catch (e) { report(e); } acc -= STEP; n++; }
+    if (acc < 0) acc = 0;
     if (n === 4) acc = 0;
   } else { acc = 0; n = 1; G.clock += dt; }
   // blended frames are drawn on every refresh up to about 110 Hz (every other one at 144 Hz and above), so the GPU
@@ -1490,6 +1491,9 @@ async function bootAsync(data) {
   G.bootP = 0.85;
   needDraw = true;
   await precompile();
+  // one frame through the render pipeline behind the loading screen: its passes and the scene's MRT variants are
+  // created now rather than on the title's first frames
+  if (postOn() && V.ok && !V.lost) { try { V.beginFrame(); K.post.render(); V.endFrame(); } catch (e) { console.warn('Kit Rush 3D: warm-up frame', e); } }
   G.bootP = 1;
   G.booted = true;
   needDraw = true;
