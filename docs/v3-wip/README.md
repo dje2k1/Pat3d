@@ -16,11 +16,12 @@ its "Foundation notes" section.
 | Vehicles (`src/26-vehicles.js`) | done | `dev/vehicles/report.json`, `dev/vehicles/STATUS.md` |
 | Entities (`src/40-entities.js`) | done | `dev/entities/report.json`, `dev/entities/STATUS.md` |
 | Integrate | done (see `dev/integrator/report.json`, `dev/integrator/STATUS.md`): requests resolved, e2e WebGL 2 + WebGPU green, budgets measured, README / screenshots / SPEC3 notes updated | `dev/integrator/STATUS.md`, prompt `dev/lead/prompt-integrate.md` |
-| Review (gameplay + visual), fix | not started | prompts in `workflow-v3-resume.js` |
+| Review (gameplay + visual) | running (2026-11-02) | `dev/lead/prompt-review-{gameplay,visual}.md`, progress in `dev/review-*/STATUS.md` |
+| Fix | not started | prompt from `workflow-v3-resume.js` (FIXER), with both reviewers' findings |
 
 ## Resuming
 
-Next step: resume the integrator with `dev/lead/prompt-integrate.md` (it continues from `dev/integrator/STATUS.md`), then run the two reviewers and the fixer from `workflow-v3-resume.js`.
+Next step: let the two reviewers finish (or resume them: they continue from `dev/review-*/STATUS.md`), then run the fixer from `workflow-v3-resume.js` with their findings (`dev/review-*/report.json`).
 
 
 `workflow-v3.js` is the full workflow script (foundation → 6 builders → integrate → 2 reviewers → fix).
