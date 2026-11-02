@@ -84,7 +84,13 @@
   All other run4 checks are unaffected (the tests' tick pumping runs with IP off, same as run4).
 - S3: run5 = final full WebGL 2 run on this build -> logs/run5-gl.log; probe of interpolation with 7 start offsets
   (dev/integrator/probe-interp.js) running.
-- NEXT: run4 result -> README numbers (__CHECKS__, __MINUTES__) -> mkreport.py -> final message with the JSON.
+- S3: final WebGPU on this build: 6/6 in 311 s (logs/run5-gpu.log). Interpolation probe with 3 start offsets: CV 0 at
+  90/120/144 Hz (logs/probe-interp.log). run5 GL killed by the usage limit at 67 PASS / 0 FAIL.
+- S4 (resumed, tree 0cb0d36): run6 = final full WebGL 2 run -> logs/run6-gl.log; README numbers filled (85 checks,
+  ~35 min, WebGPU 6). mkreport.py reads run6-gl + run5-gpu.
+- S4: run6 FINAL full WebGL 2: 85/85 in 1808 s (logs/run6-gl.log). README time -> ~30 min. report.json written by
+  dev/integrator/mkreport.py. INTEGRATION DONE (all checklist items).
+- (old) NEXT: run4 result -> README numbers (__CHECKS__, __MINUTES__) -> mkreport.py -> final message with the JSON.
 - NEXT (old): run2 result; WebGPU suite; shots: presets (q=..), phone Moyen (--phone --hud), WebGPU pair, docs (--hud);
   docs/screenshots JPEGs (dev/integrator/docshots.py name=src.png ...); README numbers; report.json.
 - Looked: no cyan cast found into the low sun (waterfront/west/pier, Élevé + Ultra): warm glare; close headlights at
