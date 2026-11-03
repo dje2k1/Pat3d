@@ -17,11 +17,12 @@ its "Foundation notes" section.
 | Entities (`src/40-entities.js`) | done | `dev/entities/report.json`, `dev/entities/STATUS.md` |
 | Integrate | done (see `dev/integrator/report.json`, `dev/integrator/STATUS.md`): requests resolved, e2e WebGL 2 + WebGPU green, budgets measured, README / screenshots / SPEC3 notes updated | `dev/integrator/STATUS.md`, prompt `dev/lead/prompt-integrate.md` |
 | Review (gameplay + visual) | done (2026-11-03): 1 blocker, 5 major, 6 minor | `dev/review-{gameplay,visual}/report.json` |
-| Fix | running (2026-11-03) | `dev/lead/prompt-fix.md`, progress in `dev/fixer3/STATUS.md` |
+| Fix | done (2026-11-03): 12/12 findings fixed, WebGL 2 e2e 99/99, WebGPU 6/6 | `dev/fixer3/report.json` |
+| Lead verification, publish | running | then merge into `main` (GitHub Pages) |
 
 ## Resuming
 
-Next step: let the fixer finish (or resume it with `dev/lead/prompt-fix.md`: it continues from `dev/fixer3/STATUS.md`), then the lead verifies and merges v3 into `main`.
+Next step: the lead verifies (WebGPU suite, WebGL 2 v3/fix3/present suites, screenshots) and merges v3 into `main`.
 
 
 `workflow-v3.js` is the full workflow script (foundation → 6 builders → integrate → 2 reviewers → fix).
