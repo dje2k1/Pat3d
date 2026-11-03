@@ -38,8 +38,8 @@ change complètement.
 - **Navigateurs** : un navigateur récent (Chrome, Edge, Firefox ou Safari). Le menu Pause affiche le moteur utilisé
   (« Rendu : WebGPU » ou « Rendu : WebGL 2 »). Ajouter `?gl` à l'adresse force WebGL 2.
 - **Version classique** : si le jeu ne démarre pas ou rame trop sur ton appareil, la version 2 (plus légère, three.js
-  r128) reste disponible dans `legacy/`, via la ligne « Version classique » du menu Pause ou le lien de l'écran
-  d'erreur.
+  r128) reste disponible dans `legacy/`, via la ligne « Version classique » du menu Pause (le jeu demande
+  « Quitter la partie ? » : choisis-la une seconde fois pour confirmer) ou le lien de l'écran d'erreur.
 - **En local** : les modules JavaScript ne se chargent pas depuis un fichier ouvert directement (`file://`), il faut un
   petit serveur : `node test/serve.js 8080` puis http://127.0.0.1:8080/ (n'importe quel serveur de fichiers statiques
   convient). Le jeu fonctionne aussi depuis un sous-dossier, comme `/Pat3d/` sur GitHub Pages.
@@ -70,7 +70,7 @@ Le menu Pause propose quatre niveaux de qualité, mémorisés d'une partie à l'
 
 | Niveau | Pour qui | Ce qu'il contient |
 |---|---|---|
-| **Ultra** | PC puissant | tout : éclairage indirect et occlusion (SSGI), réflexions, ombres en cascade, fourrure à 16 couches, herbe dense, textures complètes |
+| **Ultra** | PC puissant | tout : éclairage indirect (SSGI), occlusion ambiante, réflexions, ombres en cascade, fourrure à 16 couches, herbe dense, textures complètes |
 | **Élevé** | PC (par défaut) | occlusion ambiante, réflexions, ombres en cascade, rayons de soleil, fourrure à 10 couches |
 | **Moyen** | téléphone (par défaut) | occlusion ambiante, une ombre qui suit Kit, fourrure à 6 couches, moins d'herbe, textures allégées |
 | **Économie** | petite configuration | rendu simple et rapide : halo léger, anti-crénelage FXAA, pas de fourrure ni de brins d'herbe |

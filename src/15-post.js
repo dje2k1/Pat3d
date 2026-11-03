@@ -148,14 +148,17 @@ class PostAuxNode extends THREE.Node {
     const sn = m && m.ssrNode && m.ssrNode.isNode ? m.ssrNode : null;
     const see = !!m && !sn && (m.transparent === true || m.depthWrite === false || (m.blending !== NORMAL_BLEND && m.blending !== NO_BLEND));
     if (!m || see) return vec4(0);
+    // velocity .w: 1 = blur as usual, 2 = keep sharp (Kit: userData.postSharp, see the motion blur in compose()); the
+    // cleared background / sky read 0 (blurred like 1). TRAA and SSR read .xy only.
+    const mbw = m.userData && m.userData.postSharp ? 2 : 1;
     const ssrS = () => sn ? tclamp(float(sn), 0, 1) : float(0);
     const ssrR = () => !sn ? float(1) : tclamp(float(m.ssrRoughnessNode && m.ssrRoughnessNode.isNode ? m.ssrRoughnessNode : m.isMeshStandardNodeMaterial ? roughness : float(0)), 0, 1);
     switch (this.kind) {
       case 'normal': return vec4(normalView, 1);
-      case 'velocity': return vec4(velocity, 0, 1);
+      case 'velocity': return vec4(velocity, 0, mbw);
       // velocity + the SSR mask packed in .z (strength 5 bits x 64 + roughness 6 bits: integers < 2048, exact in
       // half float), so Ultra's MRT stays within WebGPU's 32 bytes per sample (4 attachments of 8)
-      case 'velssr': return vec4(velocity, tfloor(ssrS().mul(31).add(0.5)).mul(64).add(tfloor(ssrR().mul(63).add(0.5))), 1);
+      case 'velssr': return vec4(velocity, tfloor(ssrS().mul(31).add(0.5)).mul(64).add(tfloor(ssrR().mul(63).add(0.5))), mbw);
       case 'diffuse': return vec4(diffuseColor.rgb, 1);
       default: return sn ? vec4(ssrS(), ssrR(), 0, 1) : vec4(0, 1, 0, 1);
     }
@@ -294,11 +297,20 @@ function buildGraph(cfg, sr) {
     else if (LOOK.debug === 'ssgi-gi') lit = lit.add(alb.rgb.mul(giT.rgb).mul(U.gi));
     else if (LOOK.debug === 'alb') lit = alb.rgb;
     else {
+      // the AO comes from GTAO (as on Élevé), SSGI gives the bounce light only: with 2 slices x 8 steps its AO
+      // undersampled the thin alpha-tested grass blades, whole blades flickered from frame to frame (about 3x Élevé)
+      const ga = track(G, postGTAO(depth, nrm, cam), 'gtao');
+      ga.resolutionScale = s * cfg.aoRes;
+      ga.samples.value = cfg.aoN;
+      ga.radius.value = 1.1; ga.thickness.value = 1.2; ga.distanceExponent.value = 1.4; ga.scale.value = 1.0;
+      ga.useTemporalFiltering = true;
       // (a vec3 select() on this condition compiled to black on the WebGL 2 backend: float factors only)
       const ground = select(sky, float(0), float(1));
-      lit = lit.mul(mix(float(1), aoT.r, U.ao.mul(ground))).add(alb.rgb.mul(giT.rgb).mul(U.gi.mul(ground)));
+      lit = lit.mul(mix(float(1), ga.getTextureNode().r, U.ao.mul(ground))).add(alb.rgb.mul(giT.rgb).mul(U.gi.mul(ground)));
+      G.passes.push('gtao(x' + +(s * cfg.aoRes).toFixed(2) + ')');
+      G.cost.push(['gtao', s * cfg.aoRes, cfg.aoN / 4]);
     }
-    G.passes.push('ssgi(ao+gi)');
+    G.passes.push('ssgi(gi)');
     G.cost.push(['ssgi', 1, 6]);
   }
   if (useSSR) {
@@ -464,13 +476,20 @@ function buildGraph(cfg, sr) {
     }
     if (mbN > 0) {
       If(U.mb.greaterThan(0.002), () => {
-        const v = vel.sample(u).xy.mul(vec2(0.5, -0.5)).mul(U.mbVel);
-        const dir = v.add(d.mul(U.speed.mul(0.085).mul(smoothstep(0.02, 0.6, r2)))).mul(U.mb).toVar();
+        const vs = vel.sample(u).toVar();
+        const v = vs.xy.mul(vec2(0.5, -0.5)).mul(U.mbVel);
+        // Kit's pixels (velocity .w = 2) stay sharp, and no tap takes his colour into the background around him
+        const keep = step(vs.w, 1.5);
+        const dir = v.add(d.mul(U.speed.mul(0.085).mul(smoothstep(0.02, 0.6, r2)))).mul(U.mb.mul(keep)).toVar();
         const L = tlength(dir).toVar();
         dir.mulAssign(tmin(float(1), float(0.05).div(tmax(L, 1e-5))));
-        const acc = col3.toVar();
-        Loop(mbN, ({ i }) => { acc.addAssign(src.sample(u.sub(dir.mul(float(i).add(1).div(mbN)))).rgb); });
-        col3.assign(acc.div(mbN + 1));
+        const acc = col3.toVar(), wsum = float(1).toVar();
+        Loop(mbN, ({ i }) => {
+          const ut = u.sub(dir.mul(float(i).add(1).div(mbN))).toVar();
+          const wt = step(vel.sample(ut).w, 1.5);
+          acc.addAssign(src.sample(ut).rgb.mul(wt)); wsum.addAssign(wt);
+        });
+        col3.assign(acc.div(wsum));
       });
     }
     if (dofTex) {

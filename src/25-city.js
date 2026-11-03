@@ -513,7 +513,9 @@ kd(KIND.plank, [LY.planks, 0.5, 0.5, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.metal, [LY.metal, 2, 2, 0, 0.7, 1, 0, 0, 1, 0, 0.6]);
 kd(KIND.glow, [LY.paintwood, 1, 1, 0, 0, 0, 0.35, 0, 0, 0, 0]);
 kd(KIND.leaf, [LY.leaves, 1.1, 1.1, 2, 1, 1, 0, 0, 0, 1, 1]);
-kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.45, 0.24, 0.9, 0, 0, 0.3]);
+// (rails: worn, rougher, half-metal steel: at 0.9 metalness they mirrored the blue sky as painted strips in the shade
+// and clipped into the low sun)
+kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.3, 0.44, 0.55, 0, 0, 0.3]);
 kd(KIND.dentil, [LY.dentil, 0.65, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.scales, [LY.scales, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.facade, [LY.siding, 0.92, 0.92, 0, 0.8, 1, 0, 0, 0, 0, 1]);
@@ -748,6 +750,9 @@ function cityMaterial(opts) {
     try { K.post.ssr(m, tmax(tmax(pud.mul(0.6), wet.mul(0.25)), tmax(gW.mul(0.35), isK(30).mul(0.2)))); }
     catch (e) { console.warn('Kit Rush 3D: city SSR opt-in failed', e); }
   }
+  // rails: the sun glint on the steel is capped (looking into the low sun the rails clipped to white and bloomed)
+  const mRail = isK(KIND.rail);
+  m.outputNode = vec4(mix(TSL.output.rgb, tmin(TSL.output.rgb, vec3(1.1)), mRail), TSL.output.a);
   m.userData.dbg = { A, A1, A2, N1, uv, uv2, wb, tint, base, interior, glassM, nxy, vc, texC, macro, wet, pud, patch };
   if (opts.position) m.positionNode = opts.position(positionLocal);
   return m;
@@ -1153,6 +1158,7 @@ function proxyMesh(list) {
 // ===================== static city: streets =====================
 const ASPH = lin('#67666b'), SLAB = lin('#c9c2b4'), CURBC = lin('#b5ada0'), WHITEP = lin('#f2f0e8'), YELLOWP = lin('#f2c230');
 const BANKC = lin('#b3ab9e');
+const RAILC = lin('#8e8a84'); // the cable-car rails: worn, slightly warm steel
 const IRON = lin('#2c2f33'), POLE = lin('#1f2a26'), LAMPC = lin('#ffd9a0'), STEEL = lin('#a9adb3'), WOOD = lin('#9a7a58'), CONC = lin('#bdb6aa');
 const CHUNK = 150;
 const CK = { list: [] };          // chunks along the route: {mb, wires: [], s0}
@@ -1555,7 +1561,10 @@ function foliageMaterial() {
   // per-plant tint (the texture is authored grey-green), darker inside the crown (normal pointing down / inwards)
   const albedo = tx.xyz.mul(vc).mul(mix(float(2.0), float(2.6), leaf));
   m.colorNode = vec4(albedo, tx.w);
-  m.alphaTest = 0.5;
+  // cut-out through the node (material.alphaTest stays 0): r186 copies material.alphaTest onto the one shared shadow
+  // override material, whose version then bumps on every 0 <-> 0.5 switch between casters, and ~75 shadow render
+  // objects per frame rebuilt their cache key (~1 MB of garbage per frame). maskShadowNode cuts the shadow.
+  m.alphaTestNode = float(0.5);
   m.maskShadowNode = tx.w.greaterThan(0.5);
   m.normalNode = normalViewGeometry;
   m.roughnessNode = mix(float(0.85), float(0.62), leaf);
@@ -1772,7 +1781,7 @@ function buildTracks() {
     const e = Math.min(end, s + CHUNK);
     const mb = chunk(s + 1).mb;
     for (const ln of [-LANE, LANE]) {
-      for (const o of [-0.55, 0.55]) stripe(mb, s, e, ln + o - 0.045, ln + o + 0.045, STEEL, KIND.rail, 0.014);
+      for (const o of [-0.55, 0.55]) stripe(mb, s, e, ln + o - 0.045, ln + o + 0.045, RAILC, KIND.rail, 0.014);
       stripe(mb, s, e, ln - 0.025, ln + 0.025, IRON, KIND.metal, 0.011);
     }
   }
@@ -2706,11 +2715,22 @@ function fogMesh() {
   const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, fog: false });
   const aOff = attribute('aOff', 'vec4');
   const c0 = aOff.xyz.add(vec3(tsin(U.time.mul(0.05).add(aOff.x)).mul(8), 0, 0));
-  m.vertexNode = billboard(c0, aOff.w);
+  const fvp = modelViewMatrix.mul(vec4(c0, 1)).add(vec4(positionGeometry.xy.mul(aOff.w), 0, 0));
+  m.vertexNode = cameraProjectionMatrix.mul(fvp);
+  // height of this point of the billboard above the bay (water at y = 0): the bank thins out to nothing at the water
+  // line, so the billboard plane never cuts the water with a straight edge (at a grazing angle no depth fade can hide
+  // that line: a few metres of depth per pixel row there)
+  const fH = TSL.cameraWorldMatrix.mul(fvp).y.toVarying('vFogH');
   const tx = ttexture(fogTexture(), tuv());
   const uLit = uniform(lin('#ffd4b0')), uShade = uniform(lin('#b9a3b3'));
   m.colorNode = mix(uShade, uLit.mul(mix(float(1), float(1.35), U.hdr)), smoothstep(0.2, 0.9, tuv().y));
-  m.opacityNode = tx.a.mul(0.85).mul(smoothstep(30.0, 160.0, viewDepth(c0))).mul(softFade(viewDepth(c0), 12));
+  // soft against the water / scene: a fade range in proportion to the bank's size (a fixed 12 m collapsed to 1-3 pixel
+  // rows on water seen at a grazing angle: a hard straight line across the bay), and an edge window so the blobs the
+  // canvas clips never show the billboard's border
+  const fu = tuv();
+  const win = smoothstep(0.0, 0.2, fu.x).mul(smoothstep(1.0, 0.8, fu.x)).mul(smoothstep(0.0, 0.12, fu.y)).mul(smoothstep(1.0, 0.88, fu.y));
+  const hFade = smoothstep(0.0, aOff.w.mul(0.2), fH);
+  m.opacityNode = tx.a.mul(0.85).mul(win).mul(hFade).mul(smoothstep(30.0, 160.0, viewDepth(c0))).mul(softFade(viewDepth(c0), aOff.w.mul(0.45)));
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false; mesh.renderOrder = 4;
   return mesh;
@@ -3517,7 +3537,12 @@ function buildLights() {
   const sunC = mkSun(2048, 60);
   sunC.shadow.bias = -0.0005; sunC.shadow.normalBias = 0.04;
   sunC.visible = false;
-  ST.sunS = sunS; ST.sunC = sunC; ST.sun = sunS;
+  // Économie ('cheap'): its own 1024 light over a 36 m box, as on the island. A live shadow map is never resized:
+  // r186's ShadowNode re-creates a resized target, but bindings kept the destroyed depth texture (black view on
+  // WebGPU, deleted-texture binds on WebGL 2 after Économie -> Moyen -> Économie)
+  const sunL = mkSun(1024, 36);
+  sunL.visible = false;
+  ST.sunS = sunS; ST.sunC = sunC; ST.sunL = sunL; ST.sun = sunS;
   if (typeof CityCSMShadowNode === 'function') {
     try {
       const csm = new CityCSMShadowNode(sunC, { cascades: 3, maxFar: 280, mode: 'practical', lightMargin: 160 });
@@ -3544,15 +3569,12 @@ function applyShadows(mode) {
   if (csm && !ST.csm.camera && K.view && K.view.camera && K.view.renderer) {
     try { ST.csm._init({ camera: K.view.camera, renderer: K.view.renderer }); } catch (e) { console.warn('Kit Rush 3D: CSM init failed', e); ST.csm = null; return applyShadows('single'); }
   }
-  ST.sunC.visible = csm; ST.sunS.visible = !csm;
-  ST.sun = csm ? ST.sunC : ST.sunS;
   ST.shadowMode = csm ? 'csm' : mode === 'cheap' ? 'cheap' : 'single';
-  // Économie ('cheap'): a 1024 map over a smaller box round Kit, as on the island
-  const cheap = ST.shadowMode === 'cheap', size = cheap ? 1024 : ST.shadowSize0, ext = cheap ? 36 : ST.shadowExt0;
-  const sh = ST.sunS.shadow, sc = sh.camera;
-  if (sh.mapSize.x !== size) { sh.mapSize.set(size, size); if (sh.map) { sh.map.dispose(); sh.map = null; } }
-  if (ST.shadowExt !== ext) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
-  ST.shadowSize = size; ST.shadowExt = ext;
+  const cheap = ST.shadowMode === 'cheap';
+  ST.sunC.visible = csm; ST.sunS.visible = !csm && !cheap; ST.sunL.visible = cheap;
+  ST.sun = csm ? ST.sunC : cheap ? ST.sunL : ST.sunS;
+  // (the box placement snaps to the texels of the active single map)
+  ST.shadowSize = cheap ? 1024 : ST.shadowSize0; ST.shadowExt = cheap ? 36 : ST.shadowExt0;
   ST.csmKey = '';
   placeSun();
 }
@@ -3565,7 +3587,7 @@ function placeSun() {
   const u = Math.round(f.dot(_sr) / texel) * texel, v = Math.round(f.dot(_su) / texel) * texel, w = f.dot(SUN_DIR);
   _sp.copy(_sr).multiplyScalar(u).addScaledVector(_su, v).addScaledVector(SUN_DIR, w);
   _sp.x += OX; _sp.z += OZ;
-  for (const sun of [ST.sunS, ST.sunC]) {
+  for (const sun of [ST.sunS, ST.sunC, ST.sunL]) {
     sun.target.position.copy(_sp);
     sun.position.copy(_sp).addScaledVector(SUN_DIR, 300);
     sun.target.updateMatrixWorld(); sun.updateMatrixWorld();

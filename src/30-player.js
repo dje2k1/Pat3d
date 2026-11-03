@@ -1369,8 +1369,15 @@ function create(scene) {
     resetPose();
     applyPose();
   }
+  postSharp(root); if (SC.mesh) postSharp(SC.mesh);
   R.stats.buildMs = Math.round(performance.now() - tc0);
   init(P.pos, 0);
+}
+// K.post keeps Kit sharp: his opaque materials tag the velocity buffer (.w = 2), the motion blur neither smears his own
+// pixels (he crosses the fixed loop camera at 30 m/s: a 1/60 s shutter turned him into a see-through ghost) nor drags
+// his colours into the background
+function postSharp(o) {
+  o.traverse(c => { const ms = c.material ? (Array.isArray(c.material) ? c.material : [c.material]) : []; for (const m of ms) m.userData.postSharp = true; });
 }
 // positions of a skinned mesh in its current pose (root space), as a plain geometry
 function bakePose(mesh) {
@@ -2927,6 +2934,7 @@ function buildBoard() {
   R.hwMesh.position.y = -0.12;
   deck.userData.noEnv = R.hwMesh.userData.noEnv = true;
   B.visible = false;
+  postSharp(B);
   R.root.add(B);
   R.wheelAng = 0;
 }

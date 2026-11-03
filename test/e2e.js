@@ -3,7 +3,8 @@
 //   default: every suite on the renderer's WebGL 2 backend (test.html?gl, Chromium + SwiftShader through ANGLE)
 //   --webgpu: the WebGPU suite (boot, Act 1 sample, Act 2 sample, presets, no errors) on WebGPU (SwiftShader Vulkan)
 //   --only=: desktop, valley, boss, act2, post, fullrun, regress, present, regress2, phone, v3 (backend, textures,
-//            budgets, legacy page, no GLSL), webgpu (same as --webgpu)
+//            budgets, legacy page, no GLSL), fix3 (v3 review findings), webgpu (same as --webgpu)
+//   --page=<path>: the page to test instead of test.html (e.g. a private build under dev/)
 // ES modules do not load from file://: test/serve.js serves the repository on 127.0.0.1 (a free port).
 // The game's rAF loop is driven deterministically by the test (fixed 60 Hz ticks, rendering only when a frame is
 // needed). Keyboard input goes through real key events; scripted bots set the analog stick through K.input.
@@ -22,7 +23,9 @@ const PHONE = !WEBGPU && !argv.includes('--no-phone') && (!ONLY || ONLY.includes
 const GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
 const GPU_ARGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader', '--use-webgpu-adapter=swiftshader'];
 let BASE = '';                         // http://127.0.0.1:<port>/ once the server runs
-const gameUrl = q => BASE + 'test.html' + (q != null ? q : WEBGPU ? '' : '?gl');
+const pageArg = argv.find(a => a.startsWith('--page='));
+const PAGE = pageArg ? pageArg.slice(7) : 'test.html';
+const gameUrl = q => BASE + PAGE + (q != null ? q : WEBGPU ? '' : '?gl');
 const BOOT_MS = WEBGPU ? 900000 : 300000; // SwiftShader compiles every pipeline on the CPU (WebGPU: minutes)
 
 const results = [];
@@ -546,6 +549,25 @@ async function phone(browser) {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   check('phone: SAUT button jumps', jumped >= 0, { ticks: jumped });
 
+  // v3 review: the pause button answers a tap while the other thumb holds the joystick (the browser sends no click for
+  // a second finger) and a tap right after a camera swipe (fling cancel: no click either); no double toggle
+  const pbB = await ev(page, () => { const b = document.getElementById('btnPause').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
+  const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+  const tapPause = async id => { await touch('touchStart', [{ x: pbB.x, y: pbB.y, id }]); await touch('touchEnd', []); await page.waitForTimeout(250); return ev(page, () => { T.ticks(2); return __K.game.paused; }); };
+  await touch('touchStart', [{ x: cx, y: cy, id: 11 }]); await touch('touchMove', [{ x: cx, y: cy - 50, id: 11 }]); await ev(page, () => T.ticks(5));
+  // (CDP touchEnd lists the points that are released)
+  await touch('touchStart', [{ x: cx, y: cy - 50, id: 11 }, { x: pbB.x, y: pbB.y, id: 12 }]); await touch('touchEnd', [{ x: pbB.x, y: pbB.y, id: 12 }]);
+  await page.waitForTimeout(250);
+  const pzStick = await ev(page, () => { T.ticks(2); return __K.game.paused; });
+  await touch('touchEnd', []); await ev(page, () => T.ticks(2));
+  const pzResume = await tapPause(13);
+  await touch('touchStart', [{ x: 560, y: 120, id: 14 }]);
+  for (let i = 1; i <= 8; i++) { await touch('touchMove', [{ x: 560 + i * 18, y: 120, id: 14 }]); await ev(page, () => T.ticks(1)); }
+  await touch('touchEnd', []); await ev(page, () => T.ticks(2));
+  const pzSwipe = await tapPause(15);
+  const pzEnd = await tapPause(16);
+  check('phone: the pause button answers a tap while the joystick is held and right after a camera swipe (pauses once, resumes)', pzStick === true && pzResume === false && pzSwipe === true && pzEnd === false, { pzStick, pzResume, pzSwipe, pzEnd });
+
   // Act 2 on the phone: pause button -> "Retour au titre" row -> tap the ACTE 2 chip, tap it again to start
   const gameBox = await ev(page, () => { const r = document.getElementById('game').getBoundingClientRect(); return { x: r.left, y: r.top }; });
   const tapRect = async r => { await page.touchscreen.tap(gameBox.x + r.x + r.w / 2, gameBox.y + r.y + r.h / 2); await ev(page, () => T.ticks(3)); };
@@ -554,6 +576,13 @@ async function phone(browser) {
   await ev(page, () => { T.ticks(2); T.frame(); });
   await shot(page, '16-phone-pause-graphics');
   let rects = await ev(page, () => __K.game.hudRects());
+  // v3 review: pause rows at least as tall as v2's (34 px on this phone); one tap on "Version classique" only asks
+  const rowH = rects.pause.map(r => +r.h.toFixed(1));
+  await tapRect(rects.pause[4]);
+  const ask = await ev(page, () => ({ ask: __K.game.legacyAsk, paused: __K.game.paused, state: __K.game.state, path: location.pathname }));
+  await ev(page, () => T.frame());
+  await shot(page, '16b-phone-pause-legacy-ask');
+  check('phone: pause rows are >= 34 px tall; one tap on "Version classique" asks "Quitter la partie ?" and stays in the game', rowH.length === 5 && rowH.every(h => h >= 33.5) && ask.ask && ask.paused && ask.state === 'play' && !/legacy/.test(ask.path), { rowH, ask });
   await tapRect(rects.pause[3]);
   const st0 = await ev(page, () => __K.game.state);
   await ev(page, () => { T.ticks(30); T.frame(); });
@@ -1344,7 +1373,7 @@ async function v3Checks(browser) {
     const errors2 = [];
     await preparePage(page2, errors2);
     await page2.addInitScript(() => { try { Object.defineProperty(Navigator.prototype, 'gpu', { get: () => undefined, configurable: true }); } catch (e) { /* ignore */ } });
-    await bootPage(page2, BASE + 'test.html');
+    await bootPage(page2, BASE + PAGE);
     const b2 = await ev(page2, () => { T.ticks(30); const g = T.glStats(); return { backend: __K.view.backend, forceGL: __K.view.forceGL, state: __K.game.state, mean: g.mean, label: (__K.game.state === 'title') }; });
     // the pause menu says which renderer runs
     const pause = await ev(page2, () => { const G = __K.game; T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'play', 300); T.tapKey('Escape'); T.ticks(3); T.frame(); return { paused: G.paused, rows: G.hudRects().pause.length }; });
@@ -1488,9 +1517,239 @@ async function v3Checks(browser) {
   }
 }
 
+// ---------- regression checks for the v3 review findings (dev/fixer3) ----------
+// Staging helpers (in the page): Act 1 views by route z / offset, Act 2 by route s; frames drawn with T.frame() are
+// read back with T.grab() in the same task (keeps their motion blur), stills with T.renderNow().
+const FIX3_STAGE = () => {
+  const K = __K, G = K.game, P = K.player, W = K.world, V3 = THREE.Vector3;
+  const S = window.S3 = {};
+  S.act = a => {
+    if (G.act === a && G.state === 'play') return G.state;
+    if (G.state !== 'title') T.toTitle();
+    T.ticks(30);
+    if (G.sel !== a) { const k = a === 2 ? 'ArrowRight' : 'ArrowLeft'; T.key(k, true); T.ticks(3); T.key(k, false); T.ticks(3); }
+    T.tapKey('Space'); T.ticks(4); T.until(() => G.state === 'card', 600); T.until(() => G.state === 'play', 600);
+    return G.state;
+  };
+  S.at = (z, d) => {
+    let x = 0;
+    for (let i = 0; i < 6; i++) { const ri = W.routeInfo(x, z); if (!ri) break; x -= ri.right.x * ri.d; }
+    const ri = W.routeInfo(x, z);
+    return { x: x + ri.right.x * d, z: z + ri.right.z * d, yaw: Math.atan2(-ri.dir.x, -ri.dir.z) };
+  };
+  S.freeze = () => { if (!S._cu) { S._cu = K.camera.update; K.camera.update = () => {}; } };
+  S.thaw = () => { if (S._cu) { K.camera.update = S._cu; S._cu = null; } };
+  S.follow = (z, d, ticks) => {
+    S.thaw();
+    const a = S.at(z, d), g = W.ground(a.x, a.z, 1e4);
+    P.init(new V3(a.x, g ? g.y : 30, a.z), a.yaw); P.invT = 0;
+    K.camera.setMode('follow', { snap: true, yaw: a.yaw });
+    T.ticks(ticks || 60);
+  };
+  S.cam = c => {
+    const a = S.at(c[0], c[1]), b = S.at(c[3], c[4]), cam = K.view.camera;
+    cam.position.set(a.x, Math.max(W.terrainY(a.x, a.z), 0) + c[2], a.z);
+    cam.lookAt(b.x, Math.max(W.terrainY(b.x, b.z), 0) + c[5], b.z);
+    cam.fov = c[6] || 62; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+    S.freeze();
+  };
+  S.fov = () => { const cam = K.view.camera; cam.fov = 62; cam.updateProjectionMatrix(); };
+  S.settle = n => { P.invT = 0; for (let i = 0; i < (n || 6); i++) T.frame(); return T.grab(); };
+  S.still = n => { if (P.invT > 0) { P.invT = 0; T.ticks(1); } for (let i = 0; i < (n || 6); i++) T.renderNow(); return T.grab(); };
+  // Act 2
+  S.board = () => K.board;
+  S.freeze2 = () => { if (!S._cb) { S._cb = K.board.camera; K.board.camera = () => {}; } };
+  S.thaw2 = () => { if (S._cb) { K.board.camera = S._cb; S._cb = null; } };
+  S.place = (s, d, v) => { S.thaw2(); T.place2(s, d, v); P.invT = 9; };
+  S.cam2 = (s, d, h, s2, d2, h2, fov) => {
+    const C = K.city, cam = K.view.camera, a = C.routePoint(s, d, h), b = C.routePoint(s2, d2, h2);
+    cam.position.copy(a); cam.lookAt(b); cam.fov = fov || 62; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+    S.freeze2();
+  };
+  S.restore = () => { T.stop(); T.pre = null; S.thaw(); S.thaw2(); S.fov(); };
+  // Kit's centre on the canvas (device pixels)
+  S.kitPx = () => {
+    const v = P.center().clone().project(K.view.camera), c = K.view.renderer.domElement;
+    return [Math.round((v.x + 1) / 2 * c.width), Math.round((1 - v.y) / 2 * c.height)];
+  };
+  // canvas pixels for a box given in the 1280 x 720 page layout (the canvas starts after the 16 px side gutter)
+  S.bx = b => { const c = K.view.renderer.domElement, sx = c.width / K.view.W, ox = (innerWidth - K.view.W) / 2; return [(b[0] - ox) * sx, b[1] * sx, (b[2] - ox) * sx, b[3] * sx]; };
+  return true;
+};
+async function regressV3(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await ctx.newPage();
+  const errors = [], glWarn = [];
+  await preparePage(page, errors);
+  // a frozen performance.now() for the still-frame sequence (only the TAA jitter moves)
+  await page.addInitScript(`(() => { const pn = performance.now.bind(performance); let f = null; performance.now = () => f != null ? f : pn(); window.__freezeNow = on => { f = on ? pn() : null; }; })();`);
+  page.on('console', m => { const t = m.text(); if (/deleted object|INVALID_OPERATION|GL_INVALID|Destroyed texture/i.test(t)) glWarn.push(t.slice(0, 200)); });
+  await bootPage(page);
+  await ev(page, FIX3_STAGE);
+  await ev(page, () => { __K.post.setQuality('high'); __K.post.setSuperRes(false); });
+
+  // [M4] Act 1 checker cliffs: rock strata / cracks at close range (the colour build read the material's own bumped
+  // normal to pick the projection: flat colour, film grain only)
+  const cliff = await ev(page, () => {
+    S3.act(1); S3.follow(-214, 0, 10); S3.cam([-214, -6, 2.5, -224, -20, 3.5, 55]);
+    const im = S3.still(6); const d = T.img.detail(im, S3.bx([330, 560, 520, 700])); S3.restore(); return { detail: d };
+  });
+  check('v3 review: the Act 1 checker cliffs show their rock texture at close range (high-pass luma std, was ~1.9 = grain)', cliff.detail > 4, cliff);
+
+  // [m6] totems: painted wood with grain (were flat boxes) + [m4] rings: saturated gold
+  const start = await ev(page, () => {
+    S3.follow(-2, 0, 70); const im = S3.settle(6);
+    const r1 = T.img.hueTop(im, S3.bx([372, 268, 414, 304]), 36, 62), r2 = T.img.hueTop(im, S3.bx([834, 276, 872, 320]), 36, 62);
+    const totem = T.img.detail(im, S3.bx([20, 295, 60, 335])); // the left totem's yellow block (face, no eye)
+    __K.post.setQuality('low'); const iml = S3.settle(4);
+    const l1 = T.img.hueTop(iml, S3.bx([372, 268, 414, 304]), 36, 62), l2 = T.img.hueTop(iml, S3.bx([834, 276, 872, 320]), 36, 62);
+    __K.post.setQuality('high'); S3.restore();
+    return { ringSat: [r1.sat, r2.sat], ringRgb: [r1.rgb, r2.rgb], lowSat: [l1.sat, l2.sat], lowRgb: [l1.rgb, l2.rgb], totem };
+  });
+  check('v3 review: the start totems are painted wood with visible grain (high-pass luma std of a block face > 10, was 6.5)', start.totem > 10, start);
+  check('v3 review: gold rings stay saturated (top-quarter saturation: Élevé >= 0.64, Économie >= 0.9; v2 0.98)', Math.min(...start.ringSat) >= 0.64 && Math.min(...start.lowSat) >= 0.9, start);
+
+  // [M2] motion blur: Kit stays opaque through loop 1 (the fixed loop camera made him a see-through ghost)
+  const loop = await ev(page, () => {
+    const K = __K, P = K.player, lp = K.level.loops[0], yaw = T.yawOf(lp.dir.x, lp.dir.z);
+    S3.thaw(); T.teleport(lp.entry.x - lp.dir.x * 18, lp.entry.z - lp.dir.z * 18, yaw, 24);
+    T.pre = () => { if (!P.inLoop) T.steerYaw(yaw, 1); };
+    T.until(() => P.inLoop, 120); T.until(() => P.pos.y > lp.entry.y + lp.radius * 1.2, 60);
+    T.stop(); T.pre = null;
+    P.invT = 0; T.frame(); T.frame();
+    const im = T.grab(), c = S3.kitPx(), k = T.img.hueTop(im, [c[0] - 45, c[1] - 40, c[0] + 55, c[1] + 35], 10, 35);
+    const sharp = [];
+    for (const nm of ['kit', 'kit-scarf']) { const r = K.view.scene.getObjectByName(nm); if (r) r.traverse(o => { if (o.isMesh && o.material && !o.material.transparent && o.material.colorWrite !== false) sharp.push(!!o.material.userData.postSharp); }); }
+    const out = { inLoop: P.inLoop, spd: +P.vel.length().toFixed(1), mb: K.post.stats().passes.join(' ').includes('motionblur'), kit: c, val: k.val, sat: k.sat, n: k.n, tagged: sharp.length && sharp.every(Boolean) };
+    T.ticks(120); S3.restore();
+    return out;
+  });
+  check('v3 review: motion blur keeps Kit opaque in loop 1 (his orange top-quarter value >= 0.37; was 0.30 ghosted, 0.43 without blur)', loop.mb && loop.spd > 15 && loop.val >= 0.37 && loop.tagged, loop);
+
+  // [M5] Ultra: the grass blades do not flicker on a still frame (SSGI's AO undersampled them; AO now from GTAO)
+  const grass = await ev(page, () => {
+    const K = __K; K.post.setQuality('ultra');
+    S3.follow(-30, 4, 20); S3.cam([-30, 6, 1.6, -40, 6, 0.2, 55]);
+    for (let i = 0; i < 4; i++) T.renderNow();
+    window.__freezeNow(true);
+    const b = S3.bx([300, 460, 1248, 720]), F = [];
+    for (let i = 0; i < 9; i++) { T.renderNow(); F.push(T.img.lumaBox(T.grab(), b)); }
+    window.__freezeNow(false);
+    const L = F.slice(1), n = L[0].length; let hi = 0;
+    for (let j = 0; j < n; j++) { let s = 0, s2 = 0; for (const f of L) { s += f[j]; s2 += f[j] * f[j]; } const m = s / L.length; if (Math.sqrt(Math.max(0, s2 / L.length - m * m)) > 8) hi++; }
+    const passes = K.post.stats().passes.join(' ');
+    K.post.setQuality('high'); S3.restore();
+    return { flicker: +(100 * hi / n).toFixed(1), passes };
+  });
+  check('v3 review: Ultra grass is temporally stable on a still frame (% px with luma std > 8 < 10; was 15.6 here, 25.7 in the review)', grass.flicker < 10 && /gtao/.test(grass.passes) && /ssgi/.test(grass.passes), grass);
+
+  // [M1] no shadow caster with material.alphaTest > 0 (r186 copies it onto the shared shadow material, whose version
+  // then bumps between casters: cache-key rebuilds every frame) - Act 1 here, Act 2 below with the rebuild count
+  const at1 = await ev(page, () => { const bad = []; __K.view.scene.traverse(o => { if (o.isMesh && o.castShadow && o.material && o.material.alphaTest > 0) bad.push(o.name || o.type); }); return bad; });
+
+  // ---- Act 2
+  await ev(page, () => S3.act(2));
+  await page.waitForFunction(() => __K.tex.stats().pending === 0, null, { timeout: 60000 }).catch(() => {});
+  // [B1] Économie -> Moyen -> Économie in Act 2: the Économie shadow map is never resized / disposed while bound
+  glWarn.length = 0;
+  const shadowSeq = await ev(page, () => {
+    const K = __K, P = K.player, out = [];
+    T.place2(K.city.feature('iA0') + 120, 0, 0); P.invT = 0; T.ticks(5);
+    for (const q of ['high', 'low', 'medium', 'low', 'high']) {
+      K.post.setQuality(q);
+      for (let i = 0; i < 4; i++) { T.ticks(1); T.renderNow(); }
+      const g = T.glStats(); out.push({ q, mean: g.mean, colors: g.colors });
+    }
+    return out;
+  });
+  check('v3 review: Act 2 Élevé -> Économie -> Moyen -> Économie keeps the 3D view and binds no deleted shadow map', shadowSeq.every(o => o.mean > 30 && o.colors > 20) && glWarn.length === 0, { shadowSeq, glWarn: glWarn.slice(0, 3) });
+  // [M1] Act 2: material cache-key rebuilds per drawn frame (was ~75: the alpha-tested city foliage shadows)
+  const ck = await ev(page, () => {
+    const K = __K, R = K.view.renderer, objs = R._objects; let n = 0, on = false, patched = null;
+    const og = objs.get;
+    objs.get = function (...a) {
+      const ro = og.apply(this, a);
+      if (!patched && ro) { const proto = Object.getPrototypeOf(ro), gm = proto.getMaterialCacheKey; patched = [proto, gm]; proto.getMaterialCacheKey = function () { if (on && this.version !== this.material.version) n++; return gm.call(this); }; }
+      return ro;
+    };
+    T.skateBot({}); T.ticks(60); T.renderNow(); T.renderNow();
+    on = true; for (let i = 0; i < 6; i++) { T.ticks(1); T.renderNow(); } on = false;
+    objs.get = og; if (patched) patched[0].getMaterialCacheKey = patched[1];
+    T.stop();
+    const bad = []; K.view.scene.traverse(o => { if (o.isMesh && o.castShadow && o.material && o.material.alphaTest > 0) bad.push(o.name || o.type); });
+    return { perFrame: +(n / 6).toFixed(1), alphaTested: bad };
+  });
+  check('v3 review: Act 2 frames rebuild (almost) no material cache keys, no shadow caster uses material.alphaTest (Act 1 + Act 2)', ck.perFrame < 5 && ck.alphaTested.length === 0 && at1.length === 0, { ck, act1: at1 });
+
+  // [M3] bumper flight: the fog banks fade into the bay (they cut the water with a hard straight line)
+  const fog = await ev(page, () => {
+    const K = __K, B = K.board, P = K.player;
+    S3.place(K.city.feature('bumper') - 60, 0, 30); P.invT = 0; T.key('ArrowUp', true); T.until(() => B.mode === 'flight', 600); T.key('ArrowUp', false);
+    T.until(() => B.timeScale >= 1 && B.stats().flightU > 0.38, 3000);
+    const im = S3.settle(2), r = T.img.rowStep(im, S3.bx([40, 420, 1200, 700]));
+    S3.restore(); return { mode: B.mode, step: r.step, at: r.at };
+  });
+  check('v3 review: bumper flight, the fog banks meet the water without a hard line (largest row-to-row luma step < 5; was 7.6-14)', fog.mode === 'flight' && fog.step < 5, fog);
+
+  // [m3] van / delivery van tail lamps: whole red lenses (a 1 x 3 patch let the curved body poke through, salmon)
+  const lamps = await ev(page, () => {
+    const K = __K, C = K.city, KV = K.vehicles, out = {};
+    for (const [name, type] of [['van', 2], ['dvan', 7]]) {
+      const base = C.feature('t3b') + 30; S3.place(base - 30, 0); T.ticks(5); S3.freeze2();
+      if (KV._dbg && KV._dbg.show) KV._dbg.show(false);
+      const t = KV.VT[type], s = base + t.hz, LANE = 3.2;
+      const p = C.routePoint(s, -LANE, 0), pf = C.routePoint(s + 1, -LANE, 0), pb = C.routePoint(s - 1, -LANE, 0);
+      const yaw = Math.atan2(pf.x - pb.x, pf.z - pb.z), pitch = Math.atan2(pf.y - pb.y, Math.hypot(pf.x - pb.x, pf.z - pb.z));
+      const M = new THREE.Matrix4().compose(p, new THREE.Quaternion().setFromEuler(new THREE.Euler(-pitch, yaw, 0, 'YXZ')), new THREE.Vector3(1, 1, 1));
+      const b = KV.build(type), im = new THREE.InstancedMesh(b.geometry, b.material, 1);
+      im.setMatrixAt(0, M); im.setColorAt(0, new THREE.Color('#2f6b4f')); im.frustumCulled = false; K.view.scene.add(im);
+      S3.cam2(s - t.hz - 3.2, -LANE + 1.4, 1.3, s - t.hz, -LANE, 0.9, 50);
+      const g = S3.still(6), bx = S3.bx([640, 150, 1000, 470]);
+      let n = 0, sr = 0, sg = 0;
+      for (let y = bx[1] | 0; y < bx[3]; y++) for (let x = bx[0] | 0; x < bx[2]; x++) { const i = (y * g.w + x) * 4, r = g.px[i], gg = g.px[i + 1]; if (r > 150 && r - gg > 60) { n++; sr += r; sg += gg; } }
+      out[name] = { n, gOverR: n ? +(sg / sr).toFixed(2) : 1 };
+      im.removeFromParent(); if (KV._dbg && KV._dbg.show) KV._dbg.show(true); S3.restore();
+    }
+    return out;
+  });
+  check('v3 review: van and delivery-van tail lamps are whole red lenses (lit area >= 3500 px, green/red < 0.65; were torn salmon slivers)', ['van', 'dvan'].every(k => lamps[k].n >= 3500 && lamps[k].gOverR < 0.65), lamps);
+
+  // [m5] cable-car rails in the shade read as steel, not blue paint; into the low sun they do not clip
+  const rails = await ev(page, () => {
+    const K = __K, C = K.city;
+    S3.place(C.feature('iA0') + 205, 2.6, 14); T.ticks(50); const im = S3.settle(6);
+    const r = T.img.hueTop(im, S3.bx([615, 520, 650, 720]), 190, 250);
+    S3.place(C.feature('t3b') + 40, 0, 12); T.ticks(30); const iw = S3.settle(6), bw = S3.bx([823, 420, 910, 540]);
+    let peak = 0, clip = 0; const L = T.img.lumaBox(iw, bw); for (const v of L) { peak = Math.max(peak, v); if (v >= 250) clip++; }
+    S3.restore(); return { sat: r.sat, rgb: r.rgb, sunPeak: Math.round(peak), clipped: clip };
+  });
+  check('v3 review: cable-car rails in the shade are not saturated blue strips (top-quarter sat < 0.6, was 0.66) and barely clip into the low sun (< 300 px >= 250 luma, was ~970)', rails.sat < 0.6 && rails.clipped < 300, rails);
+
+  // [m2] pause menu: "Version classique" asks before leaving the run; a second confirm opens legacy/
+  await page.route(/\/legacy\/(index\.html)?$/, r => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>legacy</title>' }));
+  const leg = await ev(page, () => {
+    const G = __K.game, down = () => { T.key('ArrowDown', true); T.ticks(2); T.key('ArrowDown', false); T.ticks(2); };
+    const up = () => { T.key('ArrowUp', true); T.ticks(2); T.key('ArrowUp', false); T.ticks(2); };
+    T.tapKey('Escape'); T.ticks(3);
+    for (let i = 0; i < 4; i++) down();
+    const sel = G.pauseSel; T.tapKey('Enter'); T.ticks(3);
+    const first = { ask: G.legacyAsk, paused: G.paused, href: location.pathname };
+    up(); const cancelled = !G.legacyAsk; down();
+    T.tapKey('Enter'); T.ticks(2);
+    const again = G.legacyAsk;
+    return { sel, first, cancelled, again };
+  });
+  const nav = page.waitForNavigation({ timeout: 30000 }).then(r => r && r.url()).catch(() => null);
+  await ev(page, () => { T.tapKey('Enter'); T.ticks(3); });
+  const navUrl = await nav;
+  check('v3 review: pause "Version classique" asks "Quitter la partie ?" first, moving away cancels, a second confirm opens legacy/', leg.sel === 4 && leg.first.ask && leg.first.paused && leg.cancelled && leg.again && /\/legacy\/$/.test(navUrl || ''), { leg, navUrl });
+  check('v3 review suite: no page errors or console errors', errors.length === 0, errors.slice(0, 5));
+  await ctx.close();
+}
+
 // ---------- WebGPU backend: boot, Act 1 sample, Act 2 sample, presets, no errors ----------
 async function webgpuSuite(browser) {
-  const { page, errors, bootMs } = await openGame(browser, { viewport: { width: 960, height: 540 } }, BASE + 'test.html');
+  const { page, errors, bootMs } = await openGame(browser, { viewport: { width: 960, height: 540 } }, BASE + PAGE);
   const b = await ev(page, () => { T.ticks(30); const g = T.glStats(); return { backend: __K.view.backend, state: __K.game.state, mean: g.mean, std: g.std, colors: g.colors, post: __K.post.ok }; });
   await shot(page, 'gpu-01-title');
   check('WebGPU: the game boots on the WebGPU backend (title drawn)', b.backend === 'webgpu' && b.state === 'title' && b.post && b.mean > 40 && b.std > 12 && b.colors > 30, { bootMs, b });
@@ -1520,12 +1779,13 @@ async function webgpuSuite(browser) {
   check('WebGPU: Act 2 (city, skateboard, traffic) plays a few seconds and draws', a2.act === 2 && a2s.state === 'play' && a2s.s > 30 && a2s.mean > 30 && a2s.std > 10, { a2, a2s });
   const pres = await ev(page, () => {
     const K = __K, out = [];
-    for (const q of ['ultra', 'medium', 'low', 'high']) { K.post.setQuality(q); T.frame(); const g = T.glStats(); out.push({ q, passes: K.post.stats().passes.length, mean: g.mean }); }
-    K.post.setSuperRes(true); T.frame(); const g = T.glStats(); out.push({ q: 'sr', scale: K.post.stats().scale, mean: g.mean });
+    // (Économie -> Moyen -> Économie: the v3 review's black Act 2 view, a destroyed shadow map still bound)
+    for (const q of ['ultra', 'medium', 'low', 'medium', 'low', 'high']) { K.post.setQuality(q); T.frame(); T.frame(); const g = T.glStats(); out.push({ q, passes: K.post.stats().passes.length, mean: g.mean, colors: g.colors }); }
+    K.post.setSuperRes(true); T.frame(); const g = T.glStats(); out.push({ q: 'sr', scale: K.post.stats().scale, mean: g.mean, colors: g.colors });
     K.post.setSuperRes(false);
     return out;
   });
-  check('WebGPU: presets and Super Résolution switch and draw', pres.every(o => o.mean > 30) && pres[4].scale < 1, pres);
+  check('WebGPU: presets and Super Résolution switch and draw (incl. Économie -> Moyen -> Économie in Act 2)', pres.every(o => o.mean > 30 && o.colors > 20) && pres[pres.length - 1].scale < 1, pres);
   const tx = await page.evaluate(async () => {
     const X = __K.tex, THREE = window.THREE;
     await X.init();
@@ -1547,7 +1807,7 @@ async function webgpuSuite(browser) {
   try {
     if (WEBGPU) await webgpuSuite(browser);
     else {
-      const extra = ['phone', 'fullrun', 'regress', 'present', 'act2', 'post', 'regress2', 'v3'];
+      const extra = ['phone', 'fullrun', 'regress', 'present', 'act2', 'post', 'regress2', 'v3', 'fix3'];
       if (!ONLY || ONLY.some(o => extra.indexOf(o) < 0)) await desktop(browser);
       if (!ONLY || ONLY.includes('v3')) await v3Checks(browser);
       if (!ONLY || ONLY.includes('act2')) await act2(browser);
@@ -1556,6 +1816,7 @@ async function webgpuSuite(browser) {
       if (!ONLY || ONLY.includes('regress')) await regressGameplay(browser);
       if (!ONLY || ONLY.includes('present')) await regressPresentation(browser);
       if (!ONLY || ONLY.includes('regress2')) await regressAct2(browser);
+      if (!ONLY || ONLY.includes('fix3')) await regressV3(browser);
       if (PHONE) await phone(browser);
     }
   } catch (e) {

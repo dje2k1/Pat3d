@@ -1245,14 +1245,17 @@ class PostAuxNode extends THREE.Node {
     const sn = m && m.ssrNode && m.ssrNode.isNode ? m.ssrNode : null;
     const see = !!m && !sn && (m.transparent === true || m.depthWrite === false || (m.blending !== NORMAL_BLEND && m.blending !== NO_BLEND));
     if (!m || see) return vec4(0);
+    // velocity .w: 1 = blur as usual, 2 = keep sharp (Kit: userData.postSharp, see the motion blur in compose()); the
+    // cleared background / sky read 0 (blurred like 1). TRAA and SSR read .xy only.
+    const mbw = m.userData && m.userData.postSharp ? 2 : 1;
     const ssrS = () => sn ? tclamp(float(sn), 0, 1) : float(0);
     const ssrR = () => !sn ? float(1) : tclamp(float(m.ssrRoughnessNode && m.ssrRoughnessNode.isNode ? m.ssrRoughnessNode : m.isMeshStandardNodeMaterial ? roughness : float(0)), 0, 1);
     switch (this.kind) {
       case 'normal': return vec4(normalView, 1);
-      case 'velocity': return vec4(velocity, 0, 1);
+      case 'velocity': return vec4(velocity, 0, mbw);
       // velocity + the SSR mask packed in .z (strength 5 bits x 64 + roughness 6 bits: integers < 2048, exact in
       // half float), so Ultra's MRT stays within WebGPU's 32 bytes per sample (4 attachments of 8)
-      case 'velssr': return vec4(velocity, tfloor(ssrS().mul(31).add(0.5)).mul(64).add(tfloor(ssrR().mul(63).add(0.5))), 1);
+      case 'velssr': return vec4(velocity, tfloor(ssrS().mul(31).add(0.5)).mul(64).add(tfloor(ssrR().mul(63).add(0.5))), mbw);
       case 'diffuse': return vec4(diffuseColor.rgb, 1);
       default: return sn ? vec4(ssrS(), ssrR(), 0, 1) : vec4(0, 1, 0, 1);
     }
@@ -1391,11 +1394,20 @@ function buildGraph(cfg, sr) {
     else if (LOOK.debug === 'ssgi-gi') lit = lit.add(alb.rgb.mul(giT.rgb).mul(U.gi));
     else if (LOOK.debug === 'alb') lit = alb.rgb;
     else {
+      // the AO comes from GTAO (as on Élevé), SSGI gives the bounce light only: with 2 slices x 8 steps its AO
+      // undersampled the thin alpha-tested grass blades, whole blades flickered from frame to frame (about 3x Élevé)
+      const ga = track(G, postGTAO(depth, nrm, cam), 'gtao');
+      ga.resolutionScale = s * cfg.aoRes;
+      ga.samples.value = cfg.aoN;
+      ga.radius.value = 1.1; ga.thickness.value = 1.2; ga.distanceExponent.value = 1.4; ga.scale.value = 1.0;
+      ga.useTemporalFiltering = true;
       // (a vec3 select() on this condition compiled to black on the WebGL 2 backend: float factors only)
       const ground = select(sky, float(0), float(1));
-      lit = lit.mul(mix(float(1), aoT.r, U.ao.mul(ground))).add(alb.rgb.mul(giT.rgb).mul(U.gi.mul(ground)));
+      lit = lit.mul(mix(float(1), ga.getTextureNode().r, U.ao.mul(ground))).add(alb.rgb.mul(giT.rgb).mul(U.gi.mul(ground)));
+      G.passes.push('gtao(x' + +(s * cfg.aoRes).toFixed(2) + ')');
+      G.cost.push(['gtao', s * cfg.aoRes, cfg.aoN / 4]);
     }
-    G.passes.push('ssgi(ao+gi)');
+    G.passes.push('ssgi(gi)');
     G.cost.push(['ssgi', 1, 6]);
   }
   if (useSSR) {
@@ -1561,13 +1573,20 @@ function buildGraph(cfg, sr) {
     }
     if (mbN > 0) {
       If(U.mb.greaterThan(0.002), () => {
-        const v = vel.sample(u).xy.mul(vec2(0.5, -0.5)).mul(U.mbVel);
-        const dir = v.add(d.mul(U.speed.mul(0.085).mul(smoothstep(0.02, 0.6, r2)))).mul(U.mb).toVar();
+        const vs = vel.sample(u).toVar();
+        const v = vs.xy.mul(vec2(0.5, -0.5)).mul(U.mbVel);
+        // Kit's pixels (velocity .w = 2) stay sharp, and no tap takes his colour into the background around him
+        const keep = step(vs.w, 1.5);
+        const dir = v.add(d.mul(U.speed.mul(0.085).mul(smoothstep(0.02, 0.6, r2)))).mul(U.mb.mul(keep)).toVar();
         const L = tlength(dir).toVar();
         dir.mulAssign(tmin(float(1), float(0.05).div(tmax(L, 1e-5))));
-        const acc = col3.toVar();
-        Loop(mbN, ({ i }) => { acc.addAssign(src.sample(u.sub(dir.mul(float(i).add(1).div(mbN)))).rgb); });
-        col3.assign(acc.div(mbN + 1));
+        const acc = col3.toVar(), wsum = float(1).toVar();
+        Loop(mbN, ({ i }) => {
+          const ut = u.sub(dir.mul(float(i).add(1).div(mbN))).toVar();
+          const wt = step(vel.sample(ut).w, 1.5);
+          acc.addAssign(src.sample(ut).rgb.mul(wt)); wsum.addAssign(wt);
+        });
+        col3.assign(acc.div(wsum));
       });
     }
     if (dofTex) {
@@ -3454,6 +3473,7 @@ K.vfx = {
 
 // ---------------- src/20-world.js
 import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
+import { RoundedBoxGeometry as worldRoundedBox } from 'three/addons/geometries/RoundedBoxGeometry.js';
 (() => {
   'use strict';
   // ======================= WORLD: Collines Émeraude, Acte 1 =======================
@@ -3787,7 +3807,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   // ======================= shared shader bits (TSL) =======================
   const { Fn, uniform, attribute, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp, abs: tabs, max: tmax, min: tmin, fract: tfract,
     floor: tfloor, sin: tsin, cos: tcos, pow: tpow, exp: texp, dot: tdot, normalize: tnormalize, cross: tcross, reflect: treflect, length: tlength,
-    atan: tatan, select, dFdx, dFdy, positionWorld, positionLocal, positionGeometry, normalWorld, normalViewGeometry, normalGeometry, cameraPosition,
+    atan: tatan, select, dFdx, dFdy, positionWorld, positionLocal, positionGeometry, normalWorldGeometry, normalViewGeometry, normalGeometry, cameraPosition,
     cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix, instanceIndex, texture: ttexture, step: tstep, sqrt: tsqrt, uv: tuv } = TSL;
   const TL = K.tsl;
   const TIME = uniform(0);
@@ -3842,7 +3862,10 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     const tGA = wtex('grass_albedo'), tGN = wtex('grass_normal'), tGO = wtex('grass_orm');
     const tRA = wtex('rock_albedo'), tRN = wtex('rock_normal'), tRO = wtex('rock_orm');
     // (pure expressions: no assign outside Fn; derivatives and texture fetches are taken at the top level)
-    const gN = tnormalize(normalWorld);
+    // (the GEOMETRY normal picks the projection and the grass / rock split: normalWorld is the material's own perturbed
+    // normal outside the normal sub-build, so the rock uv and its gradients depended on the bump they produce, and the
+    // colour build read a broken projection: the cliffs showed no rock texture at all)
+    const gN = tnormalize(normalWorldGeometry);
     const gP = local ? positionGeometry : positionWorld;
     const gA = tabs(gN);
     const gqY = gP.xz.mul(0.4), gqX = gP.zy.mul(0.4), gqZ = gP.xy.mul(0.4);
@@ -3855,21 +3878,29 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     // ---- checker squares: sandstone, one texture repeat per square at a per-square offset (no visible tiling)
     const tile = tfloor(gq);
     const tileH = TL.hash21(tile.add(vec2(3.7, 1.3)));
-    // (two texture repeats per square: the sandstone's strata and cracks stay stone-sized, not plank-sized)
-    const rUV = gq.mul(1.9).add(vec2(tileH.mul(7.31), TL.hash21(tile.add(vec2(9.1, 4.2))).mul(5.17)));
-    const rdx = gdx.mul(1.9), rdy = gdy.mul(1.9);
-    const rA = ttexture(tRA, rUV).grad(rdx, rdy), rN = ttexture(tRN, rUV).grad(rdx, rdy), rO = ttexture(tRO, rUV).grad(rdx, rdy);
+    // one texture repeat per square (strata ~0.3 m, stone-sized cracks; two repeats minified them into a flat low mip
+    // at play distance) + a finer rotated detail octave for close range; both through explicit gradients (the per-square
+    // offset jumps at the square edges)
+    const rUV = gq.add(vec2(tileH.mul(7.31), TL.hash21(tile.add(vec2(9.1, 4.2))).mul(5.17)));
+    const rA = ttexture(tRA, rUV).grad(gdx, gdy), rN = ttexture(tRN, rUV).grad(gdx, gdy), rO = ttexture(tRO, rUV).grad(gdx, gdy);
+    const dUV = rot2(gq, 0.6).mul(3.3).add(vec2(0.31, 0.17)), ddx = rot2(gdx, 0.6).mul(3.3), ddy = rot2(gdy, 0.6).mul(3.3);
+    const rA2 = ttexture(tRA, dUV).grad(ddx, ddy), rN2 = ttexture(tRN, dUV).grad(ddx, ddy);
     const chkC = TL.checker(gq, gw);
-    const gChk = mix(GM_UNI.gmChkA, GM_UNI.gmChkB, chkC).mul(mix(vec3(1), rA.rgb.mul(meanInv('rock')), 0.7))
+    // rock albedo relative to its mean (keeps the orange / brown palette), contrast raised so the strata and cracks
+    // survive the bright sun and the tone curve; the cavity (ORM AO) darkens the cracks under direct light too
+    const rRel = rA.rgb.mul(meanInv('rock')).mul(mix(vec3(1), rA2.rgb.mul(meanInv('rock')), 0.45));
+    const rTex = tmax(rRel.sub(1).mul(1.3).add(1), vec3(0.25)).mul(mix(float(1), rO.r, 0.4));
+    const gChk = mix(GM_UNI.gmChkA, GM_UNI.gmChkB, chkC).mul(rTex)
       .mul(gmCheckerShade(gq, gw)).mul(float(0.9).add(tileH.mul(0.2)));
     const gTf = tfract(gq);
     const bevel = tclamp(float(1).sub(tmax(gw.x, gw.y).mul(5)), 0, 1).mul(0.6);
     const gBv = vec2(smoothstep(0.9, 1.0, gTf.x).sub(smoothstep(0.1, 0.0, gTf.x)), smoothstep(0.9, 1.0, gTf.y).sub(smoothstep(0.1, 0.0, gTf.y))).mul(bevel)
-      .add(nXY(rN, 0.6));
+      .add(nXY(rN, 1.1)).add(rot2(nXY(rN2, 0.5), -0.6));
     const chkBump = select(gUY, vec3(gBv.x, 0, gBv.y), select(gUX, vec3(0, gBv.y, gBv.x), vec3(gBv.x, gBv.y, 0)));
     const chkRough = rO.g, chkAO = rO.r;
     if (chkOnly) {
-      m.colorNode = gChk.mul(mix(float(1), chkAO, 0.7));
+      m.colorNode = gChk; // (the rock cavity is in gChk already)
+      m.aoNode = chkAO;
       m.roughnessNode = chkRough;
       m.normalNode = tnormalize(normalViewGeometry.add(cameraViewMatrix.mul(vec4(chkBump, 0)).xyz));
       return m;
@@ -4199,6 +4230,16 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     c.left = -S.shadowExt; c.right = S.shadowExt; c.top = S.shadowExt; c.bottom = -S.shadowExt; c.near = 1; c.far = 360;
     c.updateProjectionMatrix();
     S.sunS = sun;
+    // Économie ('cheap'): its own 1024 light over a smaller box round Kit. A live shadow map is never resized: r186's
+    // ShadowNode re-creates a resized target, but bindings kept the destroyed depth texture (black view on WebGPU,
+    // deleted-texture binds on WebGL 2 after Économie -> Moyen -> Économie)
+    const sunL = makeSun(scene);
+    sunL.shadow.mapSize.set(1024, 1024);
+    const cl = sunL.shadow.camera;
+    cl.left = -30; cl.right = 30; cl.top = 30; cl.bottom = -30; cl.near = 1; cl.far = 360;
+    cl.updateProjectionMatrix();
+    sunL.visible = false;
+    S.sunL = sunL;
     // cascades (Ultra / Élevé): the node places one shadow camera per cascade around the view frustum (created on
     // first use; the lights exist from the start so the act switch hides them with the rest of the island)
     S.csmSets = {};
@@ -4241,23 +4282,13 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     // (while Act 2 is shown the island's objects are hidden: record what setVisible(true) must restore)
     const setVis = (o, v) => { if (S.shown) o.visible = v; else o.userData.kitWasVisible = v; };
     for (const k in S.csmSets) setVis(S.csmSets[k].light, S.csmSets[k] === set);
-    setVis(S.sunS, !set);
-    S.sun = set ? set.light : S.sunS;
+    const cheap = !set && S.shadowMode === 'cheap';
+    setVis(S.sunS, !set && !cheap);
+    setVis(S.sunL, cheap);
+    S.sun = set ? set.light : cheap ? S.sunL : S.sunS;
     W.sun = S.sun;
     if (set) set.cam.aspect = 0; // re-fit the cascades
-    else {
-      const cheap = S.shadowMode === 'cheap';
-      const size = cheap ? 1024 : S.shadowSize, ext = cheap ? 30 : S.shadowExt;
-      const sh = S.sunS.shadow;
-      if (sh.mapSize.x !== size) {
-        sh.mapSize.set(size, size);
-        if (sh.map) { sh.map.dispose(); sh.map = null; }
-      }
-      S.curExt = ext;
-      const cam = sh.camera;
-      cam.left = -ext; cam.right = ext; cam.top = ext; cam.bottom = -ext; cam.updateProjectionMatrix();
-      placeShadow();
-    }
+    else placeShadow();
   }
   // the cascades follow the camera's projection (aspect / fov / far change on resize, phones, cinematics)
   function updateCSM() {
@@ -4271,9 +4302,9 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   }
   const _sr = new V3(), _su = new V3(), _sp = new V3();
   function placeShadow() {
-    const sun = S.sunS;
+    const sun = S.shadowMode === 'cheap' && S.sunL ? S.sunL : S.sunS;
     if (!sun) return;
-    const f = S.focus, ext = S.curExt || S.shadowExt, size = sun.shadow.mapSize.x || S.shadowSize;
+    const f = S.focus, cam = sun.shadow.camera, ext = cam.right, size = sun.shadow.mapSize.x;
     _sr.crossVectors(UP, SUN_DIR).normalize();
     _su.crossVectors(SUN_DIR, _sr);
     const texel = (2 * ext) / size;
@@ -5240,7 +5271,9 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   // ---- totem (the level's landmark: three painted wooden blocks, a fox head on top)
   function tplTotem() {
     const t = new DB();
-    const box = (x, y, z, w, h, d, hex, rx, ry, rz) => t.geo(new THREE.BoxGeometry(w, h, d), TRS(x, y, z, rx || 0, ry || 0, rz || 0, 1),
+    // the big carved blocks get bevelled edges (they catch the light); small parts stay plain boxes
+    const bx = (w, h, d) => Math.min(w, h, d) >= 0.9 ? new worldRoundedBox(w, h, d, 2, 0.06) : new THREE.BoxGeometry(w, h, d);
+    const box = (x, y, z, w, h, d, hex, rx, ry, rz) => t.geo(bx(w, h, d), TRS(x, y, z, rx || 0, ry || 0, rz || 0, 1),
       { col: lin(hex), kind: DK.WOOD, uvFn: (q, n, uv) => [uv ? uv[0] * Math.max(w, d) * 0.35 : 0, uv ? uv[1] * h * 0.35 : 0] });
     const S0 = 1.15;
     t.geo(new THREE.BoxGeometry(1.6, 0.3, 1.6), M4().makeTranslation(0, 0.15, 0), { col: lin('#8b8fa8'), kind: DK.ROCK, uv: 0.8 });
@@ -5872,14 +5905,15 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       const wA = ttexture(wtex('wood_albedo'), uvn), wN = ttexture(wtex('wood_normal'), uvn), wO = ttexture(wtex('wood_orm'), uvn);
       const lA = ttexture(wtex('leaves_albedo'), uvn), lN = ttexture(wtex('leaves_normal'), uvn);
       const alb = bA.rgb.mul(meanInv('bark')).mul(isB).add(rA.rgb.mul(meanInv('rock')).mul(isR))
-        .add(mix(vec3(1), wA.rgb.mul(meanInv('wood')), 0.28).mul(isW)).add(lA.rgb.mul(meanInv('leaves')).mul(isL)).add(vec3(1).mul(isP))
+        .add(mix(vec3(1), wA.rgb.mul(meanInv('wood')), 0.55).mul(isW)).add(lA.rgb.mul(meanInv('leaves')).mul(isL)).add(vec3(1).mul(isP))
         .add(mix(vec3(1), wA.rgb.mul(meanInv('wood')), 0.7).mul(isRW));
       sol.colorNode = vc.mul(alb);
       const flatN = vec3(0.5, 0.5, 1);
-      const nT = bN.xyz.mul(isB).add(rN.xyz.mul(isR)).add(mix(flatN, wN.xyz, 0.5).mul(isW)).add(lN.xyz.mul(isL)).add(flatN.mul(isP)).add(wN.xyz.mul(isRW));
+      // painted wood (totems): the grain shows through the paint, in the colour and in the light
+      const nT = bN.xyz.mul(isB).add(rN.xyz.mul(isR)).add(wN.xyz.mul(isW)).add(lN.xyz.mul(isL)).add(flatN.mul(isP)).add(wN.xyz.mul(isRW));
       sol.normalNode = TSL.normalMap(nT);
-      sol.roughnessNode = bO.g.mul(isB).add(rO.g.mul(isR)).add(float(0.48).mul(isW)).add(float(0.7).mul(isL)).add(float(0.62).mul(isP)).add(wO.g.mul(isRW));
-      sol.aoNode = bO.r.mul(isB).add(rO.r.mul(isR)).add(isW).add(isL).add(isP).add(wO.r.mul(isRW));
+      sol.roughnessNode = bO.g.mul(isB).add(rO.g.mul(isR)).add(mix(float(0.42), wO.g, 0.5).mul(isW)).add(float(0.7).mul(isL)).add(float(0.62).mul(isP)).add(wO.g.mul(isRW));
+      sol.aoNode = bO.r.mul(isB).add(rO.r.mul(isR)).add(wO.r.mul(isW)).add(isL).add(isP).add(wO.r.mul(isRW));
       sol.positionNode = decorWind();
     }
     const fol = new THREE.MeshSSSNodeMaterial({ side: THREE.DoubleSide, roughness: 0.62, metalness: 0 });
@@ -6897,7 +6931,9 @@ kd(KIND.plank, [LY.planks, 0.5, 0.5, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.metal, [LY.metal, 2, 2, 0, 0.7, 1, 0, 0, 1, 0, 0.6]);
 kd(KIND.glow, [LY.paintwood, 1, 1, 0, 0, 0, 0.35, 0, 0, 0, 0]);
 kd(KIND.leaf, [LY.leaves, 1.1, 1.1, 2, 1, 1, 0, 0, 0, 1, 1]);
-kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.45, 0.24, 0.9, 0, 0, 0.3]);
+// (rails: worn, rougher, half-metal steel: at 0.9 metalness they mirrored the blue sky as painted strips in the shade
+// and clipped into the low sun)
+kd(KIND.rail, [LY.metal, 2, 2, 0, 0.35, 0.3, 0.44, 0.55, 0, 0, 0.3]);
 kd(KIND.dentil, [LY.dentil, 0.65, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.scales, [LY.scales, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1]);
 kd(KIND.facade, [LY.siding, 0.92, 0.92, 0, 0.8, 1, 0, 0, 0, 0, 1]);
@@ -7132,6 +7168,9 @@ function cityMaterial(opts) {
     try { K.post.ssr(m, tmax(tmax(pud.mul(0.6), wet.mul(0.25)), tmax(gW.mul(0.35), isK(30).mul(0.2)))); }
     catch (e) { console.warn('Kit Rush 3D: city SSR opt-in failed', e); }
   }
+  // rails: the sun glint on the steel is capped (looking into the low sun the rails clipped to white and bloomed)
+  const mRail = isK(KIND.rail);
+  m.outputNode = vec4(mix(TSL.output.rgb, tmin(TSL.output.rgb, vec3(1.1)), mRail), TSL.output.a);
   m.userData.dbg = { A, A1, A2, N1, uv, uv2, wb, tint, base, interior, glassM, nxy, vc, texC, macro, wet, pud, patch };
   if (opts.position) m.positionNode = opts.position(positionLocal);
   return m;
@@ -7537,6 +7576,7 @@ function proxyMesh(list) {
 // ===================== static city: streets =====================
 const ASPH = lin('#67666b'), SLAB = lin('#c9c2b4'), CURBC = lin('#b5ada0'), WHITEP = lin('#f2f0e8'), YELLOWP = lin('#f2c230');
 const BANKC = lin('#b3ab9e');
+const RAILC = lin('#8e8a84'); // the cable-car rails: worn, slightly warm steel
 const IRON = lin('#2c2f33'), POLE = lin('#1f2a26'), LAMPC = lin('#ffd9a0'), STEEL = lin('#a9adb3'), WOOD = lin('#9a7a58'), CONC = lin('#bdb6aa');
 const CHUNK = 150;
 const CK = { list: [] };          // chunks along the route: {mb, wires: [], s0}
@@ -7939,7 +7979,10 @@ function foliageMaterial() {
   // per-plant tint (the texture is authored grey-green), darker inside the crown (normal pointing down / inwards)
   const albedo = tx.xyz.mul(vc).mul(mix(float(2.0), float(2.6), leaf));
   m.colorNode = vec4(albedo, tx.w);
-  m.alphaTest = 0.5;
+  // cut-out through the node (material.alphaTest stays 0): r186 copies material.alphaTest onto the one shared shadow
+  // override material, whose version then bumps on every 0 <-> 0.5 switch between casters, and ~75 shadow render
+  // objects per frame rebuilt their cache key (~1 MB of garbage per frame). maskShadowNode cuts the shadow.
+  m.alphaTestNode = float(0.5);
   m.maskShadowNode = tx.w.greaterThan(0.5);
   m.normalNode = normalViewGeometry;
   m.roughnessNode = mix(float(0.85), float(0.62), leaf);
@@ -8156,7 +8199,7 @@ function buildTracks() {
     const e = Math.min(end, s + CHUNK);
     const mb = chunk(s + 1).mb;
     for (const ln of [-LANE, LANE]) {
-      for (const o of [-0.55, 0.55]) stripe(mb, s, e, ln + o - 0.045, ln + o + 0.045, STEEL, KIND.rail, 0.014);
+      for (const o of [-0.55, 0.55]) stripe(mb, s, e, ln + o - 0.045, ln + o + 0.045, RAILC, KIND.rail, 0.014);
       stripe(mb, s, e, ln - 0.025, ln + 0.025, IRON, KIND.metal, 0.011);
     }
   }
@@ -9090,11 +9133,22 @@ function fogMesh() {
   const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, fog: false });
   const aOff = attribute('aOff', 'vec4');
   const c0 = aOff.xyz.add(vec3(tsin(U.time.mul(0.05).add(aOff.x)).mul(8), 0, 0));
-  m.vertexNode = billboard(c0, aOff.w);
+  const fvp = modelViewMatrix.mul(vec4(c0, 1)).add(vec4(positionGeometry.xy.mul(aOff.w), 0, 0));
+  m.vertexNode = cameraProjectionMatrix.mul(fvp);
+  // height of this point of the billboard above the bay (water at y = 0): the bank thins out to nothing at the water
+  // line, so the billboard plane never cuts the water with a straight edge (at a grazing angle no depth fade can hide
+  // that line: a few metres of depth per pixel row there)
+  const fH = TSL.cameraWorldMatrix.mul(fvp).y.toVarying('vFogH');
   const tx = ttexture(fogTexture(), tuv());
   const uLit = uniform(lin('#ffd4b0')), uShade = uniform(lin('#b9a3b3'));
   m.colorNode = mix(uShade, uLit.mul(mix(float(1), float(1.35), U.hdr)), smoothstep(0.2, 0.9, tuv().y));
-  m.opacityNode = tx.a.mul(0.85).mul(smoothstep(30.0, 160.0, viewDepth(c0))).mul(softFade(viewDepth(c0), 12));
+  // soft against the water / scene: a fade range in proportion to the bank's size (a fixed 12 m collapsed to 1-3 pixel
+  // rows on water seen at a grazing angle: a hard straight line across the bay), and an edge window so the blobs the
+  // canvas clips never show the billboard's border
+  const fu = tuv();
+  const win = smoothstep(0.0, 0.2, fu.x).mul(smoothstep(1.0, 0.8, fu.x)).mul(smoothstep(0.0, 0.12, fu.y)).mul(smoothstep(1.0, 0.88, fu.y));
+  const hFade = smoothstep(0.0, aOff.w.mul(0.2), fH);
+  m.opacityNode = tx.a.mul(0.85).mul(win).mul(hFade).mul(smoothstep(30.0, 160.0, viewDepth(c0))).mul(softFade(viewDepth(c0), aOff.w.mul(0.45)));
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false; mesh.renderOrder = 4;
   return mesh;
@@ -9901,7 +9955,12 @@ function buildLights() {
   const sunC = mkSun(2048, 60);
   sunC.shadow.bias = -0.0005; sunC.shadow.normalBias = 0.04;
   sunC.visible = false;
-  ST.sunS = sunS; ST.sunC = sunC; ST.sun = sunS;
+  // Économie ('cheap'): its own 1024 light over a 36 m box, as on the island. A live shadow map is never resized:
+  // r186's ShadowNode re-creates a resized target, but bindings kept the destroyed depth texture (black view on
+  // WebGPU, deleted-texture binds on WebGL 2 after Économie -> Moyen -> Économie)
+  const sunL = mkSun(1024, 36);
+  sunL.visible = false;
+  ST.sunS = sunS; ST.sunC = sunC; ST.sunL = sunL; ST.sun = sunS;
   if (typeof CityCSMShadowNode === 'function') {
     try {
       const csm = new CityCSMShadowNode(sunC, { cascades: 3, maxFar: 280, mode: 'practical', lightMargin: 160 });
@@ -9928,15 +9987,12 @@ function applyShadows(mode) {
   if (csm && !ST.csm.camera && K.view && K.view.camera && K.view.renderer) {
     try { ST.csm._init({ camera: K.view.camera, renderer: K.view.renderer }); } catch (e) { console.warn('Kit Rush 3D: CSM init failed', e); ST.csm = null; return applyShadows('single'); }
   }
-  ST.sunC.visible = csm; ST.sunS.visible = !csm;
-  ST.sun = csm ? ST.sunC : ST.sunS;
   ST.shadowMode = csm ? 'csm' : mode === 'cheap' ? 'cheap' : 'single';
-  // Économie ('cheap'): a 1024 map over a smaller box round Kit, as on the island
-  const cheap = ST.shadowMode === 'cheap', size = cheap ? 1024 : ST.shadowSize0, ext = cheap ? 36 : ST.shadowExt0;
-  const sh = ST.sunS.shadow, sc = sh.camera;
-  if (sh.mapSize.x !== size) { sh.mapSize.set(size, size); if (sh.map) { sh.map.dispose(); sh.map = null; } }
-  if (ST.shadowExt !== ext) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
-  ST.shadowSize = size; ST.shadowExt = ext;
+  const cheap = ST.shadowMode === 'cheap';
+  ST.sunC.visible = csm; ST.sunS.visible = !csm && !cheap; ST.sunL.visible = cheap;
+  ST.sun = csm ? ST.sunC : cheap ? ST.sunL : ST.sunS;
+  // (the box placement snaps to the texels of the active single map)
+  ST.shadowSize = cheap ? 1024 : ST.shadowSize0; ST.shadowExt = cheap ? 36 : ST.shadowExt0;
   ST.csmKey = '';
   placeSun();
 }
@@ -9949,7 +10005,7 @@ function placeSun() {
   const u = Math.round(f.dot(_sr) / texel) * texel, v = Math.round(f.dot(_su) / texel) * texel, w = f.dot(SUN_DIR);
   _sp.copy(_sr).multiplyScalar(u).addScaledVector(_su, v).addScaledVector(SUN_DIR, w);
   _sp.x += OX; _sp.z += OZ;
-  for (const sun of [ST.sunS, ST.sunC]) {
+  for (const sun of [ST.sunS, ST.sunC, ST.sunL]) {
     sun.target.position.copy(_sp);
     sun.position.copy(_sp).addScaledVector(SUN_DIR, 300);
     sun.target.updateMatrixWorld(); sun.updateMatrixWorld();
@@ -11021,7 +11077,9 @@ function buildVan(lod, dvan) {
   patch(vb, S, true, 4, 1, (u, v) => [lerp(-0.52, 0.52, u), lerp(0.92, 0.95, v), 2.25], () => [0, 0, 1], 0.008, VK.CHROME, C_CHROME, 0);
   for (const sx of [-1, 1]) {
     patch(vb, S, true, 3, 2, (u, v) => [sx * lerp(0.56, 0.9, u), lerp(0.98, 1.2, v), 2.25], () => [0, 0, 1], 0.006, VK.HEAD, WHITE, 2.2, (i, j) => [sx > 0 ? i / 3 : 1 - i / 3, j / 2]);
-    patch(vb, S, true, 1, 3, (u, v) => [sx * lerp(0.72, 0.86, u), lerp(0.85, 1.38, v), -2.2], () => [0, 0, -1], 0.006, VK.TAIL, lc('#ff2a1a'), 1.4, (i, j) => [i, j / 3]);
+    // (subdivided across the curved rear corner, which poked through a 1 x 3 patch: ragged lamps; a big flat lens
+    // facing the camera: at the sedan's HDR level ACES turned its red salmon-orange, ~1.4 HDR stays red and still blooms)
+    patch(vb, S, true, 4, 6, (u, v) => [sx * lerp(0.72, 0.86, u), lerp(0.85, 1.38, v), -2.2], () => [0, 0, -1], 0.014, VK.TAIL, lc('#ff2a1a'), 0.6, (i, j) => [i / 4, j / 6]);
     if (dvan) {
       patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.72, 0.86, u), lerp(1.42, 1.54, v), -2.2], () => [0, 0, -1], 0.008, BLINK, amb, 2.6);
       patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.88, 0.95, u), lerp(0.85, 0.95, v), 2.25], () => [0, 0, 1], 0.009, BLINK, amb, 2.6);
@@ -11043,7 +11101,8 @@ function buildVan(lod, dvan) {
   } else {
     // double-parked with the hazard lights on: the rear door seam and hinges, a beacon on the roof
     box(vb, 0, 1.2, -L - 0.004, 0.012, 1.55, 0.01, C_DARK, VK.TRIM, 0);
-    for (const sx of [-1, 1]) for (const y of [0.75, 1.35, 1.85]) box(vb, sx * 0.86, y, -L - 0.006, 0.06, 0.08, 0.02, C_DARK, VK.TRIM, 0);
+    // (hinges on the door edges, inboard of the tail lamps: at x 0.86 the middle one bit a corner off the lamp)
+    for (const sx of [-1, 1]) for (const y of [0.75, 1.35, 1.85]) box(vb, sx * 0.67, y, -L - 0.006, 0.06, 0.08, 0.02, C_DARK, VK.TRIM, 0);
     box(vb, 0, 2.2, 0.9, 0.5, 0.05, 0.5, C_DARK, VK.TRIM, 0);
     vb.geo(tpl().sph, TM(0, 2.26, 0.9, 0, 0, 0, 0.17, 0.14, 0.17), amb, BLINK, 3.0);
   }
@@ -13094,8 +13153,15 @@ function create(scene) {
     resetPose();
     applyPose();
   }
+  postSharp(root); if (SC.mesh) postSharp(SC.mesh);
   R.stats.buildMs = Math.round(performance.now() - tc0);
   init(P.pos, 0);
+}
+// K.post keeps Kit sharp: his opaque materials tag the velocity buffer (.w = 2), the motion blur neither smears his own
+// pixels (he crosses the fixed loop camera at 30 m/s: a 1/60 s shutter turned him into a see-through ghost) nor drags
+// his colours into the background
+function postSharp(o) {
+  o.traverse(c => { const ms = c.material ? (Array.isArray(c.material) ? c.material : [c.material]) : []; for (const m of ms) m.userData.postSharp = true; });
 }
 // positions of a skinned mesh in its current pose (root space), as a plain geometry
 function bakePose(mesh) {
@@ -14652,6 +14718,7 @@ function buildBoard() {
   R.hwMesh.position.y = -0.12;
   deck.userData.noEnv = R.hwMesh.userData.noEnv = true;
   B.visible = false;
+  postSharp(B);
   R.root.add(B);
   R.wheelAng = 0;
 }
@@ -16661,7 +16728,9 @@ function entMaterial() {
 }
 // polished gold rings: mirror-like metal (env + sun highlights bloom) with a warm fresnel glow so they read as gold even
 // against the blue sky or in shade
-const GOLD = new THREE.Color(1.0, 0.5, 0.07);
+// (a deep, saturated gold: the blue sky in the reflections, the grade's gamut compression and pale bands had turned the
+// rings brassy next to v2's)
+const GOLD = new THREE.Color(1.0, 0.42, 0.018);
 function ringMaterial() {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.2, metalness: 1 });
   const gold = vec3(GOLD.r, GOLD.g, GOLD.b), f = fresnelV(), nv = tnormalize(normalView);
@@ -16670,7 +16739,14 @@ function ringMaterial() {
   m.colorNode = gold;
   m.roughnessNode = float(0.2);
   m.metalnessNode = float(1);
-  m.emissiveNode = gold.mul(tpow(f, 2).mul(0.6).add(0.22)).add(vec3(1.0, 0.78, 0.3).mul(band)).mul(U.ring);
+  m.emissiveNode = gold.mul(tpow(f, 2).mul(0.6).add(0.24)).add(vec3(1.0, 0.56, 0.07).mul(band.mul(0.8))).mul(U.ring);
+  // a vivid, v2-like gold: the lit result is pushed back toward its hue (the sky in the reflections and the white
+  // Fresnel rim left the thin torus pale and brassy), and its blue goes slightly below zero in proportion to its
+  // brightness: the ACES input matrix lifts blue out of red and green, so a zero-blue gold still came out brassy
+  // (simulated through K.post's gamut + ACES + grade: (0.7, 0.28, -0.06) -> sRGB (213, 162, 14), v2's ring (211, 156, 5))
+  const lo = TSL.output.rgb, ll = tdot(lo, vec3(0.2126, 0.7152, 0.0722));
+  const gs = mix(vec3(ll), lo, 1.25);
+  m.outputNode = vec4(tmax(gs.r, 0), tmax(gs.g, 0), tmin(gs.b, ll.mul(0.12)).sub(ll.mul(0.09)), TSL.output.a);
   return m;
 }
 // monitor screens: black glossy glass (reflections) showing the item through a CRT (scanlines, barrel, vignette,
@@ -19071,7 +19147,7 @@ const G = K.game = {
   act: 1, sel: 1, best2: null, runTime: 0, runActs: 0, lastAct: 1, loadErr: false,
   cpTime: 0, timerOn: false, bossActive: false, newRecord: false, newScore: false, timeOver: false,
   st: 0, clock: 0, simT: 0, frame: 0, cardLen: 2.6, res: null, ringUps: 0,
-  pauseSel: 0, navLast: 0, navLastX: 0, fast: false, deadSeen: false, deadT: 0, deathHandled: false,
+  pauseSel: 0, legacyAsk: false, navLast: 0, navLastX: 0, fast: false, deadSeen: false, deadT: 0, deathHandled: false,
   comboN: 0, comboT: 9, hintT: 99, hintKind: '', flightHint: false,
   addRings, addScore, applyItem, setCheckpoint, onDeath, onBossStart, onBossDefeated, onCapsule, onActComplete, onTrick,
   // HUD hit areas in css px of the game area (title act chips, pause rows), for pointer handling and tests
@@ -19442,7 +19518,7 @@ function tally(go) {
 }
 function setPaused(p) {
   if (G.state !== 'play') p = false;
-  G.paused = !!p; G.pauseSel = 0;
+  G.paused = !!p; G.pauseSel = 0; G.legacyAsk = false;
   // a direction still held while pausing is not a menu move ("Quitter" must never be pre-selected)
   const I = K.input;
   const my = p && I && I.move ? I.move.y : 0, mx = p && I && I.move ? I.move.x : 0;
@@ -19470,8 +19546,10 @@ function pauseConfirm(dir) {
   if (s === 1) cycleQuality(dir || 1);
   else if (s === 2) toggleSuperRes();
   else if (s === 3) { setPaused(false); toTitle(); }
-  else if (s === 4) openLegacy();
-  else setPaused(false);
+  else if (s === 4) {
+    // leaving for the classic version ends the run: a second confirm on the same row ('Quitter la partie ?') opens it
+    if (G.legacyAsk) openLegacy(); else G.legacyAsk = true;
+  } else setPaused(false);
 }
 const PAUSE_ROWS = 5;
 // the frozen v2 build (three.js r128, WebGL 1-style rendering) for browsers or GPUs that struggle with this one
@@ -19485,7 +19563,7 @@ function pauseMenu() {
   const ny = I.move.y > 0.55 ? -1 : I.move.y < -0.55 ? 1 : 0;
   if (ny && ny !== G.navLast) {
     const n = clamp(G.pauseSel + ny, 0, PAUSE_ROWS - 1);
-    if (n !== G.pauseSel) { G.pauseSel = n; sfx('tick'); }
+    if (n !== G.pauseSel) { G.pauseSel = n; G.legacyAsk = false; sfx('tick'); }
   }
   G.navLast = ny;
   const nx = I.move.x > 0.55 ? 1 : I.move.x < -0.55 ? -1 : 0;
@@ -19493,6 +19571,7 @@ function pauseMenu() {
   G.navLastX = nx;
   if (I.hit('tap')) {
     const i = pauseItemAt(I.tap.x / U, I.tap.y / U);
+    if (i !== 4) G.legacyAsk = false;
     if (i >= 0) { G.pauseSel = i; pauseConfirm(1); return; }
   }
   if (I.hit('start') || I.hit('jump')) pauseConfirm(1);
@@ -20172,14 +20251,16 @@ function drawPause() {
   txt('PAUSE', LW / 2, LH * 0.19, 44, GOLD, 'center', true);
   const Q = K.post, ok = postOn();
   const q = Q && QLABEL[Q.quality] ? QLABEL[Q.quality] : QLABEL.high;
-  const items = ['Reprendre', 'Graphismes', 'Super Résolution', 'Retour au titre', 'Version classique'];
+  const ask = !!G.legacyAsk;
+  const items = ['Reprendre', 'Graphismes', 'Super Résolution', 'Retour au titre', ask ? 'Quitter la partie ? Oui' : 'Version classique'];
   const vals = [null, ok ? q : 'Simple', ok ? (Q.superRes ? 'Oui' : 'Non') : '—', null, null];
-  const y0 = LH * 0.235, step = 30, h = 25;
+  // (rows as tall as v2's: 34 px on a phone)
+  const y0 = LH * 0.235, step = 32, h = 28;
   for (let i = 0; i < PAUSE_ROWS; i++) {
     const val = vals[i], w = val === null ? 200 : 262, x = LW / 2 - w / 2, y = y0 + i * step, sel = G.pauseSel === i;
     const r = pauseRects[i]; r.x = x; r.y = y; r.w = w; r.h = h;
     c.globalAlpha = val !== null && !ok ? 0.55 : 1;
-    c.fillStyle = sel ? GOLD : 'rgba(18,24,69,.85)'; rrect(c, x, y, w, h, 14); c.fill();
+    c.fillStyle = sel ? (i === 4 && ask ? '#ff8a3d' : GOLD) : 'rgba(18,24,69,.85)'; rrect(c, x, y, w, h, 14); c.fill();
     c.strokeStyle = sel ? WHITE : 'rgba(255,255,255,.35)'; c.lineWidth = 2; c.stroke();
     c.font = `16px ${FONT}`; c.textBaseline = 'middle';
     c.fillStyle = sel ? NAVY : WHITE;
@@ -20202,6 +20283,7 @@ function drawPause() {
   const be = K.view.backend;
   txt('Rendu : ' + (be === 'webgpu' ? 'WebGPU' : be === 'webgl2' ? 'WebGL 2' : '—'), LW - 10, LH - 8, 12, '#9fe8ff', 'right');
   const hint = !ok && (G.pauseSel === 1 || G.pauseSel === 2) ? 'Effets graphiques indisponibles : rendu simple'
+    : G.pauseSel === 4 && ask ? (dev === 'touch' ? 'Touche encore pour ouvrir la version classique' : dev === 'pad' ? 'A pour confirmer · ↑ ↓ pour annuler' : 'Entrée pour confirmer · ↑ ↓ pour annuler')
     : dev === 'touch' ? 'Touche un choix' : dev === 'pad' ? 'Start pour reprendre · ← → pour régler' : 'Entrée ou Échap pour reprendre · ← → pour régler';
   txt(hint, LW / 2, yEnd + 17, 13, WHITE, 'center', false, LW - 30);
   drawHelp(yEnd + 35);
@@ -20313,12 +20395,38 @@ function syncFullBtn() {
   $('ico-full').style.display = f ? 'none' : ''; $('ico-exit').style.display = f ? '' : 'none';
   $('btnFull').setAttribute('aria-label', f ? 'Quitter le plein écran' : 'Plein écran');
 }
+// A touch acts on pointerup (same pointer, released over the button): the browser sends no click for a second finger
+// (a tap while the other thumb holds the joystick) nor for a tap right after a camera swipe. Mouse and keyboard keep
+// the click; the click that may follow a touch tap is ignored.
+function toolButton(el, fn) {
+  let pid = null, tapAt = -1e9;
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse') return;
+    pid = e.pointerId;
+    try { el.setPointerCapture(e.pointerId); } catch (_) { /* optional */ }
+  });
+  el.addEventListener('pointerup', e => {
+    if (e.pointerType === 'mouse' || e.pointerId !== pid) return;
+    pid = null;
+    const r = el.getBoundingClientRect(), m = 14;
+    if (e.clientX < r.left - m || e.clientX > r.right + m || e.clientY < r.top - m || e.clientY > r.bottom + m) return; // slid off
+    tapAt = performance.now();
+    fn();
+  });
+  el.addEventListener('pointercancel', e => { if (e.pointerId === pid) pid = null; });
+  el.addEventListener('click', e => {
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') return; // that tap was handled on pointerup
+    // (a browser whose click carries no pointerType: the click that follows a touch tap; keyboard clicks have detail 0)
+    if (e.pointerType !== 'mouse' && e.detail !== 0 && performance.now() - tapAt < 800) return;
+    fn();
+  });
+}
 function wireTools() {
-  $('btnSound').addEventListener('click', () => { K.audio.init(); K.audio.toggleMute(); focusGame(); });
-  $('btnPause').addEventListener('click', () => { K.audio.init(); if (G.state === 'play') setPaused(!G.paused); focusGame(); });
+  toolButton($('btnSound'), () => { K.audio.init(); K.audio.toggleMute(); focusGame(); });
+  toolButton($('btnPause'), () => { K.audio.init(); if (G.state === 'play') setPaused(!G.paused); focusGame(); });
   const bF = $('btnFull');
   if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) bF.hidden = true;
-  bF.addEventListener('click', async () => {
+  toolButton(bF, async () => {
     K.audio.init();
     try {
       if (document.fullscreenElement || document.webkitFullscreenElement) {

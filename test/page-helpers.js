@@ -119,6 +119,69 @@ window.__installT = function () {
     rb.g.drawImage(src, x0, y0, w, h, 0, 0, w, h);
     return { w, h, px: rb.g.getImageData(0, 0, w, h).data };
   };
+  // the canvas as last drawn (no extra render: keeps a T.frame()'s motion blur), call in the same task as the draw
+  T.grab = () => {
+    const src = R.domElement, w = src.width, h = src.height;
+    if (!rb.cv) { rb.cv = document.createElement('canvas'); rb.g = rb.cv.getContext('2d', { willReadFrequently: true }); }
+    if (rb.cv.width !== w || rb.cv.height !== h) { rb.cv.width = w; rb.cv.height = h; }
+    rb.g.clearRect(0, 0, w, h);
+    rb.g.drawImage(src, 0, 0);
+    return { w, h, px: rb.g.getImageData(0, 0, w, h).data };
+  };
+  // image metrics on {w, h, px} (boxes [x0, y0, x1, y1] in canvas pixels, clamped to the image)
+  const box = (im, b) => [Math.max(0, b[0] | 0), Math.max(0, b[1] | 0), Math.min(im.w, b[2] | 0), Math.min(im.h, b[3] | 0)];
+  const luma = (px, i) => 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+  T.img = {
+    // pixels whose hue is in [h0, h1] degrees and saturation > 0.15: the most saturated quarter's mean rgb, sat, value
+    hueTop(im, b, h0, h1) {
+      const [x0, y0, x1, y1] = box(im, b), sel = [];
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+        const i = (y * im.w + x) * 4, r = im.px[i] / 255, g = im.px[i + 1] / 255, bl = im.px[i + 2] / 255;
+        const mx = Math.max(r, g, bl), mn = Math.min(r, g, bl), d = mx - mn;
+        if (d < 1e-6 || mx <= 0) continue;
+        let hh = mx === r ? ((g - bl) / d) % 6 : mx === g ? (bl - r) / d + 2 : (r - g) / d + 4;
+        hh *= 60; if (hh < 0) hh += 360;
+        const sat = d / mx;
+        if (hh >= h0 && hh <= h1 && sat > 0.15) sel.push([sat, mx, r, g, bl]);
+      }
+      if (!sel.length) return { n: 0, sat: 0, val: 0, rgb: [0, 0, 0] };
+      sel.sort((a, c) => c[0] - a[0]);
+      const top = sel.slice(0, Math.max(1, sel.length >> 2)), m = k => top.reduce((a, c) => a + c[k], 0) / top.length;
+      return { n: sel.length, sat: +m(0).toFixed(3), val: +m(1).toFixed(3), rgb: [m(2), m(3), m(4)].map(v => Math.round(v * 255)) };
+    },
+    // high-frequency detail: std of luma minus its 7 x 7 box mean
+    detail(im, b) {
+      const [x0, y0, x1, y1] = box(im, b), W = x1 - x0, H = y1 - y0, L = new Float32Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) L[y * W + x] = luma(im.px, ((y + y0) * im.w + x + x0) * 4);
+      let s = 0, s2 = 0, n = 0;
+      for (let y = 3; y < H - 3; y++) for (let x = 3; x < W - 3; x++) {
+        let m = 0;
+        for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) m += L[(y + dy) * W + x + dx];
+        const v = L[y * W + x] - m / 49; s += v; s2 += v * v; n++;
+      }
+      const mean = s / Math.max(1, n);
+      return +Math.sqrt(Math.max(0, s2 / Math.max(1, n) - mean * mean)).toFixed(2);
+    },
+    // row-mean luma over a box: the largest step between two neighbouring rows (a hard horizontal edge)
+    rowStep(im, b) {
+      const [x0, y0, x1, y1] = box(im, b);
+      let prev = null, best = 0, at = -1;
+      for (let y = y0; y < y1; y++) {
+        let m = 0;
+        for (let x = x0; x < x1; x++) m += luma(im.px, (y * im.w + x) * 4);
+        m /= Math.max(1, x1 - x0);
+        if (prev != null && Math.abs(m - prev) > best) { best = Math.abs(m - prev); at = y; }
+        prev = m;
+      }
+      return { step: +best.toFixed(2), at };
+    },
+    lumaBox(im, b) {
+      const [x0, y0, x1, y1] = box(im, b), out = new Float32Array((x1 - x0) * (y1 - y0));
+      let k = 0;
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) out[k++] = luma(im.px, (y * im.w + x) * 4);
+      return out;
+    }
+  };
   // the same with the rows bottom first (the WebGL readPixels layout the v2 checks were written against)
   T.pixelsGL = () => {
     const { w, h, px } = T.pixels(), out = new Uint8Array(w * h * 4), row = w * 4;

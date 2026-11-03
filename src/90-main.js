@@ -24,7 +24,7 @@ const G = K.game = {
   act: 1, sel: 1, best2: null, runTime: 0, runActs: 0, lastAct: 1, loadErr: false,
   cpTime: 0, timerOn: false, bossActive: false, newRecord: false, newScore: false, timeOver: false,
   st: 0, clock: 0, simT: 0, frame: 0, cardLen: 2.6, res: null, ringUps: 0,
-  pauseSel: 0, navLast: 0, navLastX: 0, fast: false, deadSeen: false, deadT: 0, deathHandled: false,
+  pauseSel: 0, legacyAsk: false, navLast: 0, navLastX: 0, fast: false, deadSeen: false, deadT: 0, deathHandled: false,
   comboN: 0, comboT: 9, hintT: 99, hintKind: '', flightHint: false,
   addRings, addScore, applyItem, setCheckpoint, onDeath, onBossStart, onBossDefeated, onCapsule, onActComplete, onTrick,
   // HUD hit areas in css px of the game area (title act chips, pause rows), for pointer handling and tests
@@ -395,7 +395,7 @@ function tally(go) {
 }
 function setPaused(p) {
   if (G.state !== 'play') p = false;
-  G.paused = !!p; G.pauseSel = 0;
+  G.paused = !!p; G.pauseSel = 0; G.legacyAsk = false;
   // a direction still held while pausing is not a menu move ("Quitter" must never be pre-selected)
   const I = K.input;
   const my = p && I && I.move ? I.move.y : 0, mx = p && I && I.move ? I.move.x : 0;
@@ -423,8 +423,10 @@ function pauseConfirm(dir) {
   if (s === 1) cycleQuality(dir || 1);
   else if (s === 2) toggleSuperRes();
   else if (s === 3) { setPaused(false); toTitle(); }
-  else if (s === 4) openLegacy();
-  else setPaused(false);
+  else if (s === 4) {
+    // leaving for the classic version ends the run: a second confirm on the same row ('Quitter la partie ?') opens it
+    if (G.legacyAsk) openLegacy(); else G.legacyAsk = true;
+  } else setPaused(false);
 }
 const PAUSE_ROWS = 5;
 // the frozen v2 build (three.js r128, WebGL 1-style rendering) for browsers or GPUs that struggle with this one
@@ -438,7 +440,7 @@ function pauseMenu() {
   const ny = I.move.y > 0.55 ? -1 : I.move.y < -0.55 ? 1 : 0;
   if (ny && ny !== G.navLast) {
     const n = clamp(G.pauseSel + ny, 0, PAUSE_ROWS - 1);
-    if (n !== G.pauseSel) { G.pauseSel = n; sfx('tick'); }
+    if (n !== G.pauseSel) { G.pauseSel = n; G.legacyAsk = false; sfx('tick'); }
   }
   G.navLast = ny;
   const nx = I.move.x > 0.55 ? 1 : I.move.x < -0.55 ? -1 : 0;
@@ -446,6 +448,7 @@ function pauseMenu() {
   G.navLastX = nx;
   if (I.hit('tap')) {
     const i = pauseItemAt(I.tap.x / U, I.tap.y / U);
+    if (i !== 4) G.legacyAsk = false;
     if (i >= 0) { G.pauseSel = i; pauseConfirm(1); return; }
   }
   if (I.hit('start') || I.hit('jump')) pauseConfirm(1);
@@ -1125,14 +1128,16 @@ function drawPause() {
   txt('PAUSE', LW / 2, LH * 0.19, 44, GOLD, 'center', true);
   const Q = K.post, ok = postOn();
   const q = Q && QLABEL[Q.quality] ? QLABEL[Q.quality] : QLABEL.high;
-  const items = ['Reprendre', 'Graphismes', 'Super Résolution', 'Retour au titre', 'Version classique'];
+  const ask = !!G.legacyAsk;
+  const items = ['Reprendre', 'Graphismes', 'Super Résolution', 'Retour au titre', ask ? 'Quitter la partie ? Oui' : 'Version classique'];
   const vals = [null, ok ? q : 'Simple', ok ? (Q.superRes ? 'Oui' : 'Non') : '—', null, null];
-  const y0 = LH * 0.235, step = 30, h = 25;
+  // (rows as tall as v2's: 34 px on a phone)
+  const y0 = LH * 0.235, step = 32, h = 28;
   for (let i = 0; i < PAUSE_ROWS; i++) {
     const val = vals[i], w = val === null ? 200 : 262, x = LW / 2 - w / 2, y = y0 + i * step, sel = G.pauseSel === i;
     const r = pauseRects[i]; r.x = x; r.y = y; r.w = w; r.h = h;
     c.globalAlpha = val !== null && !ok ? 0.55 : 1;
-    c.fillStyle = sel ? GOLD : 'rgba(18,24,69,.85)'; rrect(c, x, y, w, h, 14); c.fill();
+    c.fillStyle = sel ? (i === 4 && ask ? '#ff8a3d' : GOLD) : 'rgba(18,24,69,.85)'; rrect(c, x, y, w, h, 14); c.fill();
     c.strokeStyle = sel ? WHITE : 'rgba(255,255,255,.35)'; c.lineWidth = 2; c.stroke();
     c.font = `16px ${FONT}`; c.textBaseline = 'middle';
     c.fillStyle = sel ? NAVY : WHITE;
@@ -1155,6 +1160,7 @@ function drawPause() {
   const be = K.view.backend;
   txt('Rendu : ' + (be === 'webgpu' ? 'WebGPU' : be === 'webgl2' ? 'WebGL 2' : '—'), LW - 10, LH - 8, 12, '#9fe8ff', 'right');
   const hint = !ok && (G.pauseSel === 1 || G.pauseSel === 2) ? 'Effets graphiques indisponibles : rendu simple'
+    : G.pauseSel === 4 && ask ? (dev === 'touch' ? 'Touche encore pour ouvrir la version classique' : dev === 'pad' ? 'A pour confirmer · ↑ ↓ pour annuler' : 'Entrée pour confirmer · ↑ ↓ pour annuler')
     : dev === 'touch' ? 'Touche un choix' : dev === 'pad' ? 'Start pour reprendre · ← → pour régler' : 'Entrée ou Échap pour reprendre · ← → pour régler';
   txt(hint, LW / 2, yEnd + 17, 13, WHITE, 'center', false, LW - 30);
   drawHelp(yEnd + 35);
@@ -1266,12 +1272,38 @@ function syncFullBtn() {
   $('ico-full').style.display = f ? 'none' : ''; $('ico-exit').style.display = f ? '' : 'none';
   $('btnFull').setAttribute('aria-label', f ? 'Quitter le plein écran' : 'Plein écran');
 }
+// A touch acts on pointerup (same pointer, released over the button): the browser sends no click for a second finger
+// (a tap while the other thumb holds the joystick) nor for a tap right after a camera swipe. Mouse and keyboard keep
+// the click; the click that may follow a touch tap is ignored.
+function toolButton(el, fn) {
+  let pid = null, tapAt = -1e9;
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse') return;
+    pid = e.pointerId;
+    try { el.setPointerCapture(e.pointerId); } catch (_) { /* optional */ }
+  });
+  el.addEventListener('pointerup', e => {
+    if (e.pointerType === 'mouse' || e.pointerId !== pid) return;
+    pid = null;
+    const r = el.getBoundingClientRect(), m = 14;
+    if (e.clientX < r.left - m || e.clientX > r.right + m || e.clientY < r.top - m || e.clientY > r.bottom + m) return; // slid off
+    tapAt = performance.now();
+    fn();
+  });
+  el.addEventListener('pointercancel', e => { if (e.pointerId === pid) pid = null; });
+  el.addEventListener('click', e => {
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') return; // that tap was handled on pointerup
+    // (a browser whose click carries no pointerType: the click that follows a touch tap; keyboard clicks have detail 0)
+    if (e.pointerType !== 'mouse' && e.detail !== 0 && performance.now() - tapAt < 800) return;
+    fn();
+  });
+}
 function wireTools() {
-  $('btnSound').addEventListener('click', () => { K.audio.init(); K.audio.toggleMute(); focusGame(); });
-  $('btnPause').addEventListener('click', () => { K.audio.init(); if (G.state === 'play') setPaused(!G.paused); focusGame(); });
+  toolButton($('btnSound'), () => { K.audio.init(); K.audio.toggleMute(); focusGame(); });
+  toolButton($('btnPause'), () => { K.audio.init(); if (G.state === 'play') setPaused(!G.paused); focusGame(); });
   const bF = $('btnFull');
   if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) bF.hidden = true;
-  bF.addEventListener('click', async () => {
+  toolButton(bF, async () => {
     K.audio.init();
     try {
       if (document.fullscreenElement || document.webkitFullscreenElement) {

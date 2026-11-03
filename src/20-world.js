@@ -1,4 +1,5 @@
 import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
+import { RoundedBoxGeometry as worldRoundedBox } from 'three/addons/geometries/RoundedBoxGeometry.js';
 (() => {
   'use strict';
   // ======================= WORLD: Collines Émeraude, Acte 1 =======================
@@ -332,7 +333,7 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   // ======================= shared shader bits (TSL) =======================
   const { Fn, uniform, attribute, vec2, vec3, vec4, float, mix, smoothstep, clamp: tclamp, abs: tabs, max: tmax, min: tmin, fract: tfract,
     floor: tfloor, sin: tsin, cos: tcos, pow: tpow, exp: texp, dot: tdot, normalize: tnormalize, cross: tcross, reflect: treflect, length: tlength,
-    atan: tatan, select, dFdx, dFdy, positionWorld, positionLocal, positionGeometry, normalWorld, normalViewGeometry, normalGeometry, cameraPosition,
+    atan: tatan, select, dFdx, dFdy, positionWorld, positionLocal, positionGeometry, normalWorldGeometry, normalViewGeometry, normalGeometry, cameraPosition,
     cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix, instanceIndex, texture: ttexture, step: tstep, sqrt: tsqrt, uv: tuv } = TSL;
   const TL = K.tsl;
   const TIME = uniform(0);
@@ -387,7 +388,10 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     const tGA = wtex('grass_albedo'), tGN = wtex('grass_normal'), tGO = wtex('grass_orm');
     const tRA = wtex('rock_albedo'), tRN = wtex('rock_normal'), tRO = wtex('rock_orm');
     // (pure expressions: no assign outside Fn; derivatives and texture fetches are taken at the top level)
-    const gN = tnormalize(normalWorld);
+    // (the GEOMETRY normal picks the projection and the grass / rock split: normalWorld is the material's own perturbed
+    // normal outside the normal sub-build, so the rock uv and its gradients depended on the bump they produce, and the
+    // colour build read a broken projection: the cliffs showed no rock texture at all)
+    const gN = tnormalize(normalWorldGeometry);
     const gP = local ? positionGeometry : positionWorld;
     const gA = tabs(gN);
     const gqY = gP.xz.mul(0.4), gqX = gP.zy.mul(0.4), gqZ = gP.xy.mul(0.4);
@@ -400,21 +404,29 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     // ---- checker squares: sandstone, one texture repeat per square at a per-square offset (no visible tiling)
     const tile = tfloor(gq);
     const tileH = TL.hash21(tile.add(vec2(3.7, 1.3)));
-    // (two texture repeats per square: the sandstone's strata and cracks stay stone-sized, not plank-sized)
-    const rUV = gq.mul(1.9).add(vec2(tileH.mul(7.31), TL.hash21(tile.add(vec2(9.1, 4.2))).mul(5.17)));
-    const rdx = gdx.mul(1.9), rdy = gdy.mul(1.9);
-    const rA = ttexture(tRA, rUV).grad(rdx, rdy), rN = ttexture(tRN, rUV).grad(rdx, rdy), rO = ttexture(tRO, rUV).grad(rdx, rdy);
+    // one texture repeat per square (strata ~0.3 m, stone-sized cracks; two repeats minified them into a flat low mip
+    // at play distance) + a finer rotated detail octave for close range; both through explicit gradients (the per-square
+    // offset jumps at the square edges)
+    const rUV = gq.add(vec2(tileH.mul(7.31), TL.hash21(tile.add(vec2(9.1, 4.2))).mul(5.17)));
+    const rA = ttexture(tRA, rUV).grad(gdx, gdy), rN = ttexture(tRN, rUV).grad(gdx, gdy), rO = ttexture(tRO, rUV).grad(gdx, gdy);
+    const dUV = rot2(gq, 0.6).mul(3.3).add(vec2(0.31, 0.17)), ddx = rot2(gdx, 0.6).mul(3.3), ddy = rot2(gdy, 0.6).mul(3.3);
+    const rA2 = ttexture(tRA, dUV).grad(ddx, ddy), rN2 = ttexture(tRN, dUV).grad(ddx, ddy);
     const chkC = TL.checker(gq, gw);
-    const gChk = mix(GM_UNI.gmChkA, GM_UNI.gmChkB, chkC).mul(mix(vec3(1), rA.rgb.mul(meanInv('rock')), 0.7))
+    // rock albedo relative to its mean (keeps the orange / brown palette), contrast raised so the strata and cracks
+    // survive the bright sun and the tone curve; the cavity (ORM AO) darkens the cracks under direct light too
+    const rRel = rA.rgb.mul(meanInv('rock')).mul(mix(vec3(1), rA2.rgb.mul(meanInv('rock')), 0.45));
+    const rTex = tmax(rRel.sub(1).mul(1.3).add(1), vec3(0.25)).mul(mix(float(1), rO.r, 0.4));
+    const gChk = mix(GM_UNI.gmChkA, GM_UNI.gmChkB, chkC).mul(rTex)
       .mul(gmCheckerShade(gq, gw)).mul(float(0.9).add(tileH.mul(0.2)));
     const gTf = tfract(gq);
     const bevel = tclamp(float(1).sub(tmax(gw.x, gw.y).mul(5)), 0, 1).mul(0.6);
     const gBv = vec2(smoothstep(0.9, 1.0, gTf.x).sub(smoothstep(0.1, 0.0, gTf.x)), smoothstep(0.9, 1.0, gTf.y).sub(smoothstep(0.1, 0.0, gTf.y))).mul(bevel)
-      .add(nXY(rN, 0.6));
+      .add(nXY(rN, 1.1)).add(rot2(nXY(rN2, 0.5), -0.6));
     const chkBump = select(gUY, vec3(gBv.x, 0, gBv.y), select(gUX, vec3(0, gBv.y, gBv.x), vec3(gBv.x, gBv.y, 0)));
     const chkRough = rO.g, chkAO = rO.r;
     if (chkOnly) {
-      m.colorNode = gChk.mul(mix(float(1), chkAO, 0.7));
+      m.colorNode = gChk; // (the rock cavity is in gChk already)
+      m.aoNode = chkAO;
       m.roughnessNode = chkRough;
       m.normalNode = tnormalize(normalViewGeometry.add(cameraViewMatrix.mul(vec4(chkBump, 0)).xyz));
       return m;
@@ -744,6 +756,16 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     c.left = -S.shadowExt; c.right = S.shadowExt; c.top = S.shadowExt; c.bottom = -S.shadowExt; c.near = 1; c.far = 360;
     c.updateProjectionMatrix();
     S.sunS = sun;
+    // Économie ('cheap'): its own 1024 light over a smaller box round Kit. A live shadow map is never resized: r186's
+    // ShadowNode re-creates a resized target, but bindings kept the destroyed depth texture (black view on WebGPU,
+    // deleted-texture binds on WebGL 2 after Économie -> Moyen -> Économie)
+    const sunL = makeSun(scene);
+    sunL.shadow.mapSize.set(1024, 1024);
+    const cl = sunL.shadow.camera;
+    cl.left = -30; cl.right = 30; cl.top = 30; cl.bottom = -30; cl.near = 1; cl.far = 360;
+    cl.updateProjectionMatrix();
+    sunL.visible = false;
+    S.sunL = sunL;
     // cascades (Ultra / Élevé): the node places one shadow camera per cascade around the view frustum (created on
     // first use; the lights exist from the start so the act switch hides them with the rest of the island)
     S.csmSets = {};
@@ -786,23 +808,13 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
     // (while Act 2 is shown the island's objects are hidden: record what setVisible(true) must restore)
     const setVis = (o, v) => { if (S.shown) o.visible = v; else o.userData.kitWasVisible = v; };
     for (const k in S.csmSets) setVis(S.csmSets[k].light, S.csmSets[k] === set);
-    setVis(S.sunS, !set);
-    S.sun = set ? set.light : S.sunS;
+    const cheap = !set && S.shadowMode === 'cheap';
+    setVis(S.sunS, !set && !cheap);
+    setVis(S.sunL, cheap);
+    S.sun = set ? set.light : cheap ? S.sunL : S.sunS;
     W.sun = S.sun;
     if (set) set.cam.aspect = 0; // re-fit the cascades
-    else {
-      const cheap = S.shadowMode === 'cheap';
-      const size = cheap ? 1024 : S.shadowSize, ext = cheap ? 30 : S.shadowExt;
-      const sh = S.sunS.shadow;
-      if (sh.mapSize.x !== size) {
-        sh.mapSize.set(size, size);
-        if (sh.map) { sh.map.dispose(); sh.map = null; }
-      }
-      S.curExt = ext;
-      const cam = sh.camera;
-      cam.left = -ext; cam.right = ext; cam.top = ext; cam.bottom = -ext; cam.updateProjectionMatrix();
-      placeShadow();
-    }
+    else placeShadow();
   }
   // the cascades follow the camera's projection (aspect / fov / far change on resize, phones, cinematics)
   function updateCSM() {
@@ -816,9 +828,9 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   }
   const _sr = new V3(), _su = new V3(), _sp = new V3();
   function placeShadow() {
-    const sun = S.sunS;
+    const sun = S.shadowMode === 'cheap' && S.sunL ? S.sunL : S.sunS;
     if (!sun) return;
-    const f = S.focus, ext = S.curExt || S.shadowExt, size = sun.shadow.mapSize.x || S.shadowSize;
+    const f = S.focus, cam = sun.shadow.camera, ext = cam.right, size = sun.shadow.mapSize.x;
     _sr.crossVectors(UP, SUN_DIR).normalize();
     _su.crossVectors(SUN_DIR, _sr);
     const texel = (2 * ext) / size;
@@ -1785,7 +1797,9 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
   // ---- totem (the level's landmark: three painted wooden blocks, a fox head on top)
   function tplTotem() {
     const t = new DB();
-    const box = (x, y, z, w, h, d, hex, rx, ry, rz) => t.geo(new THREE.BoxGeometry(w, h, d), TRS(x, y, z, rx || 0, ry || 0, rz || 0, 1),
+    // the big carved blocks get bevelled edges (they catch the light); small parts stay plain boxes
+    const bx = (w, h, d) => Math.min(w, h, d) >= 0.9 ? new worldRoundedBox(w, h, d, 2, 0.06) : new THREE.BoxGeometry(w, h, d);
+    const box = (x, y, z, w, h, d, hex, rx, ry, rz) => t.geo(bx(w, h, d), TRS(x, y, z, rx || 0, ry || 0, rz || 0, 1),
       { col: lin(hex), kind: DK.WOOD, uvFn: (q, n, uv) => [uv ? uv[0] * Math.max(w, d) * 0.35 : 0, uv ? uv[1] * h * 0.35 : 0] });
     const S0 = 1.15;
     t.geo(new THREE.BoxGeometry(1.6, 0.3, 1.6), M4().makeTranslation(0, 0.15, 0), { col: lin('#8b8fa8'), kind: DK.ROCK, uv: 0.8 });
@@ -2417,14 +2431,15 @@ import { CSMShadowNode as worldCSM } from 'three/addons/csm/CSMShadowNode.js';
       const wA = ttexture(wtex('wood_albedo'), uvn), wN = ttexture(wtex('wood_normal'), uvn), wO = ttexture(wtex('wood_orm'), uvn);
       const lA = ttexture(wtex('leaves_albedo'), uvn), lN = ttexture(wtex('leaves_normal'), uvn);
       const alb = bA.rgb.mul(meanInv('bark')).mul(isB).add(rA.rgb.mul(meanInv('rock')).mul(isR))
-        .add(mix(vec3(1), wA.rgb.mul(meanInv('wood')), 0.28).mul(isW)).add(lA.rgb.mul(meanInv('leaves')).mul(isL)).add(vec3(1).mul(isP))
+        .add(mix(vec3(1), wA.rgb.mul(meanInv('wood')), 0.55).mul(isW)).add(lA.rgb.mul(meanInv('leaves')).mul(isL)).add(vec3(1).mul(isP))
         .add(mix(vec3(1), wA.rgb.mul(meanInv('wood')), 0.7).mul(isRW));
       sol.colorNode = vc.mul(alb);
       const flatN = vec3(0.5, 0.5, 1);
-      const nT = bN.xyz.mul(isB).add(rN.xyz.mul(isR)).add(mix(flatN, wN.xyz, 0.5).mul(isW)).add(lN.xyz.mul(isL)).add(flatN.mul(isP)).add(wN.xyz.mul(isRW));
+      // painted wood (totems): the grain shows through the paint, in the colour and in the light
+      const nT = bN.xyz.mul(isB).add(rN.xyz.mul(isR)).add(wN.xyz.mul(isW)).add(lN.xyz.mul(isL)).add(flatN.mul(isP)).add(wN.xyz.mul(isRW));
       sol.normalNode = TSL.normalMap(nT);
-      sol.roughnessNode = bO.g.mul(isB).add(rO.g.mul(isR)).add(float(0.48).mul(isW)).add(float(0.7).mul(isL)).add(float(0.62).mul(isP)).add(wO.g.mul(isRW));
-      sol.aoNode = bO.r.mul(isB).add(rO.r.mul(isR)).add(isW).add(isL).add(isP).add(wO.r.mul(isRW));
+      sol.roughnessNode = bO.g.mul(isB).add(rO.g.mul(isR)).add(mix(float(0.42), wO.g, 0.5).mul(isW)).add(float(0.7).mul(isL)).add(float(0.62).mul(isP)).add(wO.g.mul(isRW));
+      sol.aoNode = bO.r.mul(isB).add(rO.r.mul(isR)).add(wO.r.mul(isW)).add(isL).add(isP).add(wO.r.mul(isRW));
       sol.positionNode = decorWind();
     }
     const fol = new THREE.MeshSSSNodeMaterial({ side: THREE.DoubleSide, roughness: 0.62, metalness: 0 });

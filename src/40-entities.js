@@ -543,7 +543,9 @@ function entMaterial() {
 }
 // polished gold rings: mirror-like metal (env + sun highlights bloom) with a warm fresnel glow so they read as gold even
 // against the blue sky or in shade
-const GOLD = new THREE.Color(1.0, 0.5, 0.07);
+// (a deep, saturated gold: the blue sky in the reflections, the grade's gamut compression and pale bands had turned the
+// rings brassy next to v2's)
+const GOLD = new THREE.Color(1.0, 0.42, 0.018);
 function ringMaterial() {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.2, metalness: 1 });
   const gold = vec3(GOLD.r, GOLD.g, GOLD.b), f = fresnelV(), nv = tnormalize(normalView);
@@ -552,7 +554,14 @@ function ringMaterial() {
   m.colorNode = gold;
   m.roughnessNode = float(0.2);
   m.metalnessNode = float(1);
-  m.emissiveNode = gold.mul(tpow(f, 2).mul(0.6).add(0.22)).add(vec3(1.0, 0.78, 0.3).mul(band)).mul(U.ring);
+  m.emissiveNode = gold.mul(tpow(f, 2).mul(0.6).add(0.24)).add(vec3(1.0, 0.56, 0.07).mul(band.mul(0.8))).mul(U.ring);
+  // a vivid, v2-like gold: the lit result is pushed back toward its hue (the sky in the reflections and the white
+  // Fresnel rim left the thin torus pale and brassy), and its blue goes slightly below zero in proportion to its
+  // brightness: the ACES input matrix lifts blue out of red and green, so a zero-blue gold still came out brassy
+  // (simulated through K.post's gamut + ACES + grade: (0.7, 0.28, -0.06) -> sRGB (213, 162, 14), v2's ring (211, 156, 5))
+  const lo = TSL.output.rgb, ll = tdot(lo, vec3(0.2126, 0.7152, 0.0722));
+  const gs = mix(vec3(ll), lo, 1.25);
+  m.outputNode = vec4(tmax(gs.r, 0), tmax(gs.g, 0), tmin(gs.b, ll.mul(0.12)).sub(ll.mul(0.09)), TSL.output.a);
   return m;
 }
 // monitor screens: black glossy glass (reflections) showing the item through a CRT (scanlines, barrel, vignette,

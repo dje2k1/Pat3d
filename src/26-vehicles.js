@@ -681,7 +681,9 @@ function buildVan(lod, dvan) {
   patch(vb, S, true, 4, 1, (u, v) => [lerp(-0.52, 0.52, u), lerp(0.92, 0.95, v), 2.25], () => [0, 0, 1], 0.008, VK.CHROME, C_CHROME, 0);
   for (const sx of [-1, 1]) {
     patch(vb, S, true, 3, 2, (u, v) => [sx * lerp(0.56, 0.9, u), lerp(0.98, 1.2, v), 2.25], () => [0, 0, 1], 0.006, VK.HEAD, WHITE, 2.2, (i, j) => [sx > 0 ? i / 3 : 1 - i / 3, j / 2]);
-    patch(vb, S, true, 1, 3, (u, v) => [sx * lerp(0.72, 0.86, u), lerp(0.85, 1.38, v), -2.2], () => [0, 0, -1], 0.006, VK.TAIL, lc('#ff2a1a'), 1.4, (i, j) => [i, j / 3]);
+    // (subdivided across the curved rear corner, which poked through a 1 x 3 patch: ragged lamps; a big flat lens
+    // facing the camera: at the sedan's HDR level ACES turned its red salmon-orange, ~1.4 HDR stays red and still blooms)
+    patch(vb, S, true, 4, 6, (u, v) => [sx * lerp(0.72, 0.86, u), lerp(0.85, 1.38, v), -2.2], () => [0, 0, -1], 0.014, VK.TAIL, lc('#ff2a1a'), 0.6, (i, j) => [i / 4, j / 6]);
     if (dvan) {
       patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.72, 0.86, u), lerp(1.42, 1.54, v), -2.2], () => [0, 0, -1], 0.008, BLINK, amb, 2.6);
       patch(vb, S, true, 1, 1, (u, v) => [sx * lerp(0.88, 0.95, u), lerp(0.85, 0.95, v), 2.25], () => [0, 0, 1], 0.009, BLINK, amb, 2.6);
@@ -703,7 +705,8 @@ function buildVan(lod, dvan) {
   } else {
     // double-parked with the hazard lights on: the rear door seam and hinges, a beacon on the roof
     box(vb, 0, 1.2, -L - 0.004, 0.012, 1.55, 0.01, C_DARK, VK.TRIM, 0);
-    for (const sx of [-1, 1]) for (const y of [0.75, 1.35, 1.85]) box(vb, sx * 0.86, y, -L - 0.006, 0.06, 0.08, 0.02, C_DARK, VK.TRIM, 0);
+    // (hinges on the door edges, inboard of the tail lamps: at x 0.86 the middle one bit a corner off the lamp)
+    for (const sx of [-1, 1]) for (const y of [0.75, 1.35, 1.85]) box(vb, sx * 0.67, y, -L - 0.006, 0.06, 0.08, 0.02, C_DARK, VK.TRIM, 0);
     box(vb, 0, 2.2, 0.9, 0.5, 0.05, 0.5, C_DARK, VK.TRIM, 0);
     vb.geo(tpl().sph, TM(0, 2.26, 0.9, 0, 0, 0, 0.17, 0.14, 0.17), amb, BLINK, 3.0);
   }
