@@ -35,6 +35,31 @@
      classique', 'Rendu : WebGL 2', boot 'KIT RUSH 3D', overlay texts: all correct French; nothing removed vs v2.
   9. persist.js: v2 records/settings read by v3 and v3's read by legacy v2 (same keys), corrupt values and throwing localStorage
      survived, no errors (out/persist.json).
+  10. alloc.js (CDP sampling heap profiler incl. GC'd objects, out/alloc-webgl2.json): JS garbage per DRAWN frame v2 -> v3:
+     Act 1 55 -> 197 KB, Act 2 43 -> 1046 KB (sim-only ticks 43-54 -> 65-69 KB, similar). alloc2.js (out/alloc2-desk.json):
+     Act 2 per frame Ultra 1457 KB, Élevé 1271, Moyen 604, Économie 620; 280-860 KB of it = three r186
+     RenderObject.getMaterialCacheKey. cachekey.js + alphatest.js: cause = 5 'city-foliage' shadow casters with alphaTest 0.5
+     (Act 1 has none): the shared r186 shadow override material's alphaTest setter bumps its version on every 0 <-> 0.5
+     switch, so ~75 shadow render objects/frame (Élevé) rebuild their cache key (reason 'matVersion'). FINDING (major).
+  11. leak.js (WebGL 2, 6 min, 4+3 menu cycles of 4 presets x SR while bots play, out/leak-webgl2.json): Act 2 stable over
+     cycles (geo 363->366, prog 1683->1681, heap 277.7->278.0 MB); Act 1 grows only with route progress (new zones). Warns:
+     'bindTexture: attempt to use a deleted object'. deltex.js: in Act 2 only, 2nd visit to Économie -> 3 per frame (WebGL).
+     lowshot2.js: WebGL image unchanged (shadows intact). shadowbreak.js (WebGPU, real keyboard pause menu, Act 2):
+     Élevé -> Économie -> Moyen -> Économie = 3D view BLACK (mean 0, 1 colour) + 'Destroyed texture ShadowDepthTexture used
+     in a submit' every frame, persists until another preset; Act 1 unaffected (shadowbreak.js --act1). Cause: 25-city.js:3553
+     applyShadows() disposes sunS.shadow.map when mapSize changes 2048 <-> 1024 (desktop only: touch size0 = 1024).
+     FINDING (blocker). shots/shadowbreak-gpu-*.png.
+  12. subpath.js: /Pat3d/test.html -> Act 2 (35/35 textures, 0 failed), pause 'Version classique' -> /Pat3d/legacy/ 200 (three
+     128), shipped index.html at /Pat3d/ and /Pat3d (redirect) boots, no 4xx, no request outside the prefix (out/subpath.json).
+  13. loadcard.js (phone, 1.6 Mbps/150 ms, real-time pump): card hits the 4 s cap with city_nrm (719 KB half) pending; play
+     starts with flat normals that fill in later (screenshot looks fine): minor at most, not reported.
+  14. cpu.js: sim-only main-thread cost per tick (interleaved, median) Act 1 v2 0.30 / v3 0.38 ms, Act 2 0.24 / 0.24 ms: fine.
+  15. leak.js --webgpu --a1only (172 s, 2 menu cycles): no errors. resize.js (desktop WebGPU, phone WebGL 2, both acts, incl.
+     portrait -> rotate hint): no errors, frames drawn. shadowbreak.js --frommedium: one Moyen -> Économie switch is fine; the
+     black view needs Économie -> Moyen -> Économie (after Économie rendered once).
+  16. gpucrash WebGPU pageerrors ('Instance dropped in popErrorScope' x65) came from my harness drawing via T.renderNow (it
+     bypasses view.lost): NOT a finding.
+- report.json written (final). DONE unless the lead asks for more.
 - NEXT (old list): budgets sweep per preset (route bot views, both acts, phone Moyen), preset-switch leak 2+ min (GL + shorter GPU),
   sub-path incl. Act 2 entry + pause "Version classique", French text scan (fillText capture v2 vs v3), persistence (v2 keys),
   allocations per frame (v2 vs v3), real-time Act 2 loading card (raf:false + Fast 3G throttling), report.json.
