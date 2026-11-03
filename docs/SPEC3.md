@@ -327,7 +327,11 @@ Light intensities were first rebalanced for physical units by multiplying the v2
 ### Tests (test/e2e.js)
 - `./build.sh && node test/e2e.js` — every suite on the WebGL 2 backend (`test.html?gl`), Chromium + SwiftShader.
   `--only=` any of `desktop,valley,boss` (the Act 1 desktop run), `v3` (backend + fallback, K.tex sample, assets budget,
-  no GLSL, perf budgets per preset, legacy page), `act2, post, fullrun, regress, present, regress2, phone`.
+  no GLSL, perf budgets per preset, legacy page), `act2, post, fullrun, regress, present, regress2, phone`, `fix3`
+  (regression checks for the v3 review findings: cliff rock detail, totems, ring saturation, Kit sharp in loop 1, Ultra
+  grass stability, Act 2 Économie -> Moyen -> Économie shadows, cache-key rebuilds / alphaTest casters, fog-bank edge,
+  van lamps, rails, "Version classique" confirm). `--page=<path>` tests another build (A/B against an older tree).
+  Whole default run: 99 checks, ~38 min here; `--webgpu`: 6 checks.
   `node test/e2e.js --webgpu` = WebGPU suite (boot, Act 1 sample, Act 2 sample, presets, no errors; SwiftShader Vulkan:
   the first boot compiles every pipeline on the CPU, several minutes).
 - Typical durations on this sandbox (4 shared CPUs, SwiftShader): desktop,valley,boss ≈ 95 s; v3 ≈ 115 s;
@@ -343,7 +347,8 @@ Light intensities were first rebalanced for physical units by multiplying the v2
 - In-page helpers (test/page-helpers.js): `T.ticks(n)`, `T.frame()` (one tick + a drawn frame), `T.renderNow()` (draw
   without ticking), `T.pixels()` / `T.pixelsGL()` (canvas pixels via a 2D canvas copy, top-first / bottom-first),
   `T.glStats()` (mean/std/colours + draw calls), `T.drawStats()`, `T.mem()` (renderer.info.memory: geo/tex/programs),
-  `T.sync()`. `dev/foundation/run.js --eval="…" --shot=…png [--webgpu] [--phone] [--q=?gl&nopost]` runs a snippet in a
+  `T.sync()`, `T.grab()` (the canvas as last drawn, no extra render: keeps a `T.frame()`'s motion blur; same task),
+  `T.img.{hueTop, detail, rowStep, lumaBox}` (image metrics on a grab). `dev/foundation/run.js --eval="…" --shot=…png [--webgpu] [--phone] [--q=?gl&nopost]` runs a snippet in a
   booted test page (handy for probes and screenshots).
 
 ### r186 / TSL gotchas we hit

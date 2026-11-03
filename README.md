@@ -136,9 +136,9 @@ npm run test:webgpu   # les tests WebGPU
 
 `test/e2e.js` lance le jeu dans Chromium sans écran (rendu logiciel) et joue les deux actes : parcours, loopings,
 boss, skateboard, vol, post-traitement et niveaux de qualité, budgets de performance, textures, téléphone, version
-classique (85 vérifications, dont les 74 de la version 2 avec le même sens). Compte environ 30 minutes, car tout est
-dessiné par le processeur. Les tests WebGPU (démarrage, extraits des deux actes, niveaux de qualité, aucune erreur :
-6 vérifications) prennent quelques minutes.
+classique, et les défauts corrigés après la relecture de la v3 (99 vérifications, dont les 74 de la version 2 avec le
+même sens). Compte environ 40 minutes, car tout est dessiné par le processeur. Les tests WebGPU (démarrage, extraits
+des deux actes, niveaux de qualité, aucune erreur : 6 vérifications) prennent quelques minutes.
 
 ## Activer GitHub Pages
 

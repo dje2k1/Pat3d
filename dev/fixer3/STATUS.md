@@ -115,3 +115,25 @@
   original also differed from v2 there: 171 ticks). randprobe.js: Math.random consumers during Act 1 play identical (5,
   audio noise) in orig and new. Checking run-to-run determinism: det3.js on orig + new -> logs/orig-det-*, new-det-*.
 - S2 (end): e2e fix3 A/B done (see RESUME NOTES); phone 8/8; det analysis in progress; alloc3 interrupted.
+- S3 (resumed 2026-11-03, tree c8c69af): sites rebuilt (1121050 B). randprobe2.js (wrapper installed before page
+  scripts, so captured refs are seen): between the re-seed and tick 807, orig 525 / new 575 seeded calls; the extra ones
+  are all in 40-entities visual FX (fxTwinkle ring glints 119 -> 161, P_ particle rot, fxSpark rdir); scatterRings
+  36 = 36, no gameplay consumer differs. Kit pos/vel, scores, records identical. -> documented as not gameplay (same
+  class as the review's v2 vs v3 note; the original build also varies run to run in the boss segment). DONE, moving on.
+- S3: fix3 suite on the final src: 12/12 (logs/fix3-new-3.log; rails clipped px 50). orig rerun -> logs/fix3-orig-3.log. alloc3 running.
+- S3: orig fix3 rerun: 0/11 (logs/fix3-orig-3.log; rails clipped 867 px, sat .667; legacy row navigates at once ->
+  harness check fails). alloc3 (logs/alloc3-webgl2.json) KB per unit, new vs review v3: a1draw 200/197, a2draw 288/1046,
+  a2frames 424/1180, a1frames 671/674, a1sim 72/69, a2sim 70/66 -> Act 2 now close to Act 1; rest = r186 renderer
+  internals (_bindUniforms, _update, getDynamicCacheKey). M1 VERIFIED.
+- S3: step 5: full WebGL 2 e2e started alone -> logs/full-gl.log
+- S3: FULL WebGL 2 e2e on the final build: 99/99 PASS in 2296 s (logs/full-gl.log, logs/e2e-report-gl.json). Next: WebGPU suite.
+- S3: WebGPU e2e 6/6 in 152 s (logs/full-gpu.log). Budgets (e2e v3 spots, scene pass incl. shadows): Act 1 U 156/1.85M,
+  H 134/1.42M, M 99/0.69M, L 95/0.50M; Act 2 U 174/0.82M, H 167/0.84M, M 138/0.58M, L 137/0.53M; assets 9.66 MB, Act 1
+  4.25, Act 2 2.99; memc stable (prog 598 -> 620 -> 620). Step 7 (shots) started: logs/shots-*.log.
+- S3: README test count 85 -> 99 (~40 min), SPEC3 tests notes (fix3, --page, T.grab/T.img). Shots batch A done (shots/v3-*.png, 0 errors; read v3-a1loop, a1lakeside, kitflight, vehvans: OK). Batches B-D + docs running (dev/fixer3/shots.sh).
+- S3: shots done, 0 errors: shots/v3-*.png (24 Élevé views, a1valley/a2street x ultra/high/medium/low/medium-sr +
+  a1valley-ultra-sr, phone title/a1run/a1loop/a2street/a2works/a2orbit, gpu a1start/a2street/kit34); preset/phone stats
+  within budget (max Ultra 194 calls / 1.82 M, Moyen 149 / 0.72 M, phone Moyen 151 / 0.66 M). docs/screenshots/*.jpg
+  (8, same names) regenerated from dev/fixer3/shots/doc-*.png (HUD). Read: v3-a1loop, a1lakeside, kitflight, vehvans,
+  phone-a1loop, doc-a1loop, doc-a1run, doc-a2flight2, GL vs GPU a1start pair: OK.
+- NEXT: write report.json + final message.
