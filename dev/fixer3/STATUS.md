@@ -1,20 +1,41 @@
 # FIXER3 STATUS (role dir dev/fixer3; owns every file; no git commit/push/reset/checkout/stash/clean)
 
-## RESUME NOTES
-- S1 started 2026-11-03. Read: dev/lead/prompt-fix.md, SPEC3 (full), SPEC/SPEC2, reviewers' STATUS.
-- Tree at start: HEAD 61434ad (branch claude/keen-maxwell-z7ef39), clean.
-- Tools: reviewers' probes build their own site with their mkbuild.sh (dev/review-gameplay/mkbuild.sh ->
-  dev/review-gameplay/site, dev/review-visual/mkbuild.sh -> dev/review-visual/site). Re-run those after src edits.
+## RESUME NOTES (S2 paused on a usage-limit warning, 2026-11-03 ~08:35; nothing is running)
+- ALL 12 findings have src edits done. Verified with probes + the new e2e suite A/B (orig HEAD build fails all 11 finding
+  checks, new build passes all; logs/fix3-new-2.log vs fix3-orig-2.log). Only the rails check was re-targeted after the
+  last fix3 run (counts clipped px < 300 instead of peak < 250): NOT re-run yet.
+- Phone suite 8/8 incl. the 2 new checks (logs/phone-2.log) AFTER the last 90-main edit (toolButton click rule).
+- Root ./build.sh was run after the last src edit (90-main click rule); dev/fixer3/site + review-gameplay/site may be
+  one edit behind for 90-main only (rebuild with sh dev/fixer3/mkbuild.sh / dev/review-gameplay/mkbuild.sh).
+- det.js gameplay: pos/vel identical to v2 in every segment, final scores/records identical. One ring-counter timing
+  difference vs orig in Act 1 (tick 906 vs 918, lost-ring pickup after a hurt): ringprobe.js shows the scatter at tick 807
+  happens with Math.random count 545 (new) vs 495 (orig) -> 50 more seeded-random calls between the play-start re-seed
+  and the scatter in the new build, so the lost rings fly differently. randprobe.js (hooks Math.random AFTER boot)
+  saw only 5 audio calls in both -> the extra 50 come from a reference captured earlier (entities `rand` = Math.random
+  is the same seeded fn; or three/TSL objects created during play: Node uuid / generateUUID). Kit's path is unchanged.
+  The original build also shows run-to-run ring-timing noise in the boss segment (orig vs orig rerun: 213 ticks).
+  NEXT: find the 50 extra calls (wrap window.Math.random BEFORE page scripts via init, count by stack between reseed
+  and tick 807; suspects: TSL node uuids from materials built lazily during play, e.g. GTAO/post graph or a lazily
+  created material in my edits) and either remove the cause or document it as not gameplay.
+- INTERRUPTED: dev/fixer3/alloc3.js (v3-only alloc.js) never finished -> rerun: cd dev/fixer3 && node alloc3.js
+  (output logs/alloc3-webgl2.json; compare with review numbers Act 1 197 KB / Act 2 1046 KB per drawn frame).
+- NEXT (in order): 1. rebuild private sites; 2. finish the det/random investigation above; 3. alloc3.js; 4. node
+  test/e2e.js --only=fix3 (rails re-target); 5. full WebGL 2 e2e alone (node test/e2e.js > dev/fixer3/logs/full-gl.log,
+  ~35 min) + node test/e2e.js --webgpu (~5 min); 6. budgets from the e2e v3 spots; 7. fresh shots in shots/ (node
+  dev/integrator/shoot.js with --page=test.html --out=shots --prefix=v3- for the integrator's set, Read a few) +
+  docs/screenshots via dev/integrator/docshots.py (titre=title, acte1-depart=a1run, acte1-looping=a1loop,
+  acte1-boss=a1boss, acte2-rue=a2street, acte2-chantier=a2traffic, acte2-bumper-orbite=a2orbit, acte2-vol=a2flight2,
+  shot with --hud); 8. README test count (85 -> new total; WebGPU 6) ; 9. report.json + final JSON message.
 
 ## FINDINGS CHECKLIST (x = fixed + verified)
 - [x] B1 blocker: WebGPU Act 2 black after Économie->Moyen->Économie (shadow map disposed) 25-city.js applyShadows, 20-world.js:799
-- [~] M1 Act 2 per-frame garbage: city-foliage alphaTest 0.5 (25-city.js:1558)
+- [x] M1 Act 2 per-frame garbage: city-foliage alphaTest 0.5 (25-city.js:1558)
 - [x] M2 motion blur ghosts Kit in loops (15-post.js)
 - [x] M3 fog-bank billboard hard edge over bay (25-city.js fogMesh/fogTexture)
 - [x] M4 Act 1 checker cliffs no rock detail (20-world.js groundMaterial)
 - [x] M5 Ultra SSGI AO grass flicker (15-post.js)
-- [~] m1 phone pause button tap with joystick held / after swipe (90-main.js wireTools)
-- [~] m2 'Version classique' pause row: confirm + rows >= 34 px on phone (90-main.js)
+- [x] m1 phone pause button tap with joystick held / after swipe (90-main.js wireTools)
+- [x] m2 'Version classique' pause row: confirm + rows >= 34 px on phone (90-main.js)
 - [x] m3 van / dvan tail lamps ragged (26-vehicles.js ~684)
 - [x] m4 gold rings pale (40-entities.js ringMaterial)
 - [x] m5 cable-car rails blue strips (25-city.js rail kind)
@@ -93,3 +114,4 @@
   to the original v3; but ring-counter timing differs at a1 tick 906 (+12 ticks early) and in the boss segment (the
   original also differed from v2 there: 171 ticks). randprobe.js: Math.random consumers during Act 1 play identical (5,
   audio noise) in orig and new. Checking run-to-run determinism: det3.js on orig + new -> logs/orig-det-*, new-det-*.
+- S2 (end): e2e fix3 A/B done (see RESUME NOTES); phone 8/8; det analysis in progress; alloc3 interrupted.
