@@ -1,0 +1,140 @@
+{
+ "summary": "All 12 verified review findings are fixed in src (1 blocker, 5 major, 6 minor), each reproduced first, fixed at the root cause, and covered by a new e2e regression check. On the original HEAD build the new suite (test/e2e.js --only=fix3, --page=dev/fixer3/orig/test.html) fails all 11 checks that target a finding; on the final build it passes 12/12. The final build passes the full WebGL 2 e2e (99/99 in 2296 s: the 85 previous checks plus 12 fix3 checks and 2 phone checks) and the WebGPU suite (6/6, Économie -> Moyen -> Économie added to its Act 2 preset sequence). Gameplay is unchanged: det.js gives Kit's position and velocity bit-identical to v2 in every segment, with identical final scores, times and records. Budgets stay within SPEC3 on every preset. The screenshots in shots/ and the 8 docs/screenshots JPEGs are fresh, and the README and the SPEC3 Foundation notes are updated. Nothing is committed (the lead commits).",
+ "tests": [
+  {
+   "name": "./build.sh",
+   "pass": true,
+   "notes": "index.html 1121050 bytes, test.html 1121088, 20 vendored module files; no GLSL; imports resolve (RoundedBoxGeometry added to the world part's imports)"
+  },
+  {
+   "name": "e2e WebGL 2, full default run (node test/e2e.js, final build)",
+   "pass": true,
+   "notes": "99/99 in 2296 s (dev/fixer3/logs/full-gl.log, logs/e2e-report-gl.json). Run alone on the 4 CPUs."
+  },
+  {
+   "name": "e2e WebGPU (node test/e2e.js --webgpu, final build)",
+   "pass": true,
+   "notes": "6/6 in 152 s, no console errors (dev/fixer3/logs/full-gpu.log). Act 2 presets ultra, medium, low, medium, low, high + Super Résolution: mean luma 107-120 at every step, 106-126 colour buckets."
+  },
+  {
+   "name": "New regression suite A/B (node test/e2e.js --only=fix3 [--page=dev/fixer3/orig/test.html])",
+   "pass": true,
+   "notes": "Final build 12/12 (logs/fix3-new-3.log). Original HEAD build: all 11 finding checks fail (logs/fix3-orig-3.log, fix3-orig-2.log). Metrics new / original: cliff high-pass luma std 14.4 / 1.9; totem block 16.4 / 7.0; ring top-quarter saturation Élevé 0.70, 0.67 / 0.59, 0.56 and Économie 1.0 / 0.56; Kit orange value in loop 1 with motion blur 0.51 / 0.32; Ultra grass px with temporal std > 8: 3.6 % / 15.6 %; Act 2 Élevé->Économie->Moyen->Économie: 0 deleted-texture warnings / bindTexture warnings; material cache-key rebuilds per Act 2 frame 0 / 76; fog-bank largest row step 1.6 / 7.3; van and delivery-van lamp px 5058, 5144 at G/R 0.59 / 1097, 1004 at 0.66; rails saturation 0.57 / 0.67 with px >= 250 luma into the sun 50 / 867; 'Version classique' asks first / navigates at once."
+  },
+  {
+   "name": "Phone suite (node test/e2e.js --only=phone)",
+   "pass": true,
+   "notes": "8/8 (logs/phone-2.log), incl. the new checks: the pause button pauses on a tap while the joystick is held and right after a camera swipe, with no double toggle; the pause rows are 34 px tall (5 rows); one tap on 'Version classique' only asks."
+  },
+  {
+   "name": "B1 reviewer probes",
+   "pass": true,
+   "notes": "dev/review-gameplay/deltex.js --act2 (WebGL 2): 0 warnings (was 36 'bindTexture: attempt to use a deleted object'). shadowbreak.js (WebGPU, real keyboard pause menu, Act 2): 0 errors, mean luma 98.3/98.0/95.1/98.2/108.5/114.9 (was 0 = black at steps 3-4). --act1: 0 errors, normal luma. Logs: dev/fixer3/logs/deltex-a2-after2.log, shadowbreak-gpu-after2.log, shadowbreak-gpu-a1-after2.log"
+  },
+  {
+   "name": "M1 reviewer probes (cachekey.js, alloc2.js, alloc.js v3)",
+   "pass": true,
+   "notes": "cachekey: Act 2 0.2 rebuilds per frame (was 75). alloc2 Act 2 KB per tick+frame U605 H486 M368 L373 (was 1457/1271/604/620); cacheKeyKB 37-57 (was 277-858). alloc (dev/fixer3/alloc3.js = alloc.js v3 only) KB per drawn frame: Act 1 200 (review 197), Act 2 288 (review 1046); per tick+frame Act 2 424 (review 1180). What remains is r186 renderer internals (_bindUniforms, _update, getDynamicCacheKey), the same in both acts."
+  },
+  {
+   "name": "Gameplay determinism (dev/review-gameplay/det.js v3 12345 --reseed + cmpdet.py; dev/fixer3/det3.js orig vs new)",
+   "pass": true,
+   "notes": "Kit pos/vel max diff 0 vs v2 in every segment (load2 differs only by the async Act 2 loading, as before); final a1end/res1/a2end/res2 (scores 52200 and 83650, times, rings, lives, records) identical to v2 and to the original v3. One lost-ring pickup in Act 1 happens 12 ticks earlier than in the original build (tick 906 vs 918). The cause (dev/fixer3/randprobe2.js): 40-entities' visual-only effects (ring glint twinkles, spark particles) draw more seeded Math.random calls (575 vs 525 before the scatter), so the shared seeded sequence lands differently and the scattered rings fly differently; scatterRings itself uses the same 36 calls. Kit's path is unchanged. The original build already varies the same way from one run to the next (boss segment, 213 ticks). Same class as the review's v2 vs v3 note: not a gameplay change."
+  },
+  {
+   "name": "Performance budgets per preset (e2e v3 spots, scene pass incl. shadow maps)",
+   "pass": true,
+   "notes": "Act 1: Ultra 156 calls / 1.85 M tris, Élevé 134 / 1.42 M, Moyen 99 / 0.69 M, Économie 95 / 0.50 M. Act 2: Ultra 174 / 0.82 M, Élevé 167 / 0.84 M, Moyen 138 / 0.58 M, Économie 137 / 0.53 M. Worst fresh screenshot views (max calls / max tris): Ultra 194 / 1.82 M, Élevé 196 / 1.40 M, Moyen 149 / 0.72 M (phone Moyen 151 / 0.66 M), Économie 146 / 0.64 M. Limits: 350 / 2.5 M Ultra, 220 / 800 k Moyen."
+  },
+  {
+   "name": "Texture / asset budgets and memory",
+   "pass": true,
+   "notes": "No texture added: assets/ 9.66 MB, Act 1 4.25 MB, Act 2 2.99 MB; K.tex GPU estimate unchanged (133.7 MB full both acts). Preset x Super Résolution memory cycle stable (prog 598 -> 620 -> 620, geo 116, tex 165)."
+  },
+  {
+   "name": "Visual review of the fresh screenshots (Read)",
+   "pass": true,
+   "notes": "Read: v3-a1loop, v3-a1lakeside, v3-kitflight, v3-vehvans, v3-phone-a1loop, doc-a1loop, doc-a1run, doc-a2flight2, a WebGL 2 vs WebGPU pair of a1start (same look; differences are clouds, ring spin and grass phase), the phone pause screen with the ask row, and crops c-loopkit-after, c-rings-after, c-vanrear-lamps-after, c-rails-before-after, c-totem-rings, c2-a1cliffclose. Cliffs show rock strata and cracks, Kit stays solid in the loop, the bay has no fog line, the totems are painted wood, the rings are a deeper gold, and the rails read as grey steel."
+  }
+ ],
+ "screenshots": [
+  "shots/v3-{title,a1start,a1loop,a1lakeside,a1boss,a1results,a2hill,a2street,a2traffic,a2works,a2pier,a2orbit,a2flight,a2goal,kitface,kit34,kitback,kitspinclose,kitskate,kitflight,vehcars,vehvans,vehbig,vehclose}.png",
+  "shots/v3-a1valley-{ultra,high,medium,low,medium-sr,ultra-sr}.png, shots/v3-a2street-{ultra,high,medium,low,medium-sr}.png",
+  "shots/v3-phone-{title,a1run,a1loop,a2street,a2works,a2orbit}.png (Moyen + Super Résolution, HUD + touch UI)",
+  "shots/v3-gpu-{a1start,a2street,kit34}.png (WebGPU)",
+  "shots/01..37-*.png, 16b-phone-pause-legacy-ask.png, gpu-0*.png (written by the e2e runs)",
+  "docs/screenshots/{titre,acte1-depart,acte1-looping,acte1-boss,acte2-rue,acte2-chantier,acte2-bumper-orbite,acte2-vol}.jpg (regenerated, same names)",
+  "dev/fixer3/shots/c-loopkit-after.png, c-rings-after.png, c-vanrear-lamps-after.png, c-vanrear-before-after.png, c-rails-before-after.png, c-waterfront-rails-after.png, c-totem-rings.png, c2-a1cliffclose.png, f2-kitflight.png, P-a1grass-ultra-f*.png, c-gl-vs-gpu-a1start.png"
+ ],
+ "fixed": [
+  {
+   "finding": "BLOCKER WebGPU: Act 2 renders a black 3D view after Économie -> Moyen -> Économie",
+   "outcome": "fixed",
+   "how": "The fix hint's first option was not enough: deltex still logged 36 deleted-texture binds after the manual dispose was removed, because r186's ShadowNode re-creates a resized target itself (renderShadow -> shadowMap.setSize -> dispose) while the bindings keep the destroyed depth texture. A live shadow map is now never resized: Économie has its own 1024 DirectionalLight in both acts (25-city.js ST.sunL with a 36 m box; 20-world.js S.sunL with a 30 m box), switched by visibility like the existing suns. placeSun/placeShadow snap to the active light's texels. Verified: deltex --act2 0 warnings (was 36); shadowbreak WebGPU Act 2 and --act1: 0 errors, normal luma at every step (was black); e2e fix3 check (WebGL 2) and the WebGPU suite's extended preset sequence."
+  },
+  {
+   "finding": "MAJOR Act 2 allocates 0.6-1.5 MB of JS garbage per drawn frame (alphaTest on the city foliage shadow casters)",
+   "outcome": "fixed",
+   "how": "25-city.js foliageMaterial: material.alphaTest stays 0, the cut-out uses alphaTestNode = float(0.5) and maskShadowNode still cuts the shadow. Verified: cachekey.js 0.2 rebuilds per Act 2 frame (was 75); alloc2 and alloc3 numbers in tests (Act 2 drawn frame 288 KB, was 1046; Act 1 200). e2e fix3 check: rebuilds per frame < 5 (0 measured, 76 on the original build) and no shadow caster with material.alphaTest > 0 in either act."
+  },
+  {
+   "finding": "MAJOR Motion blur turns Kit into a translucent ghost through the loops",
+   "outcome": "fixed",
+   "how": "Kit is kept out of the velocity blur. 30-player.js postSharp() tags every Kit and board material (userData.postSharp). 15-post.js PostAuxNode writes 2 in velocity.w for those materials (1 otherwise; TRAA and SSR read .xy only). The blur pass skips pixels with w > 1.5 and gives zero weight to taps that land on them, so Kit is neither smeared nor dragged into the background. Verified: rv a1loopkit, orange top-quarter value Élevé 0.46, Ultra 0.41, Moyen 0.45 (was 0.30 / 0.24 / 0.27; 0.45 with blur off); crop c-loopkit-after.png. e2e fix3: value 0.51 (original 0.32). Kit stays sharp on the flight and orbit shots. The 180° shutter was not adopted: it was not needed for Kit and would have halved the world's speed blur."
+  },
+  {
+   "finding": "MAJOR Bumper flight: the fog-bank billboards cut the bay water with a hard straight line (plus a faint vertical edge)",
+   "outcome": "fixed",
+   "how": "25-city.js fogMesh: the soft-fade range now scales with the bank size (aOff.w * 0.45). That alone only spread the edge from 3 to about 10 rows (at grazing angles one row covers tens of metres of depth), so the bank also thins to zero toward the water line: the world height of each billboard point comes from a cameraWorldMatrix varying, faded with smoothstep(0, size*0.2). A uv edge window hides the blobs clipped by the canvas (the vertical edge). Verified: largest row-to-row luma step 14.0 -> 2.7 (kitflight) and 7.6 -> 1.3 (a2flight); e2e fix3 1.6 (original 7.3); shots f2-kitflight.png and v3-kitflight.png."
+  },
+  {
+   "finding": "MAJOR Act 1 checker cliffs show no rock texture or normal detail at play distance",
+   "outcome": "fixed (root cause found)",
+   "how": "The cause was not the texture scale. groundMaterial picked its triplanar projection from normalWorld, which in r186 is the material's own bumped normal outside the NORMAL sub-build, so the colour build read a broken projection: the colour alone showed the rock, and adding the normalNode made it flat (debug renders dev/fixer3/shots/dbg-cliff-stack*.png). The projection now uses normalWorldGeometry. The rock was then tuned: one texture repeat per 2.5 m square, a rotated 3.3x detail octave, contrast x1.3, ORM cavity in the albedo, normal strength 1.1 plus 0.5 for the detail octave. Verified: high-pass luma std on the cliff 14.4 (was 1.9, grain only); shots c2-a1cliffclose.png, v3-a1lakeside.png, v3-a1loop.png; e2e fix3 check."
+  },
+  {
+   "finding": "MAJOR Ultra: SSGI ambient occlusion makes the grass blades flicker on a still frame",
+   "outcome": "fixed",
+   "how": "15-post.js: Ultra takes its AO from GTAO (16 samples, half resolution, as on Élevé) and keeps SSGI for the bounce light only (passes 'gtao(x0.5)' + 'ssgi(gi)'). Verified: a1grass still sequence, grass px with temporal std > 8: Ultra 8.9 % (was 25.7 %), Élevé 6.2 %; |f05-f06| > 20: 3.9 % (was 12.4 %). e2e fix3 (9 frozen-clock frames): 3.6 % (original 15.6 %). README and SPEC3 updated."
+  },
+  {
+   "finding": "MINOR Phone: the pause button ignores a tap while the other thumb holds the joystick, and a tap right after a camera swipe",
+   "outcome": "fixed",
+   "how": "90-main.js toolButton(): sound, pause and full-screen act on pointerup for touch and pen (same pointerId, released over the button, with a 14 px slop). Mouse and keyboard keep the click; the click that follows a touch tap is ignored (pointerType touch/pen, or no pointerType with detail > 0 within 800 ms). Verified: pausetap2.js, every sequence pauses (stick held, right after a swipe) with no double toggle; e2e phone check; Playwright mouse clicks on the button still work (phone Act 2 check)."
+  },
+  {
+   "finding": "MINOR Pause menu: one tap or confirm on 'Version classique' leaves the game at once; smaller rows than v2",
+   "outcome": "fixed",
+   "how": "90-main.js: the first confirm on row 4 turns it into an orange 'Quitter la partie ? Oui' row with a hint ('Touche encore pour ouvrir la version classique' / 'Entrée pour confirmer · ↑ ↓ pour annuler'). The second confirm opens legacy/; moving the selection, tapping another row or unpausing cancels. The rows are back to v2's height (h 28, step 32: 34 px on the phone, 5 rows). Verified: e2e fix3 desktop check (asks, cancels, then navigates to legacy/) and phone check (34 px rows, one tap only asks); screenshot shots/16b-phone-pause-legacy-ask.png; README mentions the confirmation. The row stays in the pause menu (SPEC3 §1 and the v3 / sub-path checks)."
+  },
+  {
+   "finding": "MINOR Van and delivery-van tail lamps render as ragged salmon slivers",
+   "outcome": "fixed",
+   "how": "26-vehicles.js: the lamp patch is subdivided 4 x 6 (was 1 x 3) with a 0.014 offset, so the curved rear corner no longer pokes through. The emit level is 0.6: the salmon colour came from ACES desaturating a large flat lens at about 2.3 HDR, not from reflections (a gloss change was tried, had no effect and was reverted). The delivery van's middle hinge was moved inboard (x 0.67) because it bit a corner off the now-whole lamp. Verified: lamp px 5058 / 5144, G/R 0.59 (was 1097 / 1004 px at 0.66; review rgb 252,195,160 -> 253,136,107); crops c-vanrear-before-after.png, c-vanrear-lamps-after.png; e2e fix3 check."
+  },
+  {
+   "finding": "MINOR Gold rings look pale and brassy, much less saturated than v2",
+   "outcome": "improved (partial on the TRAA presets)",
+   "how": "40-entities.js ringMaterial: a deeper GOLD (1, 0.42, 0.018); deep-gold bands (1, 0.56, 0.07) x 0.8; an outputNode that raises saturation x1.25 and pushes blue slightly below zero in proportion to brightness, to cancel the blue the ACES input matrix lifts from red and green (simulated through the post grade first). Verified, top-quarter saturation: Économie 1.0, rgb (230,175,0), v2-like; Élevé 0.67-0.73 (was 0.57-0.61 in the same views, review 0.61-0.66); close rings visibly deeper gold (c-rings-after.png). On TRAA presets the clamp of negative neighbours and the grade's gamut compression limit the gain; matching v2's 0.98 there would need a grade change for every colour, out of scope."
+  },
+  {
+   "finding": "MINOR Cable-car rails still read as saturated blue painted strips in shade (and clip with bloom into the sun)",
+   "outcome": "fixed",
+   "how": "25-city.js: the rail kind is worn half-metal steel (roughness 0.3*map + 0.44, metalness 0.55, was 0.9) in a warm grey (RAILC #8e8a84). cityMaterial's outputNode caps the rail HDR output at 1.1, so sun glints no longer clip or bloom. Verified: a2traffic rail box rgb (33,37,72) sat 0.55 (was 40,62,120 sat 0.66; asphalt 29,34,70); into the sun the box px >= 250 luma drop from 968 to 70 (the remaining peak is a twinkle sparkle); e2e fix3 50 vs 867 px; crop c-rails-before-after.png, c-waterfront-rails-after.png."
+  },
+  {
+   "finding": "MINOR Act 1 totem props are untextured flat boxes with painted faces at close range",
+   "outcome": "fixed",
+   "how": "20-world.js: DK.WOOD is real painted wood, with the wood grain at 55 % in the colour, the full wood normal map and the wood ORM for roughness and AO. The big carved blocks are bevelled (RoundedBoxGeometry, radius 0.06; about 18 k extra triangles in total). Verified: high-pass luma std on a block face 16.4 (was 7.0); shots m-kit34.png, c-totem-rings.png; e2e fix3 check."
+  }
+ ],
+ "remaining_issues": [
+  "Rings on the TRAA presets (Ultra/Élevé/Moyen) reach a top-quarter saturation of about 0.67-0.73, not v2's 0.98. TRAA clamps negative neighbours and the global grade (gamut compression 0.22, ACES) desaturates every saturated colour; Économie reaches 1.0. A global grade change would affect the whole look and was left alone.",
+  "det.js: in Act 1 one lost-ring pickup happens 12 ticks earlier than in the original v3 because entity visual effects draw more seeded Math.random calls; Kit's path, scores, times and records are identical. The original build already varies like this from run to run in the boss segment.",
+  "Per-frame JS allocation is now about 200 KB (Act 1) and 290 KB (Act 2) per drawn frame, all of it r186 renderer internals (v2: about 40-55 KB). The extra Act 2 garbage is gone; reducing the rest would mean patching three.js.",
+  "Motion blur: Kit is excluded from the velocity blur (as in most games); the rest of the world keeps v3's 1/60 s shutter and radial streaks.",
+  "All timings are SwiftShader (CPU); no real GPU or phone was measured. The full WebGL 2 e2e now takes about 38 min here (99 checks).",
+  "docs/v3-wip/README.md still says the fix is running: that file is the lead's status page.",
+  "Known art limits from the integration report are unchanged: checker cliffs keep their triangular patches on slanted faces, the far city is boxes with lit windows, the ring-pickup flash briefly covers Kit, entity far-LOD shadows pop at 30 m (18 m Moyen), and a vehicle or entity switching LOD slot can get one frame of wrong motion vectors."
+ ]
+}

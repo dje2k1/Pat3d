@@ -40,8 +40,8 @@
 - [x] m4 gold rings pale (40-entities.js ringMaterial)
 - [x] m5 cable-car rails blue strips (25-city.js rail kind)
 - [x] m6 Act 1 totems flat boxes (20-world.js decor)
-- [ ] det.js + cmpdet.py bit-identical gameplay after changes
-- [ ] full WebGL 2 e2e + WebGPU suite green; budgets; fresh shots; README numbers; report.json
+- [x] det.js + cmpdet.py bit-identical gameplay after changes (pos/vel/scores; lost-ring pickup timing note)
+- [x] full WebGL 2 e2e + WebGPU suite green; budgets; fresh shots; README numbers; report.json
 
 ## LOG
 - S1: copied dev/review-gameplay/out -> dev/fixer3/rg-out-orig (reviewer evidence kept; probes overwrite out/).
@@ -137,3 +137,4 @@
   (8, same names) regenerated from dev/fixer3/shots/doc-*.png (HUD). Read: v3-a1loop, a1lakeside, kitflight, vehvans,
   phone-a1loop, doc-a1loop, doc-a1run, doc-a2flight2, GL vs GPU a1start pair: OK.
 - NEXT: write report.json + final message.
+- S4: dev/fixer3/report.json written (python3 dev/fixer3/mkreport.py), validated as JSON. FIX DONE. If resumed: only re-send the final message with report.json.
