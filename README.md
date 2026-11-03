@@ -34,7 +34,7 @@ change complètement.
 
 ## Jouer
 
-- **En ligne** : https://dje2k1.github.io/Pat3d/
+- **En ligne** : https://dje2k1.github.io/Pat3d/ (version 3) et https://dje2k1.github.io/Pat3d/legacy/ (version 2, « classique »)
 - **Navigateurs** : un navigateur récent (Chrome, Edge, Firefox ou Safari). Le menu Pause affiche le moteur utilisé
   (« Rendu : WebGPU » ou « Rendu : WebGL 2 »). Ajouter `?gl` à l'adresse force WebGL 2.
 - **Version classique** : si le jeu ne démarre pas ou rame trop sur ton appareil, la version 2 (plus légère, three.js

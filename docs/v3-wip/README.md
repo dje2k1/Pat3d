@@ -18,11 +18,11 @@ its "Foundation notes" section.
 | Integrate | done (see `dev/integrator/report.json`, `dev/integrator/STATUS.md`): requests resolved, e2e WebGL 2 + WebGPU green, budgets measured, README / screenshots / SPEC3 notes updated | `dev/integrator/STATUS.md`, prompt `dev/lead/prompt-integrate.md` |
 | Review (gameplay + visual) | done (2026-11-03): 1 blocker, 5 major, 6 minor | `dev/review-{gameplay,visual}/report.json` |
 | Fix | done (2026-11-03): 12/12 findings fixed, WebGL 2 e2e 99/99, WebGPU 6/6 | `dev/fixer3/report.json` |
-| Lead verification, publish | running | then merge into `main` (GitHub Pages) |
+| Lead verification, publish | done (2026-11-03): WebGPU 6/6, WebGL 2 v3+fix3+present 23/23; `main` fast-forwarded to v3 | v2 stays at `legacy/` |
 
 ## Resuming
 
-Next step: the lead verifies (WebGPU suite, WebGL 2 v3/fix3/present suites, screenshots) and merges v3 into `main`.
+v3 is published on `main` (GitHub Pages); v2 stays playable at `legacy/`.
 
 
 `workflow-v3.js` is the full workflow script (foundation → 6 builders → integrate → 2 reviewers → fix).
